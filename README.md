@@ -1,10 +1,10 @@
-#What is CamDX?
+# What is CamDX?
 
 CamDX stands for Cambodia Data eXchange, which adopts the model of X-Road of Estonia. CamDX is a unified yet decentralized data exchange layer between information systems that offers a standardized and secure way to provide and consume services. CamDX ensures confidentiality, integrity, and interoperability between a multitude of different data exchange parties.
 
 The main goal of CamDX is to build an infrastructure that allows for establishing effortless access to data in government databases (public services) without compromising the security and ownership of the data and with minimal technical changes in the existing information systems.
 
-##CamDX is:
+## CamDX is:
 - A unified way of data exchange
 - A distributed system based on collaboration
 - A platform that handles data security, authenticity and integrity
