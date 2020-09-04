@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -62,13 +63,15 @@ public class WsdlValidator {
      * @throws WsdlValidatorNotExecutableException when validator is not found or
      * there are errors (not warnings, cant be ignored) when trying to execute the validator
      * @throws WsdlValidationFailedException when validation itself fails.
-     * @throws InterruptedException if the thread running the validator is interrupted
+     * @throws InterruptedException if the thread running the validator is interrupted. <b>The interrupted thread has
+     * already been handled with so you can choose to ignore this exception if you so please.</b>
      */
     public List<String> executeValidator(String wsdlUrl) throws WsdlValidatorNotExecutableException,
             WsdlValidationFailedException, InterruptedException {
         List<String> warnings = new ArrayList<>();
         // validator not set - this is ok since validator is optional
         if (StringUtils.isEmpty(getWsdlValidatorCommand())) {
+            log.warn("Skipping WSDL validator, command not set");
             return warnings;
         }
 
@@ -77,12 +80,27 @@ public class WsdlValidator {
         }
 
         try {
-            return externalProcessRunner.execute(getWsdlValidatorCommand(), wsdlUrl);
+            ExternalProcessRunner.ProcessResult processResult = externalProcessRunner
+                    .executeAndThrowOnFailure(getWsdlValidatorCommand(), wsdlUrl);
+
+            logValidatorOutput(processResult.getProcessOutput());
+            return processResult.getProcessOutput();
         } catch (ProcessNotExecutableException e) {
             throw new WsdlValidatorNotExecutableException(e);
         } catch (ProcessFailedException e) {
+            if (e.getErrorDeviation() != null) {
+                logValidatorOutput(e.getErrorDeviation().getMetadata());
+            }
             throw new WsdlValidationFailedException(e.getErrorDeviation().getMetadata());
         }
+    }
+
+    private void logValidatorOutput(List<String> processOutput) {
+        log.debug(" --- WSDL validator console output - START --- ");
+        if (processOutput != null && log.isDebugEnabled()) {
+            log.debug(ExternalProcessRunner.processOutputToString(processOutput));
+        }
+        log.debug(" --- WSDL validator console output - END --- ");
     }
 
     /**

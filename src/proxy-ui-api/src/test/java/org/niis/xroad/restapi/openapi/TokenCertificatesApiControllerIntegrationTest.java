@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -31,13 +32,9 @@ import ee.ria.xroad.signer.protocol.dto.KeyInfo;
 import ee.ria.xroad.signer.protocol.dto.TokenInfo;
 import ee.ria.xroad.signer.protocol.dto.TokenInfoAndKeyId;
 
-import lombok.extern.slf4j.Slf4j;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.niis.xroad.restapi.exceptions.ErrorDeviation;
-import org.niis.xroad.restapi.facade.GlobalConfFacade;
-import org.niis.xroad.restapi.facade.SignerProxyFacade;
 import org.niis.xroad.restapi.openapi.model.CertificateDetails;
 import org.niis.xroad.restapi.openapi.model.KeyUsage;
 import org.niis.xroad.restapi.openapi.model.PossibleAction;
@@ -46,9 +43,9 @@ import org.niis.xroad.restapi.service.CertificateAlreadyExistsException;
 import org.niis.xroad.restapi.service.CertificateNotFoundException;
 import org.niis.xroad.restapi.service.ClientNotFoundException;
 import org.niis.xroad.restapi.service.CsrNotFoundException;
+import org.niis.xroad.restapi.service.InvalidCertificateException;
 import org.niis.xroad.restapi.service.KeyNotFoundException;
 import org.niis.xroad.restapi.service.PossibleActionEnum;
-import org.niis.xroad.restapi.service.PossibleActionsRuleEngine;
 import org.niis.xroad.restapi.service.TokenCertificateService;
 import org.niis.xroad.restapi.util.CertificateTestUtils;
 import org.niis.xroad.restapi.util.CertificateTestUtils.CertificateInfoBuilder;
@@ -57,17 +54,11 @@ import org.niis.xroad.restapi.util.TestUtils;
 import org.niis.xroad.restapi.util.TokenTestUtils;
 import org.niis.xroad.restapi.util.TokenTestUtils.KeyInfoBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.test.context.support.WithMockUser;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.security.cert.X509Certificate;
 import java.time.OffsetDateTime;
@@ -100,24 +91,10 @@ import static org.niis.xroad.restapi.util.TestUtils.assertLocationHeader;
 /**
  * test certificates api
  */
-@RunWith(SpringRunner.class)
-@SpringBootTest
-@AutoConfigureTestDatabase
-@Transactional
-@Slf4j
-public class TokenCertificatesApiControllerIntegrationTest {
-
-    @MockBean
-    private SignerProxyFacade signerProxyFacade;
-
-    @MockBean
-    private GlobalConfFacade globalConfFacade;
+public class TokenCertificatesApiControllerIntegrationTest extends AbstractApiControllerTestContext {
 
     @Autowired
-    private TokenCertificatesApiController tokenCertificatesApiController;
-
-    @SpyBean
-    private PossibleActionsRuleEngine possibleActionsRuleEngine;
+    TokenCertificatesApiController tokenCertificatesApiController;
 
     @Before
     public void setup() throws Exception {
@@ -229,7 +206,7 @@ public class TokenCertificatesApiControllerIntegrationTest {
             tokenCertificatesApiController.importCertificate(body);
         } catch (BadRequestException e) {
             ErrorDeviation error = e.getErrorDeviation();
-            assertEquals(TokenCertificateService.InvalidCertificateException.INVALID_CERT, error.getCode());
+            assertEquals(InvalidCertificateException.INVALID_CERT, error.getCode());
         }
     }
 
@@ -287,7 +264,7 @@ public class TokenCertificatesApiControllerIntegrationTest {
             tokenCertificatesApiController.importCertificate(body);
         } catch (BadRequestException e) {
             ErrorDeviation error = e.getErrorDeviation();
-            assertEquals(TokenCertificateService.InvalidCertificateException.INVALID_CERT, error.getCode());
+            assertEquals(InvalidCertificateException.INVALID_CERT, error.getCode());
         }
     }
 
@@ -336,7 +313,6 @@ public class TokenCertificatesApiControllerIntegrationTest {
 
         tokenCertificatesApiController.importCertificateFromToken(MOCK_CERTIFICATE_HASH);
     }
-
 
     @Test
     @WithMockUser(authorities = "IMPORT_SIGN_CERT")

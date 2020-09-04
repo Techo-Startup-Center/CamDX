@@ -1,153 +1,134 @@
+<!--
+   The MIT License
+   Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+   Copyright (c) 2018 Estonian Information System Authority (RIA),
+   Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+   Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
+ -->
 <template>
   <div>
     <table class="xrd-table">
-      <!-- SOFTWARE token table header -->
-      <template v-if="tokenType === 'SOFTWARE'">
-        <thead>
-          <tr>
-            <th>{{$t(title)}}</th>
-            <th>{{$t('keys.id')}}</th>
-            <th>{{$t('keys.ocsp')}}</th>
-            <th>{{$t('keys.expires')}}</th>
-            <th>{{$t('keys.status')}}</th>
-            <th></th>
-          </tr>
-        </thead>
-      </template>
-
-      <!-- HARDWARE token table header -->
-      <template v-if="tokenType === 'HARDWARE'">
-        <thead>
-          <tr>
-            <th>{{$t(title)}}</th>
-            <th>{{$t('keys.id')}}</th>
-            <th>{{$t('keys.ocsp')}}</th>
-            <th>{{$t('keys.expires')}}</th>
-            <th>{{$t('keys.status')}}</th>
-            <th></th>
-            <th></th>
-          </tr>
-        </thead>
-      </template>
+      <thead>
+        <tr>
+          <th class="title-col">{{ $t(title) }}</th>
+          <th class="id-col">{{ $t('keys.id') }}</th>
+          <th class="ocsp-col">{{ $t('keys.ocsp') }}</th>
+          <th class="expiration-col">{{ $t('keys.expires') }}</th>
+          <th class="status-col">{{ $t('keys.status') }}</th>
+          <th class="action-col"></th>
+        </tr>
+      </thead>
 
       <tbody v-for="key in keys" v-bind:key="key.id">
         <!-- SOFTWARE token table body -->
         <template v-if="tokenType === 'SOFTWARE'">
-          <tr>
-            <div class="name-wrap-top">
-              <i class="icon-xrd_key icon clickable" @click="keyClick(key)"></i>
-              <div class="clickable-link" @click="keyClick(key)">{{key.name}}</div>
-            </div>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border td-align-right">
-              <SmallButton
-                v-if="hasPermission"
-                class="table-button-fix"
-                :disabled="disableGenerateCsr"
-                @click="generateCsr(key)"
-              >{{$t('keys.generateCsr')}}</SmallButton>
-            </td>
-          </tr>
+          <KeyRow
+            :disableGenerateCsr="disableGenerateCsr(key)"
+            :hasPermission="hasPermission"
+            :tokenLoggedIn="tokenLoggedIn"
+            :tokenKey="key"
+            @generateCsr="generateCsr(key)"
+            @keyClick="keyClick(key)"
+          />
 
-          <tr v-for="cert in key.certificates" v-bind:key="cert.id">
-            <td class="td-name">
-              <div class="name-wrap">
-                <i class="icon-xrd_certificate icon clickable" @click="certificateClick(cert, key)"></i>
-                <div
-                  class="clickable-link"
-                  @click="certificateClick(cert, key)"
-                >{{cert.certificate_details.issuer_common_name}} {{cert.certificate_details.serial}}</div>
-              </div>
-            </td>
-            <td>{{cert.owner_id}}</td>
-            <td>{{ cert.ocsp_status | ocspStatus }}</td>
-            <td>{{cert.certificate_details.not_after | formatDate}}</td>
-            <td class="status-cell">
-              <certificate-status :certificate="cert" />
-            </td>
-            <td class="td-align-right">
+          <CertificateRow
+            v-for="cert in key.certificates"
+            v-bind:key="cert.id"
+            :cert="cert"
+            @certificateClick="certificateClick(cert, key)"
+          >
+            <div slot="certificateAction">
               <SmallButton
                 class="table-button-fix test-register"
-                v-if="showRegisterCertButton && cert.possible_actions.includes('REGISTER')"
+                v-if="
+                  showRegisterCertButton &&
+                    cert.possible_actions.includes('REGISTER')
+                "
                 @click="showRegisterCertDialog(cert)"
-              >{{$t('action.register')}}</SmallButton>
-            </td>
-          </tr>
+                >{{ $t('action.register') }}</SmallButton
+              >
+            </div>
+          </CertificateRow>
         </template>
 
         <!-- HARDWARE token table body -->
         <template v-if="tokenType === 'HARDWARE'">
-          <tr>
-            <div class="name-wrap-top">
-              <i class="icon-xrd_key icon clickable" @click="keyClick(key)"></i>
-              <div class="clickable-link" @click="keyClick(key)">{{key.name}}</div>
-            </div>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border"></td>
-            <td class="no-border td-align-right">
-              <SmallButton
-                v-if="hasPermission"
-                class="table-button-fix"
-                :disabled="disableGenerateCsr"
-                @click="generateCsr(key)"
-              >{{$t('keys.generateCsr')}}</SmallButton>
-            </td>
-          </tr>
+          <KeyRow
+            :disableGenerateCsr="disableGenerateCsr(key)"
+            :hasPermission="hasPermission"
+            :tokenLoggedIn="tokenLoggedIn"
+            :tokenKey="key"
+            @generateCsr="generateCsr(key)"
+            @keyClick="keyClick(key)"
+          />
 
-          <tr v-for="cert in key.certificates" v-bind:key="cert.id">
-            <td class="td-name">
-              <div class="name-wrap">
-                <i class="icon-xrd_certificate icon clickable" @click="certificateClick(cert, key)"></i>
-                <div
-                  class="clickable-link"
-                  @click="certificateClick(cert, key)"
-                >{{cert.certificate_details.issuer_common_name}} {{cert.certificate_details.serial}}</div>
-              </div>
-            </td>
-            <td>{{cert.owner_id}}</td>
-            <td>{{ cert.ocsp_status | ocspStatus }}</td>
-            <td>{{cert.certificate_details.not_after | formatDate}}</td>
-            <td class="status-cell">
-              <certificate-status :certificate="cert" />
-            </td>
-            <td></td>
-            <td class="td-align-right">
-              <SmallButton
-                class="table-button-fix"
-                v-if="!cert.saved_to_configuration && hasPermission"
-                @click="importCert()"
-              >{{$t('keys.importCert')}}</SmallButton>
-            </td>
-          </tr>
+          <CertificateRow
+            v-for="cert in key.certificates"
+            v-bind:key="cert.id"
+            :cert="cert"
+            @certificateClick="certificateClick(cert, key)"
+          >
+            <div slot="certificateAction">
+              <template v-if="hasPermission">
+                <SmallButton
+                  v-if="cert.possible_actions.includes('IMPORT_FROM_TOKEN')"
+                  class="table-button-fix"
+                  @click="importCert(cert.certificate_details.hash)"
+                  >{{ $t('keys.importCert') }}</SmallButton
+                >
+
+                <!-- Special case where HW cert has auth usage -->
+                <div v-else-if="key.usage === 'AUTHENTICATION'">
+                  {{ $t('keys.authNotSupported') }}
+                </div>
+              </template>
+            </div>
+          </CertificateRow>
         </template>
 
         <!-- CSRs -->
         <template
-          v-if="key.certificate_signing_requests && key.certificate_signing_requests.length > 0"
+          v-if="
+            key.certificate_signing_requests &&
+              key.certificate_signing_requests.length > 0
+          "
         >
-          <tr v-for="req in key.certificate_signing_requests" v-bind:key="req.id">
+          <tr
+            v-for="req in key.certificate_signing_requests"
+            v-bind:key="req.id"
+          >
             <td class="td-name">
               <div class="name-wrap">
                 <i class="icon-xrd_certificate icon"></i>
-                <div>{{$t('keys.request')}}</div>
+                <div>{{ $t('keys.request') }}</div>
               </div>
             </td>
-            <td>{{req.id}}</td>
-            <td></td>
-            <td></td>
-            <td class="status-cell"></td>
+            <td colspan="4">{{ req.id }}</td>
             <td class="td-align-right">
               <SmallButton
                 class="table-button-fix"
                 v-if="hasPermission && req.possible_actions.includes('DELETE')"
                 @click="showDeleteCsrDialog(req, key)"
-              >{{$t('keys.deleteCsr')}}</SmallButton>
+                >{{ $t('keys.deleteCsr') }}</SmallButton
+              >
             </td>
           </tr>
         </template>
@@ -175,20 +156,27 @@
  * Table component for an array of keys
  */
 import Vue from 'vue';
-import CertificateStatus from './CertificateStatus.vue';
 import RegisterCertificateDialog from './RegisterCertificateDialog.vue';
+import KeyRow from './KeyRow.vue';
+import CertificateRow from './CertificateRow.vue';
 import SmallButton from '@/components/ui/SmallButton.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
-import { Key, TokenCertificate, TokenCertificateSigningRequest } from '@/types';
-import { Permissions, UsageTypes } from '@/global';
+import {
+  Key,
+  TokenCertificate,
+  TokenCertificateSigningRequest,
+} from '@/openapi-types';
+import { Permissions, UsageTypes, PossibleActions } from '@/global';
 import * as api from '@/util/api';
+import { encodePathParameter } from '@/util/api';
 
 export default Vue.extend({
   components: {
-    CertificateStatus,
     SmallButton,
     RegisterCertificateDialog,
     ConfirmDialog,
+    KeyRow,
+    CertificateRow,
   },
   props: {
     keys: {
@@ -199,7 +187,7 @@ export default Vue.extend({
       type: String,
       required: true,
     },
-    disableGenerateCsr: {
+    tokenLoggedIn: {
       type: Boolean,
     },
     tokenType: {
@@ -234,6 +222,21 @@ export default Vue.extend({
     },
   },
   methods: {
+    disableGenerateCsr(key: Key): boolean {
+      if (!this.tokenLoggedIn) {
+        return true;
+      }
+
+      if (
+        key.possible_actions?.includes(PossibleActions.GENERATE_AUTH_CSR) ||
+        key.possible_actions?.includes(PossibleActions.GENERATE_SIGN_CSR)
+      ) {
+        return false;
+      }
+
+      return true;
+    },
+
     keyClick(key: Key): void {
       this.$emit('keyClick', key);
     },
@@ -250,9 +253,6 @@ export default Vue.extend({
       this.registerDialog = true;
       this.selectedCert = cert;
     },
-    cancelRegisterCert(): void {
-      this.registerDialog = false;
-    },
     registerCert(address: string): void {
       this.registerDialog = false;
       if (!this.selectedCert) {
@@ -264,12 +264,12 @@ export default Vue.extend({
           `/token-certificates/${this.selectedCert.certificate_details.hash}/register`,
           { address },
         )
-        .then((res) => {
-          this.$bus.$emit('show-success', 'keys.certificateRegistered');
+        .then(() => {
+          this.$store.dispatch('showSuccess', 'keys.certificateRegistered');
           this.$emit('refreshList');
         })
         .catch((error) => {
-          this.$bus.$emit('show-error', error.message);
+          this.$store.dispatch('showError', error);
         });
     },
     showDeleteCsrDialog(req: TokenCertificateSigningRequest, key: Key): void {
@@ -285,33 +285,28 @@ export default Vue.extend({
       }
 
       api
-        .remove(`/keys/${this.selectedKey.id}/csrs/${this.selectedCsr.id}`)
-        .then((res) => {
-          this.$bus.$emit('show-success', 'keys.csrDeleted');
+        .remove(
+          `/keys/${encodePathParameter(
+            this.selectedKey.id,
+          )}/csrs/${encodePathParameter(this.selectedCsr.id)}`,
+        )
+        .then(() => {
+          this.$store.dispatch('showSuccess', 'keys.csrDeleted');
           this.$emit('refreshList');
         })
         .catch((error) => {
-          this.$bus.$emit('show-error', error.message);
+          this.$store.dispatch('showError', error);
         });
     },
   },
 });
 </script>
 
-
 <style lang="scss" scoped>
 @import '../../../assets/tables';
 .icon {
   margin-left: 18px;
   margin-right: 20px;
-}
-
-.clickable {
-  cursor: pointer;
-}
-
-.no-border {
-  border-bottom-width: 0 !important;
 }
 
 .table-button-fix {
@@ -328,30 +323,23 @@ export default Vue.extend({
   vertical-align: middle;
 }
 
-.clickable-link {
-  text-decoration: underline;
-  cursor: pointer;
-  height: 100%;
-}
-
 .name-wrap {
   display: flex;
   flex-direction: row;
   align-items: center;
+  margin-left: 0.5rem;
 
   i.v-icon.mdi-file-document-outline {
     margin-left: 42px;
   }
 }
-
-.name-wrap-top {
-  @extend .name-wrap;
-  margin-top: 18px;
-  margin-bottom: 5px;
-  min-width: 100%;
+.title-col {
+  width: 30%;
 }
-
-.status-cell {
-  width: 110px;
+.ocsp-col,
+.expiration-col,
+.status-col,
+.action-col {
+  width: 10%;
 }
 </style>

@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -42,6 +43,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mockito;
 import org.niis.xroad.restapi.exceptions.ErrorDeviation;
 import org.niis.xroad.restapi.facade.GlobalConfFacade;
 import org.niis.xroad.restapi.facade.SignerProxyFacade;
@@ -77,6 +79,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -175,7 +178,7 @@ public class TokenCertificateServiceTest {
 
         DnFieldDescription editableField = new DnFieldDescriptionImpl("O", "x", "default")
                 .setReadOnly(false);
-        when(certificateAuthorityService.getCertificateProfile(any(), any(), any()))
+        when(certificateAuthorityService.getCertificateProfile(any(), any(), any(), anyBoolean()))
                 .thenReturn(new DnFieldTestCertificateProfileInfo(
                         editableField, true));
 
@@ -396,6 +399,7 @@ public class TokenCertificateServiceTest {
                 case SIGNER_EX_INTERNAL_ERROR_HASH:
                 case SIGNER_EX_TOKEN_NOT_AVAILABLE_HASH:
                 case SIGNER_EX_TOKEN_READONLY_HASH:
+                case MOCK_CERTIFICATE_HASH:
                     return new TokenInfoAndKeyId(tokenInfo, goodKey.getId());
                 default:
                     throw new CertificateNotFoundException("unknown cert: " + hash);
@@ -558,25 +562,69 @@ public class TokenCertificateServiceTest {
         tokenCertificateService.deleteCsr(GOOD_CSR_ID);
     }
 
+    @Test
     @WithMockUser(authorities = { "ACTIVATE_DISABLE_AUTH_CERT", "ACTIVATE_DISABLE_SIGN_CERT" })
-    public void activateCertificate() throws CertificateNotFoundException {
+    public void deActivateCertificateCheckPossibleActions() throws Exception {
+        // we want to use the real rules for this test
+        Mockito.reset(possibleActionsRuleEngine);
+        // EXISTING_CERT_IN_SIGN_KEY_HASH - active
+        // EXISTING_CERT_IN_AUTH_KEY_HASH - inactive
+        doAnswer(invocation -> {
+            String certHash = (String) invocation.getArguments()[0];
+            boolean active = false;
+            switch (certHash) {
+                case EXISTING_CERT_IN_SIGN_KEY_HASH:
+                    active = false;
+                    break;
+                case EXISTING_CERT_IN_AUTH_KEY_HASH:
+                    active = true;
+                    break;
+                default:
+                    throw new RuntimeException("bad switch option: " + certHash);
+            }
+            return new CertificateInfo(null, active, true, "status", "certID",
+                    getMockAuthCertificateBytes(), null);
+        }).when(signerProxyFacade).getCertForHash(any());
+
+        // can activate inactive
+        tokenCertificateService.activateCertificate(EXISTING_CERT_IN_SIGN_KEY_HASH);
+
+        // can deactivate active
+        tokenCertificateService.deactivateCertificate(EXISTING_CERT_IN_AUTH_KEY_HASH);
+
+        try {
+            // can not activate already active -> possible actions exception
+            tokenCertificateService.activateCertificate(EXISTING_CERT_IN_AUTH_KEY_HASH);
+            fail("should throw XYZException");
+        } catch (Exception expected) {
+        }
+
+        try {
+            // can not deactivate already disabled -> possible actions exception
+            tokenCertificateService.deactivateCertificate(EXISTING_CERT_IN_SIGN_KEY_HASH);
+            fail("should throw XYZException");
+        } catch (Exception expected) {
+        }
+
+    }
+
+    @Test
+    @WithMockUser(authorities = { "ACTIVATE_DISABLE_AUTH_CERT", "ACTIVATE_DISABLE_SIGN_CERT" })
+    public void activateMissingCertificate() throws Exception {
         try {
             tokenCertificateService.activateCertificate(MISSING_CERTIFICATE_HASH);
-        } catch (TokenCertificateService.InvalidCertificateException e) {
-            fail("shouldn't throw InvalidCertificateException");
-        } catch (CodedException expected) {
-            assertEquals(expected.getFaultCode(), CERT_NOT_FOUND_FAULT_CODE);
+            fail("should throw CertificateNotFoundException");
+        } catch (CertificateNotFoundException expected) {
         }
     }
 
+    @Test
     @WithMockUser(authorities = { "ACTIVATE_DISABLE_AUTH_CERT", "ACTIVATE_DISABLE_SIGN_CERT" })
-    public void deactivateCertificate() throws CertificateNotFoundException {
+    public void deactivateMissingCertificate() throws Exception {
         try {
             tokenCertificateService.deactivateCertificate(MISSING_CERTIFICATE_HASH);
-        } catch (TokenCertificateService.InvalidCertificateException e) {
-            fail("shouldn't throw InvalidCertificateException");
-        } catch (CodedException e) {
-            assertEquals(e.getFaultCode(), CERT_NOT_FOUND_FAULT_CODE);
+            fail("should throw CertificateNotFoundException");
+        } catch (CertificateNotFoundException e) {
         }
     }
 
@@ -620,13 +668,13 @@ public class TokenCertificateServiceTest {
     public void unregisterAuthCertNoValid() throws Exception {
         doAnswer(answer -> authCert).when(signerProxyFacade).getCertForHash(any());
         when(managementRequestSenderService.sendAuthCertDeletionRequest(any()))
-                .thenThrow(new ManagementRequestSenderService.ManagementRequestSendingFailedException(
+                .thenThrow(new ManagementRequestSendingFailedException(
                         new CodedException(X_SSL_AUTH_FAILED, SSL_AUTH_ERROR_MESSAGE)
                                 .withPrefix(SERVER_CLIENTPROXY_X)));
         try {
             tokenCertificateService.unregisterAuthCert(MOCK_AUTH_CERTIFICATE_HASH);
             fail("Should have thrown ManagementRequestSendingFailedException");
-        } catch (ManagementRequestSenderService.ManagementRequestSendingFailedException e) {
+        } catch (ManagementRequestSendingFailedException e) {
             assertTrue(e.getErrorDeviation().getMetadata().get(0).contains(SSL_AUTH_ERROR_MESSAGE));
         }
     }
@@ -635,12 +683,12 @@ public class TokenCertificateServiceTest {
     public void unregisterAuthCertAssertExceptionMessage() throws Exception {
         doAnswer(answer -> authCert).when(signerProxyFacade).getCertForHash(any());
         when(managementRequestSenderService.sendAuthCertDeletionRequest(any()))
-                .thenThrow(new ManagementRequestSenderService.ManagementRequestSendingFailedException(
+                .thenThrow(new ManagementRequestSendingFailedException(
                         new IOException(IO_EXCEPTION_MSG)));
         try {
             tokenCertificateService.unregisterAuthCert(MOCK_AUTH_CERTIFICATE_HASH);
             fail("Should have thrown ManagementRequestSendingFailedException");
-        } catch (ManagementRequestSenderService.ManagementRequestSendingFailedException e) {
+        } catch (ManagementRequestSendingFailedException e) {
             assertTrue(e.getErrorDeviation().getMetadata().contains(IO_EXCEPTION_MSG));
         }
     }

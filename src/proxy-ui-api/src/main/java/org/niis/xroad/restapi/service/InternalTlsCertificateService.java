@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -24,6 +25,9 @@
  */
 package org.niis.xroad.restapi.service;
 
+import ee.ria.xroad.common.SystemProperties;
+import ee.ria.xroad.common.conf.InternalSSLKey;
+import ee.ria.xroad.common.util.CertUtils;
 import ee.ria.xroad.common.util.CryptoUtils;
 
 import lombok.Setter;
@@ -31,6 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
+import org.niis.xroad.restapi.config.audit.AuditDataHelper;
 import org.niis.xroad.restapi.exceptions.DeviationAwareRuntimeException;
 import org.niis.xroad.restapi.exceptions.ErrorDeviation;
 import org.niis.xroad.restapi.repository.InternalTlsCertificateRepository;
@@ -56,27 +61,37 @@ import java.security.cert.X509Certificate;
 public class InternalTlsCertificateService {
 
     public static final String KEY_CERT_GENERATION_FAILED = "key_and_cert_generation_failed";
+    public static final String IMPORT_INTERNAL_CERT_FAILED = "import_internal_cert_failed";
 
     private static final String CERT_PEM_FILENAME = "./cert.pem";
     private static final String CERT_CER_FILENAME = "./cert.cer";
 
     private final ExternalProcessRunner externalProcessRunner;
     private final String generateCertScriptArgs;
+    private final AuditDataHelper auditDataHelper;
 
     @Setter
     private String generateCertScriptPath;
     @Setter
     private InternalTlsCertificateRepository internalTlsCertificateRepository;
+    @Setter
+    private String internalCertPath = SystemProperties.getConfPath() + InternalSSLKey.CRT_FILE_NAME;
+    @Setter
+    private String internalKeyPath = SystemProperties.getConfPath() + InternalSSLKey.PK_FILE_NAME;
+    @Setter
+    private String internalKeystorePath = SystemProperties.getConfPath() + InternalSSLKey.KEY_FILE_NAME;
 
     @Autowired
     public InternalTlsCertificateService(InternalTlsCertificateRepository internalTlsCertificateRepository,
             ExternalProcessRunner externalProcessRunner,
             @Value("${script.generate-certificate.path}") String generateCertScriptPath,
-            @Value("${script.generate-certificate.args}") String generateCertScriptArgs) {
+            @Value("${script.generate-certificate.args}") String generateCertScriptArgs,
+            AuditDataHelper auditDataHelper) {
         this.internalTlsCertificateRepository = internalTlsCertificateRepository;
         this.externalProcessRunner = externalProcessRunner;
         this.generateCertScriptPath = generateCertScriptPath;
         this.generateCertScriptArgs = generateCertScriptArgs;
+        this.auditDataHelper = auditDataHelper;
     }
 
     public X509Certificate getInternalTlsCertificate() {
@@ -127,35 +142,46 @@ public class InternalTlsCertificateService {
     }
 
     /**
-     * Generates a new TLS key and certificate for internal use for the current Security Server and restarts
-     * <code>xroad-proxy</code> process in order to forcefully load the newly created TLS certificate. A runtime
-     * exception will be thrown if the generation is interrupted or otherwise unable to be executed or if the
-     * restarting fails.
+     * Generates a new TLS key and certificate for internal use for the current Security Server. A runtime
+     * exception will be thrown if the generation is interrupted or otherwise unable to be executed.
+     * @throws InterruptedException if the thread running the key generator is interrupted. <b>The interrupted thread
+     * has already been handled with so you can choose to ignore this exception if you so please.</b>
      */
     public void generateInternalTlsKeyAndCertificate() throws InterruptedException {
         try {
-            externalProcessRunner.execute(generateCertScriptPath, generateCertScriptArgs.split("\\s+"));
-            restartXroadProxy();
+            externalProcessRunner.executeAndThrowOnFailure(generateCertScriptPath,
+                    generateCertScriptArgs.split("\\s+"));
         } catch (ProcessNotExecutableException | ProcessFailedException e) {
             log.error("Failed to generate internal TLS key and cert", e);
             throw new DeviationAwareRuntimeException(e, new ErrorDeviation(KEY_CERT_GENERATION_FAILED));
         }
+        // audit log hash of generated cert
+        X509Certificate generatedCert = internalTlsCertificateRepository.getInternalTlsCertificate();
+        auditDataHelper.putCertificateHash(generatedCert);
     }
 
     /**
-     * NOTE: This method should be replaced with a proper way to load the newly generated TLS cert on the fly!
-     * This method is for restarting the xroad-proxy process in order to force load the newly created internal TLS cert.
-     * The functionality is the same as in sysparams_controller.rb#restart_service
-     * @see <a href="https://jira.niis.org/browse/XRDDEV-873">XRDDEV-873</a>
-     * @throws ProcessFailedException
-     * @throws ProcessNotExecutableException
+     * Imports a new internal TLS certificate.
+     * @param certificateBytes
+     * @return X509Certificate
+     * @throws InvalidCertificateException
      */
-    private void restartXroadProxy() throws ProcessFailedException, ProcessNotExecutableException,
-            InterruptedException {
-        log.warn("restarting xroad-proxy");
-        String bash = "/bin/bash";
-        String[] bashRestartXroadProxyArgs = new String[] {"-c", "sudo service xroad-proxy restart 2>&1"};
-        externalProcessRunner.execute(bash, bashRestartXroadProxyArgs);
-        log.warn("restarted xroad-proxy");
+    public X509Certificate importInternalTlsCertificate(byte[] certificateBytes) throws InvalidCertificateException {
+        X509Certificate x509Certificate = null;
+        try {
+            x509Certificate = CryptoUtils.readCertificate(certificateBytes);
+        } catch (Exception e) {
+            throw new InvalidCertificateException("cannot convert bytes to certificate", e);
+        }
+        auditDataHelper.putCertificateHash(x509Certificate);
+        try {
+            CertUtils.writePemToFile(certificateBytes, internalCertPath);
+            CertUtils.createPkcs12(internalKeyPath, internalCertPath, internalKeystorePath);
+        } catch (Exception e) {
+            log.error("Failed to import internal TLS cert", e);
+            throw new DeviationAwareRuntimeException("cannot import internal tls cert", e,
+                    new ErrorDeviation(IMPORT_INTERNAL_CERT_FAILED));
+        }
+        return x509Certificate;
     }
 }

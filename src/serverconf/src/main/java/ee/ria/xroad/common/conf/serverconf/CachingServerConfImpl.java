@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -26,6 +27,7 @@ package ee.ria.xroad.common.conf.serverconf;
 
 import ee.ria.xroad.common.CodedException;
 import ee.ria.xroad.common.SystemProperties;
+import ee.ria.xroad.common.conf.InternalSSLKey;
 import ee.ria.xroad.common.conf.globalconf.GlobalConf;
 import ee.ria.xroad.common.conf.serverconf.model.ClientType;
 import ee.ria.xroad.common.conf.serverconf.model.DescriptionType;
@@ -40,6 +42,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang.ObjectUtils;
 import org.hibernate.Session;
 
 import java.util.Collections;
@@ -65,14 +68,21 @@ public class CachingServerConfImpl extends ServerConfImpl {
     private final Cache<ServiceId, Optional<ServiceType>> serviceCache;
     private final Cache<AclCacheKey, List<EndpointType>> aclCache;
     private final Cache<ClientId, Optional<ClientType>> clientCache;
+    private final Cache<String, InternalSSLKey> internalKeyCache;
 
     /**
-     * Constructor, creates time based object cache with expireSeconds paramter
+     * Constructor, creates time based object cache with expireSeconds (or internalKeyExpireSeconds
+     * with internal key cache)
      */
     @SuppressWarnings("checkstyle:MagicNumber")
     public CachingServerConfImpl() {
         super();
         expireSeconds = SystemProperties.getServerConfCachePeriod();
+
+        internalKeyCache = CacheBuilder.newBuilder()
+                .maximumSize(1)
+                .expireAfterWrite(expireSeconds, TimeUnit.SECONDS)
+                .build();
 
         tspCache = CacheBuilder.newBuilder()
                 .maximumSize(1)
@@ -98,6 +108,19 @@ public class CachingServerConfImpl extends ServerConfImpl {
                 .recordStats()
                 .build();
 
+    }
+
+    @Override
+    public InternalSSLKey getSSLKey() {
+        try {
+            return internalKeyCache.get(InternalSSLKey.KEY_ALIAS, super::getSSLKey);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof CodedException) {
+                throw (CodedException) e.getCause();
+            }
+            log.debug("Failed to get InternalSSLKey", e);
+            return null;
+        }
     }
 
     @Override
@@ -130,7 +153,7 @@ public class CachingServerConfImpl extends ServerConfImpl {
             return tspCache.get(TSP_URL, super::getTspUrl);
         } catch (ExecutionException e) {
             if (e.getCause() instanceof CodedException) {
-                throw (CodedException)e.getCause();
+                throw (CodedException) e.getCause();
             }
             log.debug("Failed to resolve tsp url", e);
             return Collections.emptyList();
@@ -170,8 +193,12 @@ public class CachingServerConfImpl extends ServerConfImpl {
 
     @Override
     public boolean isSslAuthentication(ServiceId service) {
-        return getService(service).map(ServiceType::getSslAuthentication)
-                .orElseThrow(() -> new CodedException(X_UNKNOWN_SERVICE, "Service '%s' not found", service));
+        Optional<ServiceType> serviceTypeOptional = getService(service);
+        if (!serviceTypeOptional.isPresent()) {
+            throw new CodedException(X_UNKNOWN_SERVICE, "Service '%s' not found", service);
+        }
+        ServiceType serviceType = serviceTypeOptional.get();
+        return (boolean) ObjectUtils.defaultIfNull(serviceType.getSslAuthentication(), true);
     }
 
     @Override
@@ -203,7 +230,7 @@ public class CachingServerConfImpl extends ServerConfImpl {
             return aclCache.get(key, () -> tx(s -> super.getEndpoints(s, client, service)));
         } catch (ExecutionException e) {
             if (e.getCause() instanceof CodedException) {
-                throw (CodedException)e.getCause();
+                throw (CodedException) e.getCause();
             }
             log.debug("Failed get list of endpoints", e);
             return Collections.emptyList();
@@ -216,7 +243,7 @@ public class CachingServerConfImpl extends ServerConfImpl {
                     .get(serviceId, () -> tx(session -> Optional.ofNullable(super.getService(session, serviceId))));
         } catch (ExecutionException e) {
             if (e.getCause() instanceof CodedException) {
-                throw (CodedException)e.getCause();
+                throw (CodedException) e.getCause();
             }
             log.debug("Failed to get service", e);
             return Optional.empty();
@@ -229,7 +256,7 @@ public class CachingServerConfImpl extends ServerConfImpl {
                     () -> tx(session -> Optional.ofNullable(super.getClient(session, clientId))));
         } catch (ExecutionException e) {
             if (e.getCause() instanceof CodedException) {
-                throw (CodedException)e.getCause();
+                throw (CodedException) e.getCause();
             }
             log.debug("Failed to get client", e);
             return Optional.empty();

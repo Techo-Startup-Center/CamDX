@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -25,20 +26,31 @@
 package org.niis.xroad.restapi.service;
 
 import ee.ria.xroad.common.CodedException;
+import ee.ria.xroad.common.SystemProperties;
 import ee.ria.xroad.common.conf.globalconf.ApprovedCAInfo;
 import ee.ria.xroad.common.conf.globalconf.GlobalGroupInfo;
 import ee.ria.xroad.common.conf.globalconf.MemberInfo;
 import ee.ria.xroad.common.conf.serverconf.model.TspType;
+import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.SecurityServerId;
 import ee.ria.xroad.common.identifier.XRoadId;
 
 import lombok.extern.slf4j.Slf4j;
+import org.niis.xroad.restapi.exceptions.DeviationAwareRuntimeException;
 import org.niis.xroad.restapi.exceptions.ErrorDeviation;
 import org.niis.xroad.restapi.facade.GlobalConfFacade;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
 
+import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -56,11 +68,25 @@ import static ee.ria.xroad.common.ErrorCodes.X_OUTDATED_GLOBALCONF;
 @PreAuthorize("isAuthenticated()")
 public class GlobalConfService {
 
+    private static final int CONF_CLIENT_ADMIN_PORT = SystemProperties.getConfigurationClientAdminPort();
+    private static final int REST_TEMPLATE_TIMEOUT_MS = 60000;
+    private static final String ERROR_GLOBAL_CONF_DOWNLOAD_REQUEST = "global_conf_download_request_failed";
+
     private final GlobalConfFacade globalConfFacade;
+    private final ServerConfService serverConfService;
+    private final RestTemplate restTemplate;
+    private final String downloadConfigurationAnchorUrl;
 
     @Autowired
-    public GlobalConfService(GlobalConfFacade globalConfFacade) {
+    public GlobalConfService(GlobalConfFacade globalConfFacade, ServerConfService serverConfService,
+            @Value("${url.download-configuration-anchor}") String downloadConfigurationAnchorUrl,
+            RestTemplateBuilder restTemplateBuilder) {
         this.globalConfFacade = globalConfFacade;
+        this.serverConfService = serverConfService;
+        this.downloadConfigurationAnchorUrl = String.format(downloadConfigurationAnchorUrl, CONF_CLIENT_ADMIN_PORT);
+        this.restTemplate = restTemplateBuilder
+                .setReadTimeout(Duration.ofMillis(REST_TEMPLATE_TIMEOUT_MS))
+                .build();
     }
 
     /**
@@ -78,10 +104,11 @@ public class GlobalConfService {
     }
 
     /**
-     * @param identifiers
-     * @return whether the global group identifiers exist in global configuration
+     * @param identifiers global group identifiers
+     * @return whether the global groups exist in global configuration
+     * Global groups may or may not have entries in IDENTIFIER table
      */
-    public boolean globalGroupIdentifiersExist(Collection<XRoadId> identifiers) {
+    public boolean globalGroupsExist(Collection<XRoadId> identifiers) {
         List<XRoadId> existingIdentifiers = globalConfFacade.getGlobalGroups().stream()
                 .map(GlobalGroupInfo::getId)
                 .collect(Collectors.toList());
@@ -89,10 +116,11 @@ public class GlobalConfService {
     }
 
     /**
-     * @param identifiers
-     * @return whether the members identifiers exist in global configuration
+     * @param identifiers client identifiers
+     * @return whether the clients exist in global configuration.
+     * Clients may or may not have entries in IDENTIFIER table
      */
-    public boolean clientIdentifiersExist(Collection<XRoadId> identifiers) {
+    public boolean clientsExist(Collection<XRoadId> identifiers) {
         List<XRoadId> existingIdentifiers = globalConfFacade.getMembers().stream()
                 .map(MemberInfo::getId)
                 .collect(Collectors.toList());
@@ -124,14 +152,6 @@ public class GlobalConfService {
         }
     }
 
-    public static class GlobalConfOutdatedException extends ServiceException {
-        public static final String ERROR_OUTDATED_GLOBALCONF = "global_conf_outdated";
-
-        public GlobalConfOutdatedException(Throwable t) {
-            super(t, new ErrorDeviation(ERROR_OUTDATED_GLOBALCONF));
-        }
-    }
-
     static boolean isCausedByOutdatedGlobalconf(CodedException e) {
         return X_OUTDATED_GLOBALCONF.equals(e.getFaultCode());
     }
@@ -141,6 +161,20 @@ public class GlobalConfService {
      */
     public Collection<ApprovedCAInfo> getApprovedCAsForThisInstance() {
         return globalConfFacade.getApprovedCAs(globalConfFacade.getInstanceIdentifier());
+    }
+
+    /**
+     * @return approved CA matching given CA cert (top level or intermediate), for current instance
+     */
+    public ApprovedCAInfo getApprovedCAForThisInstance(X509Certificate certificate) {
+        return globalConfFacade.getApprovedCA(globalConfFacade.getInstanceIdentifier(), certificate);
+    }
+
+    /**
+     * @return CA certs for current instance
+     */
+    public Collection<X509Certificate> getAllCaCertsForThisInstance() {
+        return globalConfFacade.getAllCaCerts(globalConfFacade.getInstanceIdentifier());
     }
 
     /**
@@ -166,11 +200,48 @@ public class GlobalConfService {
     }
 
     /**
-     *
      * @param url
      * @return name of the timestamping service with the given url
      */
     public String getApprovedTspName(String url) {
         return globalConfFacade.getApprovedTspName(globalConfFacade.getInstanceIdentifier(), url);
+    }
+
+    /**
+     * Checks if given client is one of this security server's clients
+     */
+    public boolean isSecurityServerClientForThisInstance(ClientId client) {
+        return globalConfFacade.isSecurityServerClient(client,
+                serverConfService.getSecurityServerId());
+    }
+
+    /**
+     * Sends an http request to configuration-client in order to trigger the downloading of the global conf
+     * @throws ConfigurationDownloadException if the request succeeds but configuration-client returns an error
+     * @throws DeviationAwareRuntimeException if the request fails
+     */
+    public void executeDownloadConfigurationFromAnchor() throws ConfigurationDownloadException {
+        log.info("Starting to download GlobalConf");
+        ResponseEntity<String> response = null;
+        try {
+            response = restTemplate.getForEntity(downloadConfigurationAnchorUrl, String.class);
+        } catch (RestClientException e) {
+            throw new DeviationAwareRuntimeException(e, new ErrorDeviation(ERROR_GLOBAL_CONF_DOWNLOAD_REQUEST));
+        }
+        if (response != null && response.getStatusCode() != HttpStatus.OK) {
+            throw new ConfigurationDownloadException(response.getBody());
+        }
+    }
+
+    /**
+     * Find member's name in the global conf
+     * @param memberClass
+     * @param memberCode
+     * @return
+     */
+    public String findMemberName(String memberClass, String memberCode) {
+        String instanceIdentifier = globalConfFacade.getInstanceIdentifier();
+        ClientId clientId = ClientId.create(instanceIdentifier, memberClass, memberCode);
+        return globalConfFacade.getMemberName(clientId);
     }
 }

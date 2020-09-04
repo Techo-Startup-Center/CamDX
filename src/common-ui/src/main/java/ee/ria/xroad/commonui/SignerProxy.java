@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -47,6 +48,8 @@ import ee.ria.xroad.signer.protocol.message.GetCertificateInfoForHash;
 import ee.ria.xroad.signer.protocol.message.GetCertificateInfoResponse;
 import ee.ria.xroad.signer.protocol.message.GetKeyIdForCertHash;
 import ee.ria.xroad.signer.protocol.message.GetKeyIdForCertHashResponse;
+import ee.ria.xroad.signer.protocol.message.GetOcspResponses;
+import ee.ria.xroad.signer.protocol.message.GetOcspResponsesResponse;
 import ee.ria.xroad.signer.protocol.message.GetTokenInfo;
 import ee.ria.xroad.signer.protocol.message.GetTokenInfoAndKeyIdForCertHash;
 import ee.ria.xroad.signer.protocol.message.GetTokenInfoAndKeyIdForCertRequestId;
@@ -64,8 +67,10 @@ import ee.ria.xroad.signer.protocol.message.SetTokenFriendlyName;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Responsible for managing cryptographic tokens (smartcards, HSMs, etc.) through the signer.
@@ -416,6 +421,26 @@ public final class SignerProxy {
     }
 
     /**
+     * Get OCSP responses for certs with given hashes. Hashes are converted to lowercase
+     * @param certHashes cert hashes to find OCSP responses for
+     * @return base64 encoded OCSP responses. Each array item is OCSP response for
+     * corresponding cert in {@code certHashes}
+     * @throws Exception if something failed
+     */
+    public static String[] getOcspResponses(String[] certHashes) throws Exception {
+        String[] lowerCaseHashes = toLowerCase(certHashes);
+        GetOcspResponsesResponse response = execute(new GetOcspResponses(lowerCaseHashes));
+        return response.getBase64EncodedResponses();
+    }
+
+    private static String[] toLowerCase(String[] certHashes) {
+        return Arrays.stream(certHashes)
+                .map(String::toLowerCase)
+                .collect(Collectors.toList())
+                .toArray(new String[]{});
+    }
+
+    /**
      * Get TokenInfoAndKeyId for a given cert hash
      * @param certRequestId
      * @return TokenInfoAndKeyId
@@ -439,16 +464,6 @@ public final class SignerProxy {
      */
     public static TokenInfo getTokenForKeyId(String keyId) throws Exception {
         return execute(new GetTokenInfoForKeyId(keyId));
-    }
-
-
-    /**
-     * @throws IllegalArgumentException if parameter was not a lowercase string
-     */
-    private static void checkLowerCase(String s) {
-        if (s == null || !s.toLowerCase().equals(s)) {
-            throw new IllegalArgumentException(s + " should be a lowerCase string");
-        }
     }
 
     private static <T> T execute(Object message) throws Exception {

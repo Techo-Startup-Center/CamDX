@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -194,7 +195,7 @@ public class OperationalDataRecordManagerTest extends BaseTestUsingDB {
     @Test
     public void storeAndQueryDataFilteringByOutputFields() throws Exception {
         ClientId client = ClientId.create(
-               "XTEE-CI-XM", "GOV", "00000001", "System1");
+                "XTEE-CI-XM", "GOV", "00000001", "System1");
 
         storeFullOperationalDataRecords(1, 1474968960L);
 
@@ -325,6 +326,59 @@ public class OperationalDataRecordManagerTest extends BaseTestUsingDB {
 
         // Known client, known service provider (member)
         result = queryRecords(1474968990L, 1474968993L, client, member,
+                new HashSet<>());
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    public void storeAndQueryDataFilteringByClientAndServiceProviderOverflow()
+            throws Exception {
+        ClientId client = ClientId.create(
+                "XTEE-CI-XM", "GOV", "00000001", "System1");
+        ClientId serviceProvider = ClientId.create(
+                "XTEE-CI-XM", "GOV", "00000000", "Center");
+
+        storeFullOperationalDataRecord(1474968960L, client, serviceProvider);
+        storeFullOperationalDataRecord(1474968961L, client, serviceProvider);
+        storeFullOperationalDataRecord(1474968962L, client, serviceProvider);
+        storeFullOperationalDataRecord(1474968963L, client, serviceProvider);
+        storeFullOperationalDataRecord(1474968964L, client, serviceProvider);
+        storeFullOperationalDataRecord(1474968960L, serviceProvider, client);
+        storeFullOperationalDataRecord(1474968961L, serviceProvider, client);
+        storeFullOperationalDataRecord(1474968962L, serviceProvider, client);
+        storeFullOperationalDataRecord(1474968963L, serviceProvider, client);
+        storeFullOperationalDataRecord(1474968964L, serviceProvider, client);
+
+
+        // Less than max records.
+        OperationalDataRecordManager.setMaxRecordsInPayload(10);
+        OperationalDataRecords result = queryRecords(1474968960L, 1474968980L);
+        assertEquals(10, result.size());
+        assertNull(result.getNextRecordsFrom());
+
+        // Known client
+        result = queryRecords(1474968960L, 1474968980L,
+                client);
+        assertEquals(10, result.size());
+
+        // Known client, known service provider
+        result = queryRecords(1474968960L, 1474968980L, client, serviceProvider,
+                new HashSet<>());
+        assertEquals(5, result.size());
+
+        // Known client, known service provider
+        result = queryRecords(1474968960L, 1474968980L, serviceProvider, client,
+                new HashSet<>());
+        assertEquals(5, result.size());
+
+        // Result has more records than max
+        // Filter by client and service provider
+        OperationalDataRecordManager.setMaxRecordsInPayload(4);
+        result = queryRecords(1474968960L, 1474968980L, client, serviceProvider,
+                new HashSet<>());
+        assertEquals(4, result.size());
+        assertNotNull(result.getNextRecordsFrom());
+        result = queryRecords(result.getNextRecordsFrom(), 1474968980L, client, serviceProvider,
                 new HashSet<>());
         assertEquals(1, result.size());
     }

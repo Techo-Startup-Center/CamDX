@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -28,6 +29,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.servlet.ServletComponentScan;
 import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * main spring boot application.
@@ -35,6 +37,7 @@ import org.springframework.cache.annotation.EnableCaching;
 @ServletComponentScan
 @SpringBootApplication
 @EnableCaching
+@EnableScheduling
 @SuppressWarnings("checkstyle:HideUtilityClassConstructor")
 public class RestApiApplication {
     /**

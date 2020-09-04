@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -28,6 +29,7 @@ import org.niis.xroad.restapi.exceptions.ErrorDeviation;
 import org.niis.xroad.restapi.exceptions.WarningDeviation;
 
 import java.util.Collection;
+import java.util.Collections;
 
 /**
  * If warnings were detected and they were not ignored
@@ -39,4 +41,9 @@ public class UnhandledWarningsException extends ServiceException {
     public UnhandledWarningsException(Collection<WarningDeviation> warningDeviations) {
         super(new ErrorDeviation(ERROR_WARNINGS_DETECTED), warningDeviations);
     }
+
+    public UnhandledWarningsException(WarningDeviation warningDeviation) {
+        super(new ErrorDeviation(ERROR_WARNINGS_DETECTED), Collections.singletonList(warningDeviation));
+    }
+
 }

@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -27,6 +28,7 @@ package org.niis.xroad.restapi.facade;
 import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.commonui.SignerProxy;
 import ee.ria.xroad.commonui.SignerProxy.GeneratedCertRequestInfo;
+import ee.ria.xroad.signer.protocol.SignerClient;
 import ee.ria.xroad.signer.protocol.dto.CertificateInfo;
 import ee.ria.xroad.signer.protocol.dto.KeyInfo;
 import ee.ria.xroad.signer.protocol.dto.KeyUsageInfo;
@@ -219,5 +221,19 @@ public class SignerProxyFacade {
      */
     public TokenInfo getTokenForKeyId(String keyId) throws Exception {
         return SignerProxy.getTokenForKeyId(keyId);
+    }
+
+    /**
+     * {@link SignerProxy#getOcspResponses(String[])}
+     */
+    public String[] getOcspResponses(String[] certHashes) throws Exception {
+        return SignerProxy.getOcspResponses(certHashes);
+    }
+
+    /**
+     * {@link SignerClient#execute(Object message)}
+     */
+    public <T> T execute(Object message) throws Exception {
+        return SignerClient.execute(message);
     }
 }

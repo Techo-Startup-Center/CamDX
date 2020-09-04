@@ -1,34 +1,75 @@
+<!--
+   The MIT License
+   Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+   Copyright (c) 2018 Estonian Information System Authority (RIA),
+   Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+   Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
+ -->
 <template>
   <div class="xrd-tab-max-width">
     <div>
       <subViewTitle
-        v-if="serviceDesc.type === 'WSDL'"
+        v-if="serviceDesc.type === serviceTypeEnum.WSDL"
         :title="$t('services.wsdlDetails')"
         @close="close"
       />
       <subViewTitle
-        v-if="serviceDesc.type === 'REST' || serviceDesc.type === 'OPENAPI3'"
+        v-else-if="serviceDesc.type === serviceTypeEnum.REST"
         :title="$t('services.restDetails')"
         @close="close"
       />
+      <subViewTitle
+        v-else-if="serviceDesc.type === serviceTypeEnum.OPENAPI3"
+        :title="$t('services.openapiDetails')"
+        @close="close"
+      />
+
       <div class="delete-wrap">
         <large-button
           v-if="showDelete"
           @click="showDeletePopup(serviceDesc.type)"
           outlined
-        >{{$t('action.delete')}}</large-button>
+          >{{ $t('action.delete') }}</large-button
+        >
       </div>
     </div>
 
     <div class="edit-row">
-      <div>{{$t('services.serviceType')}}</div>
-      <div class="code-input">{{serviceDesc.type === 'OPENAPI3'
-        ? $t('services.OpenApi3Description') : $t('services.restApiBasePath')}}</div>
+      <div>{{ $t('services.serviceType') }}</div>
+
+      <div class="code-input" v-if="serviceDesc.type === serviceTypeEnum.REST">
+        {{ $t('services.restApiBasePath') }}
+      </div>
+      <div
+        class="code-input"
+        v-else-if="serviceDesc.type === serviceTypeEnum.OPENAPI3"
+      >
+        {{ $t('services.OpenApi3Description') }}
+      </div>
+      <div class="code-input" v-else>{{ $t('services.wsdlDescription') }}</div>
     </div>
 
     <ValidationObserver ref="form" v-slot="{ validate, invalid }">
       <div class="edit-row">
-        <div>{{$t('services.editUrl')}}</div>
+        <div>{{ $t('services.editUrl') }}</div>
 
         <ValidationProvider
           rules="required|wsdlUrl"
@@ -49,19 +90,22 @@
       </div>
 
       <div class="edit-row">
-        <template v-if="serviceDesc.type === 'REST' || serviceDesc.type === 'OPENAPI3'">
-          <div>{{$t('services.serviceCode')}}</div>
+        <template
+          v-if="
+            serviceDesc.type === serviceTypeEnum.REST ||
+              serviceDesc.type === serviceTypeEnum.OPENAPI3
+          "
+        >
+          <div>{{ $t('services.serviceCode') }}</div>
 
           <ValidationProvider
-            rules="required"
+            rules="required|xrdIdentifier"
             name="code_field"
             v-slot="{ errors }"
             class="validation-provider"
           >
             <v-text-field
-              v-model="serviceDesc.services
-              && serviceDesc.services[0]
-              && serviceDesc.services[0].service_code"
+              v-model="currentServiceCode"
               single-line
               class="code-input"
               name="code_field"
@@ -76,13 +120,16 @@
 
       <v-card flat>
         <div class="footer-button-wrap">
-          <large-button @click="close()" outlined>{{$t('action.cancel')}}</large-button>
+          <large-button @click="close()" outlined>{{
+            $t('action.cancel')
+          }}</large-button>
           <large-button
             class="save-button"
             :loading="saveBusy"
             @click="save()"
             :disabled="!touched || invalid"
-          >{{$t('action.save')}}</large-button>
+            >{{ $t('action.save') }}</large-button
+          >
         </div>
       </v-card>
     </ValidationObserver>
@@ -108,10 +155,10 @@
     <warningDialog
       :dialog="confirmEditWarning"
       :warnings="warningInfo"
+      :loading="editLoading"
       @cancel="cancelEditWarning()"
       @accept="acceptEditWarning()"
     ></warningDialog>
-
   </div>
 </template>
 
@@ -128,7 +175,9 @@ import SubViewTitle from '@/components/ui/SubViewTitle.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import WarningDialog from '@/components/service/WarningDialog.vue';
 import LargeButton from '@/components/ui/LargeButton.vue';
-import {ServiceDescription} from '@/types';
+import { ServiceTypeEnum } from '@/domain';
+import { ServiceDescription, ServiceDescriptionUpdate } from '@/openapi-types';
+import { encodePathParameter } from '@/util/api';
 
 export default Vue.extend({
   components: {
@@ -153,8 +202,12 @@ export default Vue.extend({
       warningInfo: [],
       touched: false,
       serviceDesc: {} as ServiceDescription,
+      currentServiceCode: undefined as string | undefined,
       initialServiceCode: '',
       saveBusy: false,
+      serviceTypeEnum: ServiceTypeEnum,
+      editLoading: false as boolean,
+      serviceDescriptionUpdate: null as ServiceDescriptionUpdate | null,
     };
   },
   computed: {
@@ -170,28 +223,33 @@ export default Vue.extend({
     save(): void {
       this.saveBusy = true;
 
-      const serviceDescriptionUpdate = {
-        id: this.serviceDesc.id,
+      this.serviceDescriptionUpdate = {
         url: this.serviceDesc.url,
         type: this.serviceDesc.type,
-      } as any;
+        ignore_warnings: false,
+      };
 
-      if (serviceDescriptionUpdate.type === 'REST' || serviceDescriptionUpdate.type === 'OPENAPI3') {
-        serviceDescriptionUpdate.ignore_warnings = false;
-        serviceDescriptionUpdate.rest_service_code = this.initialServiceCode;
-        const currentServiceCode = this.serviceDesc.services && this.serviceDesc.services[0]
-          && this.serviceDesc.services[0].service_code;
-
-        serviceDescriptionUpdate.new_rest_service_code =
-                serviceDescriptionUpdate.rest_service_code !== currentServiceCode ? currentServiceCode :
-                serviceDescriptionUpdate.rest_service_code;
+      if (
+        this.serviceDescriptionUpdate.type === this.serviceTypeEnum.REST ||
+        this.serviceDescriptionUpdate.type === this.serviceTypeEnum.OPENAPI3
+      ) {
+        this.serviceDescriptionUpdate.rest_service_code = this.initialServiceCode;
+        this.serviceDescriptionUpdate.new_rest_service_code =
+          this.serviceDescriptionUpdate.rest_service_code !==
+          this.currentServiceCode
+            ? this.currentServiceCode
+            : this.serviceDescriptionUpdate.rest_service_code;
       }
 
       api
-        .patch(`/service-descriptions/${this.id}`, serviceDescriptionUpdate)
-        .then((res) => {
-          this.$bus.$emit('show-success', 'localGroup.descSaved');
+        .patch(
+          `/service-descriptions/${this.id}`,
+          this.serviceDescriptionUpdate,
+        )
+        .then(() => {
+          this.$store.dispatch('showSuccess', 'localGroup.descSaved');
           this.saveBusy = false;
+          this.serviceDescriptionUpdate = null;
           this.$router.go(-1);
         })
         .catch((error) => {
@@ -199,27 +257,32 @@ export default Vue.extend({
             this.warningInfo = error.response.data.warnings;
             this.confirmEditWarning = true;
           } else {
-            this.$bus.$emit('show-error', error.message);
+            this.$store.dispatch('showError', error);
             this.saveBusy = false;
+            this.serviceDescriptionUpdate = null;
           }
         });
     },
 
     fetchData(id: string): void {
       api
-        .get(`/service-descriptions/${id}`)
+        .get<ServiceDescription>(
+          `/service-descriptions/${encodePathParameter(id)}`,
+        )
         .then((res) => {
           this.serviceDesc = res.data;
-          this.initialServiceCode = this.serviceDesc.services && this.serviceDesc.services[0]
-                  && this.serviceDesc.services[0].service_code;
+          this.initialServiceCode =
+            this.serviceDesc.services &&
+            this.serviceDesc.services[0] &&
+            this.serviceDesc.services[0].service_code;
         })
         .catch((error) => {
-          this.$bus.$emit('show-error', error.message);
+          this.$store.dispatch('showError', error);
         });
     },
 
     showDeletePopup(serviceType: string): void {
-      if (serviceType === 'WSDL') {
+      if (serviceType === this.serviceTypeEnum.WSDL) {
         this.confirmWSDLDelete = true;
       } else {
         this.confirmRESTDelete = true;
@@ -227,48 +290,60 @@ export default Vue.extend({
     },
     doDeleteServiceDesc(): void {
       api
-        .remove(`/service-descriptions/${this.id}`)
+        .remove(`/service-descriptions/${encodePathParameter(this.id)}`)
         .then(() => {
-          this.$bus.$emit('show-success', 'services.deleted');
+          this.$store.dispatch('showSuccess', 'services.deleted');
           this.confirmWSDLDelete = false;
           this.confirmRESTDelete = false;
           this.$router.go(-1);
         })
         .catch((error) => {
-          this.$bus.$emit('show-error', error.message);
+          this.$store.dispatch('showError', error);
         });
     },
 
     acceptEditWarning(): void {
-      const tempDesc: any = this.serviceDesc;
+      this.editLoading = true;
 
-      if (!tempDesc) {
-        return;
+      if (this.serviceDescriptionUpdate) {
+        this.serviceDescriptionUpdate.ignore_warnings = true;
       }
 
-      tempDesc.ignore_warnings = true;
-
       api
-        .patch(`/service-descriptions/${this.id}`, tempDesc)
-        .then((res) => {
-          this.$bus.$emit('show-success', 'localGroup.descSaved');
+        .patch(
+          `/service-descriptions/${this.id}`,
+          this.serviceDescriptionUpdate,
+        )
+        .then(() => {
+          this.$store.dispatch('showSuccess', 'localGroup.descSaved');
           this.$router.go(-1);
         })
         .catch((error) => {
-          this.$bus.$emit('show-error', error.message);
+          this.$store.dispatch('showError', error);
         })
         .finally(() => {
           this.saveBusy = false;
+          this.editLoading = false;
+          this.confirmEditWarning = false;
+          this.serviceDescriptionUpdate = null;
         });
     },
 
     cancelEditWarning(): void {
       this.confirmEditWarning = false;
       this.saveBusy = false;
+      this.editLoading = false;
     },
   },
   created() {
     this.fetchData(this.id);
+  },
+  watch: {
+    serviceDesc(desc: ServiceDescription) {
+      if (desc.services?.[0]?.service_code) {
+        this.currentServiceCode = desc.services[0].service_code;
+      }
+    },
   },
 });
 </script>
@@ -313,4 +388,3 @@ export default Vue.extend({
   margin-left: 20px;
 }
 </style>
-

@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -41,6 +42,8 @@ import java.time.format.DateTimeFormatter;
 @Component
 @Slf4j
 public class CsrFilenameCreator {
+    public static final String INTERNAL_CSR_FILE_PREFIX = "internal_tls_cert_request_";
+    public static final String INTERNAL_CSR_FILE_EXTENSION = ".p10";
 
     /**
      * Create a filename for CSR
@@ -95,5 +98,11 @@ public class CsrFilenameCreator {
         return builder.toString();
     }
 
-
+    /**
+     * Create a simple filename with the current date for internal cert CSR
+     * @return
+     */
+    public String createInternalCsrFilename() {
+        return INTERNAL_CSR_FILE_PREFIX + createDateString() + INTERNAL_CSR_FILE_EXTENSION;
+    }
 }

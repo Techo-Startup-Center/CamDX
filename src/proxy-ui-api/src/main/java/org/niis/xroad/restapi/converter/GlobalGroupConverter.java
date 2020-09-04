@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -73,14 +74,18 @@ public class GlobalGroupConverter {
      * @return {@link GlobalGroupId}
      */
     public GlobalGroupId convertId(String encodedId) {
-        int separators = FormatUtils.countOccurences(encodedId, Converters.ENCODED_ID_SEPARATOR);
-        if (separators != GLOBALGROUP_CODE_INDEX) {
+        if (!isEncodedGlobalGroupId(encodedId)) {
             throw new BadRequestException("Invalid global group id " + encodedId);
         }
         List<String> parts = Arrays.asList(encodedId.split(String.valueOf(Converters.ENCODED_ID_SEPARATOR)));
         String instance = parts.get(INSTANCE_INDEX);
         String groupCode = parts.get(GLOBALGROUP_CODE_INDEX);
         return GlobalGroupId.create(instance, groupCode);
+    }
+
+    public boolean isEncodedGlobalGroupId(String encodedId) {
+        int separators = FormatUtils.countOccurences(encodedId, Converters.ENCODED_ID_SEPARATOR);
+        return separators == GLOBALGROUP_CODE_INDEX;
     }
 
 }

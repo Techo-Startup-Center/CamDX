@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -25,6 +26,7 @@
 package org.niis.xroad.restapi.domain;
 
 import lombok.Getter;
+import lombok.Setter;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -36,7 +38,9 @@ import java.util.Set;
 @Getter
 public class PersistentApiKeyType {
     private Long id;
+    private String plaintTextKey;
     private String encodedKey;
+    @Setter
     private Set<Role> roles;
 
     /**
@@ -45,6 +49,19 @@ public class PersistentApiKeyType {
      * @param roles
      */
     public PersistentApiKeyType(String encodedKey, Collection<Role> roles) {
+        this.encodedKey = encodedKey;
+        this.roles = new HashSet<>();
+        this.roles.addAll(roles);
+    }
+
+    /**
+     * Create api key
+     * @param plaintTextKey
+     * @param encodedKey
+     * @param roles
+     */
+    public PersistentApiKeyType(String plaintTextKey, String encodedKey, Collection<Role> roles) {
+        this.plaintTextKey = plaintTextKey;
         this.encodedKey = encodedKey;
         this.roles = new HashSet<>();
         this.roles.addAll(roles);

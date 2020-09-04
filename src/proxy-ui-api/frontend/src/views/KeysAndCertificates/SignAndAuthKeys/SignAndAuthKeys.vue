@@ -1,3 +1,28 @@
+<!--
+   The MIT License
+   Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+   Copyright (c) 2018 Estonian Information System Authority (RIA),
+   Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+   Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
+ -->
 <template>
   <div class="wrapper">
     <div class="search-row">
@@ -12,7 +37,9 @@
       </v-text-field>
     </div>
 
-    <div v-if="filtered && filtered.length < 1">{{$t('services.noMatches')}}</div>
+    <div v-if="filtered && filtered.length < 1">
+      {{ $t('services.noMatches') }}
+    </div>
 
     <template v-if="filtered">
       <token-expandable
@@ -21,7 +48,7 @@
         @refreshList="fetchData"
         @tokenLogout="logoutDialog = true"
         @tokenLogin="loginDialog = true"
-        @addKey="addKeyDialog = true"
+        @addKey="addKey"
         :token="token"
       />
     </template>
@@ -34,40 +61,36 @@
       @accept="acceptTokenLogout()"
     />
 
-    <TokenLoginDialog :dialog="loginDialog" @cancel="loginDialog = false" @save="tokenLogin" />
-
-    <KeyLabelDialog :dialog="addKeyDialog" @save="addKey" @cancel="addKeyDialog = false" />
+    <TokenLoginDialog
+      :dialog="loginDialog"
+      @cancel="loginDialog = false"
+      @save="tokenLogin"
+    />
   </div>
 </template>
 
 <script lang="ts">
 // View for keys tab
 import Vue from 'vue';
-import { Permissions, RouteName, UsageTypes } from '@/global';
+import { RouteName } from '@/global';
 import TokenExpandable from './TokenExpandable.vue';
-import TokenLoginDialog from './TokenLoginDialog.vue';
-import KeyLabelDialog from './KeyLabelDialog.vue';
+import TokenLoginDialog from '@/components/token/TokenLoginDialog.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
-
 import { mapGetters } from 'vuex';
-import { Key, Token, TokenType, TokenCertificate } from '@/types';
-import * as api from '@/util/api';
-
-import _ from 'lodash';
+import { Key, Token, TokenCertificate } from '@/openapi-types';
+import { deepClone } from '@/util/helpers';
 
 export default Vue.extend({
   components: {
     TokenExpandable,
     ConfirmDialog,
     TokenLoginDialog,
-    KeyLabelDialog,
   },
   data() {
     return {
       search: '',
       loginDialog: false,
       logoutDialog: false,
-      addKeyDialog: false,
     };
   },
   computed: {
@@ -78,7 +101,7 @@ export default Vue.extend({
       }
 
       // Sort array by id:s so it doesn't jump around. Order of items in the backend reply changes between requests.
-      let arr = _.cloneDeep(this.tokens).sort((a: Token, b: Token) => {
+      let arr = deepClone<Token[]>(this.tokens).sort((a, b) => {
         if (a.id < b.id) {
           return -1;
         }
@@ -141,7 +164,7 @@ export default Vue.extend({
     fetchData(): void {
       // Fetch tokens from backend
       this.$store.dispatch('fetchTokens').catch((error) => {
-        this.$bus.$emit('show-error', error.message);
+        this.$store.dispatch('showError', error);
       });
     },
     acceptTokenLogout(): void {
@@ -152,40 +175,25 @@ export default Vue.extend({
       }
 
       this.$store.dispatch('tokenLogout', token.id).then(
-        (response) => {
-          this.$bus.$emit('show-success', 'keys.loggedOut');
+        () => {
+          this.$store.dispatch('showSuccess', 'keys.loggedOut');
         },
         (error) => {
-          this.$bus.$emit('show-error', error.message);
+          this.$store.dispatch('showError', error);
         },
       );
 
       this.logoutDialog = false;
     },
-    tokenLogin(password: string): void {
+    tokenLogin(): void {
       this.fetchData();
       this.loginDialog = false;
     },
-    addKey(label: string) {
-      // Send add new key request to backend
-      const request = label.length > 0 ? { label } : {};
-      const token: Token = this.$store.getters.selectedToken;
-
-      if (!token) {
-        return;
-      }
-
-      api
-        .post(`/tokens/${token.id}/keys`, request)
-        .then((res) => {
-          this.fetchData();
-          this.$bus.$emit('show-success', 'keys.keyAdded');
-        })
-        .catch((error) => {
-          this.$bus.$emit('show-error', error.message);
-        });
-
-      this.addKeyDialog = false;
+    addKey() {
+      this.$router.push({
+        name: RouteName.AddKey,
+        params: { tokenId: this.$store.getters.selectedToken.id },
+      });
     },
   },
   created() {
@@ -214,4 +222,3 @@ export default Vue.extend({
   max-width: 300px;
 }
 </style>
-

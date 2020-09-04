@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -28,9 +29,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.jvnet.libpam.PAM;
 import org.jvnet.libpam.PAMException;
 import org.jvnet.libpam.UnixUser;
+import org.niis.xroad.restapi.config.audit.AuditEventLoggingFacade;
+import org.niis.xroad.restapi.config.audit.RestApiAuditEvent;
 import org.niis.xroad.restapi.domain.Role;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Profile;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -38,7 +39,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -51,17 +51,36 @@ import java.util.stream.Collectors;
  * Application has to be run as a user who has read access to /etc/shadow (
  * likely means that belongs to group shadow)
  * roles are granted with user groups, mappings in {@link Role}
+ *
+ * Authentication is limited with an IP whitelist.
  */
 @Slf4j
-@Component
-@Profile("!devtools-test-auth")
 public class PamAuthenticationProvider implements AuthenticationProvider {
 
     // from PAMLoginModule
     private static final String PAM_SERVICE_NAME = "xroad";
 
-    @Autowired
-    private GrantedAuthorityMapper grantedAuthorityMapper;
+    public static final String KEY_MANAGEMENT_PAM_AUTHENTICATION = "keyManagementPam";
+    public static final String FORM_LOGIN_PAM_AUTHENTICATION = "formLoginPam";
+
+    private final AuthenticationIpWhitelist authenticationIpWhitelist;
+    private final GrantedAuthorityMapper grantedAuthorityMapper;
+    private final RestApiAuditEvent loginEvent; // login event to audit log
+    private final AuditEventLoggingFacade auditEventLoggingFacade;
+
+    /**
+     * constructor
+     * @param authenticationIpWhitelist whitelist that limits the authentication
+     */
+    public PamAuthenticationProvider(AuthenticationIpWhitelist authenticationIpWhitelist,
+            GrantedAuthorityMapper grantedAuthorityMapper,
+            RestApiAuditEvent loginEvent,
+            AuditEventLoggingFacade auditEventLoggingFacade) {
+        this.authenticationIpWhitelist = authenticationIpWhitelist;
+        this.grantedAuthorityMapper = grantedAuthorityMapper;
+        this.loginEvent = loginEvent;
+        this.auditEventLoggingFacade = auditEventLoggingFacade;
+    }
 
     /**
      * users with these groups are allowed access
@@ -73,8 +92,30 @@ public class PamAuthenticationProvider implements AuthenticationProvider {
 
     @Override
     public Authentication authenticate(Authentication authentication) throws AuthenticationException {
-        String username = String.valueOf(authentication.getPrincipal());
+        boolean success = false;
+        String username = "unknown user";
+        Exception caughException = null;
+
+        try {
+            username = String.valueOf(authentication.getPrincipal());
+            Authentication result = doAuthenticateInternal(authentication, username);
+            success = true;
+            return result;
+        } catch (Exception e) {
+            caughException = e;
+            throw e;
+        } finally {
+            if (success) {
+                auditEventLoggingFacade.auditLogSuccess(loginEvent, username);
+            } else {
+                auditEventLoggingFacade.auditLogFail(loginEvent, caughException, username);
+            }
+        }
+    }
+
+    private Authentication doAuthenticateInternal(Authentication authentication, String username) {
         String password = String.valueOf(authentication.getCredentials());
+        authenticationIpWhitelist.validateIpAddress(authentication);
         PAM pam;
         try {
             pam = new PAM(PAM_SERVICE_NAME);
@@ -101,6 +142,7 @@ public class PamAuthenticationProvider implements AuthenticationProvider {
             pam.dispose();
         }
     }
+
     @Override
     public boolean supports(Class<?> authentication) {
         return authentication.equals(

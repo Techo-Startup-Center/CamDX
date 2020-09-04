@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -24,6 +25,7 @@
  */
 package org.niis.xroad.restapi.facade;
 
+import ee.ria.xroad.common.CodedException;
 import ee.ria.xroad.common.certificateprofile.SignCertificateProfileInfo;
 import ee.ria.xroad.common.certificateprofile.impl.SignCertificateProfileInfoParameters;
 import ee.ria.xroad.common.conf.globalconf.ApprovedCAInfo;
@@ -142,9 +144,16 @@ public class GlobalConfFacade {
     }
 
     /**
+     * {@link GlobalConf#getAllCaCerts(String)}
+     */
+    public Collection<X509Certificate> getAllCaCerts(String instanceIdentifier) {
+        return GlobalConf.getAllCaCerts(instanceIdentifier);
+    }
+
+    /**
      * {@link GlobalConf#getServerOwner(SecurityServerId)}
      */
-    public static ClientId getServerOwner(SecurityServerId serverId) {
+    public ClientId getServerOwner(SecurityServerId serverId) {
         return GlobalConf.getServerOwner(serverId);
     }
 
@@ -181,5 +190,34 @@ public class GlobalConfFacade {
      */
     public String getApprovedTspName(String instanceIdentifier, String url) {
         return GlobalConf.getApprovedTspName(instanceIdentifier, url);
+    }
+
+    /**
+     * {@link GlobalConf#isSecurityServerClient(ClientId, SecurityServerId)}}
+     */
+    public boolean isSecurityServerClient(ClientId client,
+            SecurityServerId securityServer) {
+        return GlobalConf.isSecurityServerClient(client, securityServer);
+    }
+
+    /**
+     * {@link GlobalConf#getApprovedCA(String, X509Certificate)}}
+     */
+    public ApprovedCAInfo getApprovedCA(String instanceIdentifier, X509Certificate cert) throws CodedException {
+        return GlobalConf.getApprovedCA(instanceIdentifier, cert);
+    }
+
+    /**
+     * {@link GlobalConf#reload()}
+     */
+    public void reload() {
+        GlobalConf.reload();
+    }
+
+    /**
+     * {@link GlobalConf#reload()}
+     */
+    public SecurityServerId getServerId(X509Certificate cert) throws Exception {
+        return GlobalConf.getServerId(cert);
     }
 }

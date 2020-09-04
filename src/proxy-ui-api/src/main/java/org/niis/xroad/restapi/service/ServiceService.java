@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -25,12 +26,17 @@
 package org.niis.xroad.restapi.service;
 
 import ee.ria.xroad.common.conf.serverconf.model.ClientType;
+import ee.ria.xroad.common.conf.serverconf.model.DescriptionType;
+import ee.ria.xroad.common.conf.serverconf.model.EndpointType;
 import ee.ria.xroad.common.conf.serverconf.model.ServiceDescriptionType;
 import ee.ria.xroad.common.conf.serverconf.model.ServiceType;
 import ee.ria.xroad.common.identifier.ClientId;
 
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
+import org.niis.xroad.restapi.config.audit.AuditDataHelper;
+import org.niis.xroad.restapi.config.audit.RestApiAuditProperty;
+import org.niis.xroad.restapi.exceptions.WarningDeviation;
 import org.niis.xroad.restapi.repository.ClientRepository;
 import org.niis.xroad.restapi.repository.ServiceDescriptionRepository;
 import org.niis.xroad.restapi.util.FormatUtils;
@@ -39,8 +45,18 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.net.ssl.SSLHandshakeException;
+
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
+
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.ID;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.SERVICES;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.TIMEOUT;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.TLS_AUTH;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.URL;
 
 /**
  * service class for handling services
@@ -51,18 +67,24 @@ import java.util.Optional;
 @PreAuthorize("isAuthenticated()")
 public class ServiceService {
 
-    private static final String HTTPS = "https";
+    public static final String WARNING_INTERNAL_SERVER_SSL_HANDSHAKE_ERROR = "internal_server_ssl_handshake_error";
+    public static final String WARNING_INTERNAL_SERVER_SSL_ERROR = "internal_server_ssl_error";
 
     private final ClientRepository clientRepository;
     private final ServiceDescriptionRepository serviceDescriptionRepository;
     private final UrlValidator urlValidator;
+    private final AuditDataHelper auditDataHelper;
+    private final InternalServerTestService internalServerTestService;
 
     @Autowired
     public ServiceService(ClientRepository clientRepository, ServiceDescriptionRepository serviceDescriptionRepository,
-            UrlValidator urlValidator) {
+            UrlValidator urlValidator, AuditDataHelper auditDataHelper,
+            InternalServerTestService internalServerTestService) {
         this.clientRepository = clientRepository;
         this.serviceDescriptionRepository = serviceDescriptionRepository;
         this.urlValidator = urlValidator;
+        this.auditDataHelper = auditDataHelper;
+        this.internalServerTestService = internalServerTestService;
     }
 
     /**
@@ -88,13 +110,14 @@ public class ServiceService {
     }
 
     /**
-     * Get {@link ServiceType} from a {@link ClientType} by comparing the service code (with version).
+     * Get {@link ServiceType} from a {@link ClientType} by comparing the full service code (with version).
      * @param client
      * @param fullServiceCode
      * @return ServiceType
      * @throws ServiceNotFoundException if service with fullServiceCode was not found
      */
-    public ServiceType getServiceFromClient(ClientType client, String fullServiceCode) throws ServiceNotFoundException {
+    public ServiceType getServiceFromClient(ClientType client, String fullServiceCode)
+            throws ServiceNotFoundException {
         Optional<ServiceType> foundService = client.getServiceDescription()
                 .stream()
                 .map(ServiceDescriptionType::getService)
@@ -118,15 +141,24 @@ public class ServiceService {
      * @param sslAuthAll
      * @return ServiceType
      * @throws InvalidUrlException if given url was not valid
+     * @throws InvalidHttpsUrlException if given url does not use https and https is required
      * @throws ServiceNotFoundException if service with given fullServicecode was not found
      * @throws ClientNotFoundException if client with given id was not found
+     * @throws UnhandledWarningsException if SSL auth is enabled and verification of the SSL connection between the
+     * Security Server and information system fails, and ignoreWarnings was false
      */
     public ServiceType updateService(ClientId clientId, String fullServiceCode,
             String url, boolean urlAll, Integer timeout, boolean timeoutAll,
-            boolean sslAuth, boolean sslAuthAll) throws InvalidUrlException, ServiceNotFoundException,
-            ClientNotFoundException {
+            boolean sslAuth, boolean sslAuthAll, boolean ignoreWarnings) throws InvalidUrlException,
+            ServiceNotFoundException, ClientNotFoundException, UnhandledWarningsException, InvalidHttpsUrlException {
+
+        auditDataHelper.put(clientId);
+
         if (!urlValidator.isValidUrl(url)) {
             throw new InvalidUrlException("URL is not valid: " + url);
+        }
+        if (sslAuth && !FormatUtils.isHttpsUrl(url)) {
+            throw new InvalidHttpsUrlException("HTTPS must be used when SSL authentication is enabled");
         }
 
         ServiceType serviceType = getService(clientId, fullServiceCode);
@@ -135,28 +167,97 @@ public class ServiceService {
             throw new ServiceNotFoundException("Service " + fullServiceCode + " not found");
         }
 
+        if (sslAuth && !ignoreWarnings) {
+            ClientType client = serviceType.getServiceDescription().getClient();
+            try {
+                internalServerTestService.testHttpsConnection(client.getIsCert(), url);
+            } catch (SSLHandshakeException she) {
+                throw new UnhandledWarningsException(
+                        new WarningDeviation(WARNING_INTERNAL_SERVER_SSL_HANDSHAKE_ERROR, url));
+            } catch (Exception e) {
+                throw new UnhandledWarningsException(new WarningDeviation(WARNING_INTERNAL_SERVER_SSL_ERROR, url));
+            }
+        }
+
         ServiceDescriptionType serviceDescriptionType = serviceType.getServiceDescription();
+        if (DescriptionType.REST.equals(serviceDescriptionType.getType())) {
+            serviceDescriptionType.setUrl(url);
+        }
+
+        auditDataHelper.putServiceDescriptionUrl(serviceDescriptionType);
 
         serviceDescriptionType.getService().forEach(service -> {
-            boolean serviceMatch = service == serviceType;
-            if (urlAll || serviceMatch) {
-                service.setUrl(url);
-            }
-            if (timeoutAll || serviceMatch) {
-                service.setTimeout(timeout);
-            }
-            if (sslAuthAll || serviceMatch) {
-                if (service.getUrl().startsWith(HTTPS)) {
-                    service.setSslAuthentication(sslAuth);
-                } else {
-                    service.setSslAuthentication(null);
-                }
-            }
+            updateServiceFromSameDefinition(url, urlAll, timeout,
+                    timeoutAll, sslAuth, sslAuthAll,
+                    serviceType, service);
         });
 
         serviceDescriptionRepository.saveOrUpdate(serviceDescriptionType);
 
         return serviceType;
+    }
+
+    /**
+     * @param targetService service we are actually updating
+     * @param serviceFromSameDefinition another service from same service definition. Can be == targetService
+     */
+    private void updateServiceFromSameDefinition(String url, boolean urlAll, Integer timeout,
+            boolean timeoutAll, boolean sslAuth, boolean sslAuthAll,
+            ServiceType targetService, ServiceType serviceFromSameDefinition) {
+
+        boolean serviceMatch = serviceFromSameDefinition == targetService;
+        if (urlAll || serviceMatch) {
+            serviceFromSameDefinition.setUrl(url);
+        }
+        if (timeoutAll || serviceMatch) {
+            serviceFromSameDefinition.setTimeout(timeout);
+        }
+        if (sslAuthAll || serviceMatch) {
+            if (FormatUtils.isHttpsUrl(serviceFromSameDefinition.getUrl())) {
+                serviceFromSameDefinition.setSslAuthentication(sslAuth);
+            } else {
+                serviceFromSameDefinition.setSslAuthentication(null);
+            }
+        }
+        if (urlAll || timeoutAll || sslAuthAll || serviceMatch) {
+            // new audit log data item
+            HashMap<RestApiAuditProperty, Object> serviceAuditData = new LinkedHashMap<>();
+            auditDataHelper.addListPropertyItem(SERVICES, serviceAuditData);
+            serviceAuditData.put(ID, FormatUtils.getServiceFullName(serviceFromSameDefinition));
+            serviceAuditData.put(URL, serviceFromSameDefinition.getUrl());
+            serviceAuditData.put(TIMEOUT, serviceFromSameDefinition.getTimeout());
+            serviceAuditData.put(TLS_AUTH, serviceFromSameDefinition.getSslAuthentication());
+        }
+    }
+
+    /**
+     * Add new endpoint to a service
+     *
+     * @param serviceType                                                       service where endpoint is added
+     * @param method                                                            method
+     * @param path                                                              path
+     * @return
+     * @throws EndpointAlreadyExistsException                                   equivalent endpoint already exists for
+     *                                                                          this client
+     * @throws ServiceDescriptionService.WrongServiceDescriptionTypeException   if trying to add endpoint to a WSDL
+     */
+    public EndpointType addEndpoint(ServiceType serviceType, String method, String path)
+            throws EndpointAlreadyExistsException, ServiceDescriptionService.WrongServiceDescriptionTypeException {
+
+        if (serviceType.getServiceDescription().getType().equals(DescriptionType.WSDL)) {
+            throw new ServiceDescriptionService.WrongServiceDescriptionTypeException("Endpoint can't be added to a "
+                    + "WSDL type of Service Description");
+        }
+
+        EndpointType endpointType = new EndpointType(serviceType.getServiceCode(), method, path, false);
+        ClientType client = serviceType.getServiceDescription().getClient();
+        if (client.getEndpoint().stream().anyMatch(existingEp -> existingEp.isEquivalent(endpointType))) {
+            throw new EndpointAlreadyExistsException("Endpoint with equivalent service code, method and path already "
+                    + "exists for this client");
+        }
+        client.getEndpoint().add(endpointType);
+        clientRepository.saveOrUpdate(client);
+        return endpointType;
     }
 
 }

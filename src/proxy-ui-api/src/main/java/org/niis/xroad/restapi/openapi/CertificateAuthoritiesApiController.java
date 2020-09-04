@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -25,7 +26,6 @@
 package org.niis.xroad.restapi.openapi;
 
 import ee.ria.xroad.common.certificateprofile.CertificateProfileInfo;
-import ee.ria.xroad.common.conf.globalconf.ApprovedCAInfo;
 import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.signer.protocol.dto.KeyInfo;
 import ee.ria.xroad.signer.protocol.dto.KeyUsageInfo;
@@ -36,6 +36,7 @@ import org.niis.xroad.restapi.converter.CertificateAuthorityConverter;
 import org.niis.xroad.restapi.converter.ClientConverter;
 import org.niis.xroad.restapi.converter.CsrSubjectFieldDescriptionConverter;
 import org.niis.xroad.restapi.converter.KeyUsageTypeMapping;
+import org.niis.xroad.restapi.dto.ApprovedCaDto;
 import org.niis.xroad.restapi.exceptions.ErrorDeviation;
 import org.niis.xroad.restapi.openapi.model.CertificateAuthority;
 import org.niis.xroad.restapi.openapi.model.CsrSubjectFieldDescription;
@@ -60,7 +61,7 @@ import java.util.List;
  * certificate authorities api controller
  */
 @Controller
-@RequestMapping("/api")
+@RequestMapping(ApiUtil.API_V1_PREFIX)
 @Slf4j
 @PreAuthorize("denyAll")
 public class CertificateAuthoritiesApiController implements CertificateAuthoritiesApi {
@@ -93,15 +94,22 @@ public class CertificateAuthoritiesApiController implements CertificateAuthoriti
      * @return
      */
     @Override
-    @PreAuthorize("(hasAuthority('GENERATE_AUTH_CERT_REQ') and "
+    @PreAuthorize("hasAuthority('VIEW_APPROVED_CERTIFICATE_AUTHORITIES')"
+            + " or (hasAuthority('GENERATE_AUTH_CERT_REQ') and "
             + " (#keyUsageType == T(org.niis.xroad.restapi.openapi.model.KeyUsageType).AUTHENTICATION"
             + " or #keyUsageType == null))"
             + "or (hasAuthority('GENERATE_SIGN_CERT_REQ') and "
             + "#keyUsageType == T(org.niis.xroad.restapi.openapi.model.KeyUsageType).SIGNING)")
-    public ResponseEntity<List<CertificateAuthority>> getApprovedCertificateAuthorities(KeyUsageType keyUsageType) {
+    public ResponseEntity<List<CertificateAuthority>> getApprovedCertificateAuthorities(KeyUsageType keyUsageType,
+            Boolean includeIntermediateCas) {
         KeyUsageInfo keyUsageInfo = KeyUsageTypeMapping.map(keyUsageType).orElse(null);
-        Collection<ApprovedCAInfo> caInfos = certificateAuthorityService.getCertificateAuthorities(keyUsageInfo);
-        List<CertificateAuthority> cas = certificateAuthorityConverter.convert(caInfos);
+        Collection<ApprovedCaDto> caDtos = null;
+        try {
+            caDtos = certificateAuthorityService.getCertificateAuthorities(keyUsageInfo, includeIntermediateCas);
+        } catch (CertificateAuthorityService.InconsistentCaDataException e) {
+            throw new InternalServerErrorException(e);
+        }
+        List<CertificateAuthority> cas = certificateAuthorityConverter.convert(caDtos);
         return new ResponseEntity<>(cas, HttpStatus.OK);
     }
 
@@ -115,7 +123,8 @@ public class CertificateAuthoritiesApiController implements CertificateAuthoriti
             String caName,
             KeyUsageType keyUsageType,
             String keyId,
-            String encodedMemberId) {
+            String encodedMemberId,
+            Boolean isNewMember) {
 
         // squid:S3655 throwing NoSuchElementException if there is no value present is
         // fine since keyUsageInfo is mandatory parameter
@@ -147,7 +156,7 @@ public class CertificateAuthoritiesApiController implements CertificateAuthoriti
 
             CertificateProfileInfo profileInfo;
             profileInfo = certificateAuthorityService.getCertificateProfile(
-                    caName, keyUsageInfo, memberId);
+                    caName, keyUsageInfo, memberId, isNewMember);
             List<CsrSubjectFieldDescription> converted = subjectConverter.convert(
                     profileInfo.getSubjectFields());
             return new ResponseEntity<>(converted, HttpStatus.OK);

@@ -1,12 +1,9 @@
 ---
 openapi: 3.0.0
-servers:
-  - description: X-Road API Design
-    url: https://virtserver.swaggerhub.com/Gofore/X-Road/1.0.0
 info:
-  description: X-Road UI Based API
-  version: "1.0.22"
-  title: X-Road UI Based API
+  description: X-Road Security Server Admin API
+  version: "1.0.28"
+  title: X-Road Security Server Admin API
   contact:
     name: Nordic Institute for Interoperability Solutions (NIIS)
     url: https://github.com/nordic-institute/X-Road-development/#enhancement-requests-and-error-reports
@@ -14,16 +11,57 @@ info:
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
+servers:
+  - url: /api/v1
+    description: basepath for API v1
+  - url: https://app.swaggerhub.com/apis/Gofore/X-Road/1.0.28/api/v1
+    description: SwaggerHub API TEST URL for example requests
 tags:
-  - name: security server
-    description: <br>Security Server API design
-  - name: central server
-    description: <br>Central Server API design
+  - name: backups
+    description: backup endpoints
+  - name: certificate-authorities
+    description: CA endpoints
+  - name: clients
+    description: clients endpoints
+  - name: diagnostics
+    description: diagnostics endpoints
+  - name: endpoints
+    description: services' endpoints related endpoints
+  - name: initialization
+    description: initialization endpoints
+  - name: keys
+    description: keys endpoints
+  - name: language
+    description: language endpoints
+  - name: local-groups
+    description: local groups endpoints
+  - name: member-classes
+    description: member classes endpoints
+  - name: member-names
+    description: member names endpoints
+  - name: security-servers
+    description: security servers endpoints
+  - name: services
+    description: services endpoints
+  - name: service-descriptions
+    description: service descriptions endpoints
+  - name: system
+    description: system endpoints
+  - name: timestamping
+    description: timestamping endpoints
+  - name: token-certificate
+    description: token certificates endpoints
+  - name: tokens
+    description: tokens endpoints
+  - name: user
+    description: user endpoints
+  - name: xroad-instances
+    description: xroad-instances endpoints
 paths:
   /backups:
     get: # ok
       tags:
-        - security server
+        - backups
       summary: get security server backups
       operationId: getBackups
       description: Administrator views the backups for the security server.
@@ -52,7 +90,7 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - backups
       summary: add new backup for the security server
       operationId: addBackup
       description: Adds security server backup to the system
@@ -82,18 +120,25 @@ paths:
   /backups/upload:
     post: # ok
       tags:
-        - security server
+        - backups
       summary: upload new backup for the security server
       operationId: uploadBackup
       description: Uploads new security server backup to the system
+      parameters:
+        - in: query
+          name: ignore_warnings
+          description: if true, any ignorable warnings are ignored. if false (or missing),
+                    any warnings cause request to fail
+          required: false
+          schema:
+            type: boolean
+            default: false
       requestBody:
         description: backup to add
         content:
-          application/octet-stream:
+          multipart/form-data:
             schema:
-              type: string
-              format: binary
-              description: backup file
+              $ref: '#/components/schemas/BackupArchive'
       responses:
         '201':
           description: item created
@@ -120,7 +165,7 @@ paths:
   /backups/{filename}:
     delete: # ok
       tags:
-        - security server
+        - backups
       summary: delete security server backup
       operationId: deleteBackup
       description: Administrator deletes the backup of the security server.
@@ -150,7 +195,7 @@ paths:
   /backups/{filename}/restore:
     put: # ok
       tags:
-        - security server
+        - backups
       summary: restore security server configuration from backup
       operationId: restoreBackup
       description: Administrator restores the security server configuration from backup.
@@ -165,10 +210,12 @@ paths:
             minLength: 1
             maxLength: 255
       responses:
-        '202':
-          description: item accepted
-        '204':
-          description: request was successful
+        '200':
+          description: restore was successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensLoggedOut'
         '400':
           description: request was invalid
         '401':
@@ -184,7 +231,7 @@ paths:
   /backups/{filename}/download:
     get: # ok
       tags:
-        - security server
+        - backups
       summary: download security server backup
       operationId: downloadBackup
       description: Administrator downloads the backup of the security server.
@@ -222,7 +269,7 @@ paths:
   /token-certificates:
     post: # ok
       tags:
-        - security server
+        - token-certificates
       summary: import new certificate
       operationId: importCertificate
       description: Imports certificate to the system
@@ -258,7 +305,7 @@ paths:
   /token-certificates/{hash}:
     get: # ok
       tags:
-        - security server
+        - token-certificates
       summary: get certificate information
       operationId: getCertificate
       description: Administrator views certificate details.
@@ -293,7 +340,7 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - token-certificates
       summary: delete certificate
       operationId: deleteCertificate
       description: Administrator deletes the certificate.
@@ -323,7 +370,7 @@ paths:
   /token-certificates/{hash}/activate:
     put: # ok
       tags:
-        - security server
+        - token-certificates
       summary: activate certificate
       operationId: activateCertificate
       description: Administrator activates selected certificate.
@@ -355,7 +402,7 @@ paths:
   /token-certificates/{hash}/disable:
     put: # ok
       tags:
-        - security server
+        - token-certificates
       summary: deactivate certificate
       operationId: disableCertificate
       description: Administrator deactivates selected certificate.
@@ -387,7 +434,7 @@ paths:
   /token-certificates/{hash}/import:
     post: # ok
       tags:
-        - security server
+        - token-certificates
       summary: import an existing certificate from a token by cert hash
       operationId: importCertificateFromToken
       description: Imports certificate from a token to the system
@@ -425,7 +472,7 @@ paths:
   /token-certificates/{hash}/possible-actions:
     get: # ok
       tags:
-        - security server
+        - token-certificates
       summary: get possible actions for one certificate
       operationId: getPossibleActionsForCertificate
       description: UI needs to know which actions can be done on one certificate
@@ -461,7 +508,7 @@ paths:
   /token-certificates/{hash}/register:
     put: # ok
       tags:
-        - security server
+        - token-certificates
       summary: register certificate
       operationId: registerCertificate
       description: Administrator registers selected certificate.
@@ -479,19 +526,7 @@ paths:
         content:
           application/json:
             schema:
-              title: SecurityServerAddress
-              type: object
-              required:
-                - address
-              properties:
-                address:
-                  type: string
-                  description: Security server's IP address or DNS name
-                  format: text
-                  minLength: 1
-                  maxLength: 255
-              example:
-                address: 127.0.0.1
+              $ref: '#/components/schemas/SecurityServerAddress'
       responses:
         '200':
           description: request was successful
@@ -510,7 +545,7 @@ paths:
   /token-certificates/{hash}/unregister:
     put: # ok
       tags:
-        - security server
+        - token-certificates
       summary: unregister authentication certificate
       operationId: unregisterAuthCertificate
       description: Administrator unregisters selected authentication certificate.
@@ -542,7 +577,7 @@ paths:
   /token-certificates/{hash}/mark-for-deletion:
     put: # ok
       tags:
-        - security server
+        - token-certificates
       summary: marks an auth certificate for deletion
       operationId: markAuthCertForDeletion
       description: Administrator marks an auth certificate for deletion.
@@ -574,7 +609,7 @@ paths:
   /clients:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: find security server clients
       operationId: findClients
       description: Administrator views the clients of the security server.
@@ -638,6 +673,20 @@ paths:
           schema:
             type: boolean
             default: true
+        - in: query
+          name: local_valid_sign_cert
+          description: to search only local clients with valid sign cert
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - in: query
+          name: exclude_local
+          description: to search only clients that are not added to this security server
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: list of clients
@@ -663,7 +712,7 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - clients
       summary: Add new client for the security server.
       operationId: addClient
       description: >
@@ -708,7 +757,7 @@ paths:
   /clients/{id}:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: get security server client information
       operationId: getClient
       description: Administrator views the client details of the security server.
@@ -743,7 +792,7 @@ paths:
           description: internal server error
     patch: # ok
       tags:
-        - security server
+        - clients
       summary: update security server client information
       operationId: updateClient
       description: Administrator updates the client information.
@@ -761,12 +810,7 @@ paths:
         content:
           application/json:
             schema:
-              title: ConnectionTypeWrapper
-              type: object
-              description: connection type
-              properties:
-                connection_type:
-                  $ref: '#/components/schemas/ConnectionType'
+              $ref: '#/components/schemas/ConnectionTypeWrapper'
       responses:
         '200':
           description: client modified
@@ -788,7 +832,7 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - clients
       summary: delete security server client
       operationId: deleteClient
       description: Administrator deletes the client of the security server.
@@ -818,9 +862,9 @@ paths:
   /clients/{id}/local-groups:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: get local groups for the selected client
-      operationId: getClientGroups
+      operationId: getClientLocalGroups
       description: Administrator views the local groups for the client.
       parameters:
         - in: path
@@ -857,9 +901,9 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - clients
       summary: add new local group for the security server client
-      operationId: addClientGroup
+      operationId: addClientLocalGroup
       description: Administrator adds a new local group for the client.
       parameters:
         - in: path
@@ -876,7 +920,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LocalGroup'
+              $ref: '#/components/schemas/LocalGroupAdd'
       responses:
         '201':
           description: local group created
@@ -898,10 +942,75 @@ paths:
           description: an existing item already exists
         '500':
           description: internal server error
+  /clients/{id}/orphans:
+    get: # ok
+      tags:
+        - clients
+      summary: get information about orphaned sign keys, certificates and csrs left behind a delete client
+      operationId: getClientOrphans
+      description: Administrator has deleted a client and wants to know if some orphaned sign keys, certificates or csrs exist
+      parameters:
+        - in: path
+          name: id
+          description: id of the client
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1023
+      responses:
+        '200':
+          description: information telling that orphans exist. If they don't exist, 404 is returned instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrphanInformation'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+    delete: # ok
+      tags:
+        - clients
+      summary: delete orphaned sign keys, certificates and csrs left behind a delete client
+      operationId: deleteOrphans
+      description: Administrator deletes the orphaned sign keys, certificates and csrs left behind a delete client.
+      parameters:
+        - in: path
+          name: id
+          description: id of the client
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1023
+      responses:
+        '204':
+          description: deletion was successful
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '500':
+          description: internal server error
   /clients/{id}/register:
     put: # ok
       tags:
-        - security server
+        - clients
       summary: register security server client
       operationId: registerClient
       description: Administrator registers client.
@@ -933,8 +1042,8 @@ paths:
   /clients/{id}/service-clients:
     get: # ok
       tags:
-        - security server
-      summary: get service clients for the selected client
+        - clients
+      summary: get service clients for the selected client's services
       operationId: getClientServiceClients
       description: Administrator views the service clients for the client.
       parameters:
@@ -970,12 +1079,13 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
-    post: # ok
+  /clients/{id}/service-clients/{sc_id}:
+    get: # ok
       tags:
-        - security server
-      summary: add new service client for the security server client
-      operationId: addClientServiceClient
-      description: Administrator adds a new service client for the client.
+        - clients
+      summary: get single service client by client id and service client id
+      operationId: getServiceClient
+      description: Administrator views the information for a single service client
       parameters:
         - in: path
           name: id
@@ -986,26 +1096,173 @@ paths:
             format: text
             minLength: 1
             maxLength: 1023
-      requestBody:
-        content:
-          application/json:
-            schema:
-              title: ServiceClientId
-              type: object
-              properties:
-                id:
-                  type: string
-                  format: text
-                  description: id of the service client
-                  minLength: 1
-                  maxLength: 1279
+        - in: path
+          name: sc_id
+          description: id of the service client
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1023
       responses:
-        '201':
-          description: service client added
+        '200':
+          description: single service clients
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceClient'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /clients/{id}/service-clients/{sc_id}/access-rights:
+    get: # ok
+      tags:
+        - clients
+      summary: get access rights for the selected service client.
+      operationId: getServiceClientAccessRights
+      description: Administrator views service client's access rights.
+      parameters:
+        - in: path
+          name: id
+          description: id of the client who owns the services
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1023
+        - in: path
+          name: sc_id
+          description: id of the service client
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1279
+      responses:
+        '200':
+          description: list of access rights
+          content:
+            application/json:
+              schema:
+                type: array
+                uniqueItems: true
+                description: array of access right objects
+                items:
+                  $ref: '#/components/schemas/AccessRight'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+    post: # ok
+      tags:
+        - clients
+      summary: add new access rights for selected service client. If service client did not exist yet, one is created.
+      operationId: addServiceClientAccessRights
+      description: Adds access rights to the service client.
+      parameters:
+        - in: path
+          name: id
+          description: id of the client who owns the services
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1023
+        - in: path
+          name: sc_id
+          description: id of the service client
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1279
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessRights'
+      responses:
+        '201':
+          description: access right that was added
+          content:
+            application/json:
+              schema:
+                type: array
+                uniqueItems: true
+                description: array of added access right objects
+                items:
+                  $ref: '#/components/schemas/AccessRight'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
+  /clients/{id}/service-clients/{sc_id}/access-rights/delete:
+    post: # ok
+      tags:
+        - clients
+      summary: remove access rights
+      operationId: deleteServiceClientAccessRights
+      description: Administrator removes access rights from selected service client.
+      parameters:
+        - in: path
+          name: id
+          description: id of the client who owns the services
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1023
+        - in: path
+          name: sc_id
+          description: id of the service client
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 1279
+      requestBody:
+        description: list of access rights to be deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessRights'
+      responses:
+        '204':
+          description: access right(s) deleted
         '400':
           description: request was invalid
         '401':
@@ -1023,7 +1280,7 @@ paths:
   /clients/{id}/sign-certificates:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: get security server client certificates information
       operationId: getClientSignCertificates
       description: Administrator views the certificates for the client.
@@ -1063,7 +1320,7 @@ paths:
   /clients/{id}/tls-certificates:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: get security server client TLS certificates information
       operationId: getClientTlsCertificates
       description: Administrator views the TLS certificates for the client.
@@ -1102,7 +1359,7 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - clients
       summary: add new certificate for the security server client
       operationId: addClientTlsCertificate
       description: Administrator adds a new certificate for the client.
@@ -1148,7 +1405,7 @@ paths:
   /clients/{id}/tls-certificates/{hash}:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: get TLS certificate
       operationId: getClientTlsCertificate
       description: Administrator gets the TLS certificate for the selected client.
@@ -1192,7 +1449,7 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - clients
       summary: delete certificate
       operationId: deleteClientTlsCertificate
       description: Administrator deletes the certificate from selected client.
@@ -1231,7 +1488,7 @@ paths:
   /clients/{id}/unregister:
     put: # ok
       tags:
-        - security server
+        - clients
       summary: unregister security server client
       operationId: unregisterClient
       description: Administrator unregisters client.
@@ -1263,7 +1520,7 @@ paths:
   /clients/{id}/service-descriptions:
     get: # ok
       tags:
-        - security server
+        - clients
       summary: get security server client service descriptions
       operationId: getClientServiceDescriptions
       description: Administrator views the service descriptions for the client.
@@ -1302,7 +1559,7 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - clients
       summary: add new service description for the security server client
       operationId: addClientServiceDescription
       description: Administrator adds a new service description for the client.
@@ -1349,13 +1606,13 @@ paths:
           description: an existing item already exists
         '500':
           description: internal server error
-  /clients/{id}/subjects:
+  /clients/{id}/service-client-candidates:
     get: # ok
       tags:
-        - security server
-      summary: find access right subjects
-      operationId: findSubjects
-      description: Administrator views the clients, globalgroups and localgroups of the security server as access right subjects
+        - clients
+      summary: find ServiceClient candidates for a specific client
+      operationId: findServiceClientCandidates
+      description: Administrator views the clients, globalgroups and localgroups, that could be added as ServiceClients for given Client's services
       parameters:
         - in: path
           name: id
@@ -1377,14 +1634,14 @@ paths:
             minLength: 0
             maxLength: 255
         - in: query
-          name: subject_type
-          description: pass an optional search string (subject_type) for looking up subjects
+          name: service_client_type
+          description: pass an optional search string (service_client_type) for looking up service clients
           required: false
           schema:
-            $ref: '#/components/schemas/SubjectType'
+            $ref: '#/components/schemas/ServiceClientType'
         - in: query
           name: instance
-          description: pass an optional search string (instance) for looking up subjects - full instance id should be used
+          description: pass an optional search string (instance) for looking up service clients - full instance id should be used
           example: GOV
           required: false
           schema:
@@ -1394,7 +1651,7 @@ paths:
             maxLength: 255
         - in: query
           name: member_class
-          description: pass an optional search string (member_class) for looking up subjects
+          description: pass an optional search string (member_class) for looking up service clients
           required: false
           schema:
             type: string
@@ -1403,7 +1660,7 @@ paths:
             maxLength: 255
         - in: query
           name: member_group_code
-          description: pass an optional search string (member_group_code) for looking up subjects - member_code of a member or group_code of a group
+          description: pass an optional search string (member_group_code) for looking up service clients - member_code of a member or group_code of a group
           example: 1234 | Example group code
           required: false
           schema:
@@ -1413,7 +1670,7 @@ paths:
             maxLength: 255
         - in: query
           name: subsystem_code
-          description: pass an optional search string (subsystem_code) for looking up subjects
+          description: pass an optional search string (subsystem_code) for looking up service clients
           example: Subsystem1
           required: false
           schema:
@@ -1423,15 +1680,15 @@ paths:
             maxLength: 255
       responses:
         '200':
-          description: list of subjects
+          description: list of service clients
           content:
             application/json:
               schema:
                 type: array
                 uniqueItems: true
-                description: array of Subjects
+                description: array of ServiceClients
                 items:
-                  $ref: '#/components/schemas/Subject'
+                  $ref: '#/components/schemas/ServiceClient'
         '400':
           description: request was invalid
         '401':
@@ -1444,12 +1701,189 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
+  /clients/{id}/make-owner:
+    put: # ok
+      tags:
+        - clients
+      summary: make client Security Server's owner. Client must be a member and already registered on the Security Server
+      operationId: changeOwner
+      description: Administrator changes Security Server's owner.
+      parameters:
+        - in: path
+          name: id
+          description: id of the client to be set as owner
+          required: true
+          schema:
+            type: string
+            example: FI:GOV:123
+            format: text
+            minLength: 1
+            maxLength: 1023
+      responses:
+        '204':
+          description: client was set as owner
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /diagnostics/globalconf:
+    get: # ok
+      tags:
+        - diagnostics
+      summary: view global configuration diagnostics information
+      operationId: getGlobalConfDiagnostics
+      description: Administrator views the global configuration diagnostics information.
+      responses:
+        '200':
+          description: global configuration diagnostics information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalConfDiagnostics'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /diagnostics/ocsp-responders:
+    get: # ok
+      tags:
+        - diagnostics
+      summary: view ocsp responders diagnostics information
+      operationId: getOcspRespondersDiagnostics
+      description: Administrator views the ocsp responders diagnostics information.
+      responses:
+        '200':
+          description: ocsp responders diagnostics information
+          content:
+            application/json:
+              schema:
+                type: array
+                description: array of ocsp responder diagnostics objects
+                uniqueItems: true
+                items:
+                  $ref: '#/components/schemas/OcspResponderDiagnostics'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /diagnostics/timestamping-services:
+    get: # ok
+      tags:
+        - diagnostics
+      summary: view timestamping services diagnostics information
+      operationId: getTimestampingServicesDiagnostics
+      description: Administrator views the timestamping services diagnostics information.
+      responses:
+        '200':
+          description: timestamping services diagnostics information
+          content:
+            application/json:
+              schema:
+                type: array
+                description: array of timestamping service diagnostics objects
+                uniqueItems: true
+                items:
+                  $ref: '#/components/schemas/TimestampingServiceDiagnostics'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /initialization:
+    post: # ok
+      tags:
+        - initialization
+      summary: Initialize a new security server with the provided initial configuration
+      operationId: initSecurityServer
+      description: Administrator initializes a new security server with the provided initial configuration
+      requestBody:
+        description: initial security server configuration
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitialServerConf'
+      responses:
+        '201':
+          description: security server initialized
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
+  /initialization/status:
+    get: # ok
+      tags:
+        - initialization
+      summary: Check the initialization status of the Security Server
+      operationId: getInitializationStatus
+      description: Administrator checks the initialization status of the Security Server
+      responses:
+        '200':
+          description: initialization status of the Security Server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InitializationStatus'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
   /local-groups/{group_id}:
     get: # ok
       tags:
-        - security server
+        - local-groups
       summary: get local group information
-      operationId: getGroup
+      operationId: getLocalGroup
       description: Administrator views local group details.
       parameters:
         - in: path
@@ -1460,7 +1894,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '200':
           description: group object
@@ -1480,11 +1913,11 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
-    put: # ok
+    patch: # ok
       tags:
-        - security server
+        - local-groups
       summary: update local group information
-      operationId: updateGroup
+      operationId: updateLocalGroup
       description: Administrator updates the local group information.
       parameters:
         - in: path
@@ -1495,16 +1928,11 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
-        - in: query
-          name: description
-          description: local group description
-          required: false
-          schema:
-            type: string
-            format: text
-            minLength: 1
-            maxLength: 255
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocalGroupDescription'
       responses:
         '200':
           description: local group modified
@@ -1526,9 +1954,9 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - local-groups
       summary: delete local group
-      operationId: deleteGroup
+      operationId: deleteLocalGroup
       description: Administrator deletes the local group.
       parameters:
         - in: path
@@ -1539,7 +1967,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '204':
           description: local group deletion was successful
@@ -1556,10 +1983,10 @@ paths:
   /local-groups/{group_id}/members:
     post: # ok
       tags:
-        - security server
+        - local-groups
       summary: add new member for the local group
-      operationId: addGroupMember
-      description: Administrator adds a new member for the local group.
+      operationId: addLocalGroupMember
+      description: Administrator adds a new member for the local group. The new member can be an X-Road member or a subsystem
       parameters:
         - in: path
           name: group_id
@@ -1569,7 +1996,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 1023
       requestBody:
         content:
           application/json:
@@ -1599,9 +2025,9 @@ paths:
   /local-groups/{group_id}/members/delete:
     post: # ok
       tags:
-        - security server
+        - local-groups
       summary: delete member from local group
-      operationId: deleteGroupMember
+      operationId: deleteLocalGroupMember
       description: Administrator deletes the member from local group.
       parameters:
         - in: path
@@ -1612,7 +2038,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         content:
           application/json:
@@ -1638,7 +2063,7 @@ paths:
   /keys/{id}:
     get: # ok
       tags:
-        - security server
+        - keys
       summary: get information for the selected key in selected token
       operationId: getKey
       description: Administrator views key details.
@@ -1672,7 +2097,7 @@ paths:
           description: internal server error
     patch: # ok
       tags:
-        - security server
+        - keys
       summary: update key information
       operationId: updateKey
       description: Administrator updates the key information.
@@ -1689,19 +2114,7 @@ paths:
         content:
           application/json:
             schema:
-              title: KeyName
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  type: string
-                  description: Friendly name of a key
-                  format: text
-                  minLength: 1
-                  maxLength: 255
-              example:
-                name: my-key-0
+              $ref: '#/components/schemas/KeyName'
       responses:
         '200':
           description: key modified
@@ -1723,10 +2136,14 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - keys
       summary: delete key
       operationId: deleteKey
-      description: Administrator deletes the key.
+      description: >
+        Administrator deletes the key.
+        Note that with this endpoint it's possible to delete an authentication key with a registered authentication certificate.
+        Attempt to delete an authentication key with a registered authentication certificate and with ignore_warnings = false causes the operation to fail with a warning in response's ErrorInfo object.
+        Attempt to delete an authentication key with a registered authentication certificate and with ignore_warnings = true succeeds. The authentication certificate is first unregistered, and the key and certificate are deleted after that.
       parameters:
         - in: path
           name: id
@@ -1736,6 +2153,14 @@ paths:
             type: string
             format: text
             minLength: 1
+        - in: query
+          name: ignore_warnings
+          description: if true, any ignorable warnings are ignored. if false (or missing),
+                    any warnings cause request to fail
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '204':
           description: key deletion was successful
@@ -1752,7 +2177,7 @@ paths:
   /keys/{id}/csrs:
     post: # ok
       tags:
-        - security server
+        - keys
       summary: generate csr for the selected key
       operationId: generateCsr
       description: Administrator generates csr for the key.
@@ -1795,7 +2220,7 @@ paths:
   /keys/{id}/csrs/{csr_id}:
     get: # ok
       tags:
-        - security server
+        - keys
       summary: download a CSR binary
       operationId: downloadCsr
       description: Administrator downloads a csr that has been created earlier
@@ -1846,7 +2271,7 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - keys
       summary: delete csr from the selected key
       operationId: deleteCsr
       description: Administrator deletes csr from the key.
@@ -1886,7 +2311,7 @@ paths:
   /keys/{id}/csrs/{csr_id}/possible-actions:
     get: # ok
       tags:
-        - security server
+        - keys
       summary: get possible actions for one csr
       operationId: getPossibleActionsForCsr
       description: UI needs to know which actions can be done on one csr
@@ -1930,7 +2355,7 @@ paths:
   /keys/{id}/possible-actions:
     get: # ok
       tags:
-        - security server
+        - keys
       summary: get possible actions for one key
       operationId: getPossibleActionsForKey
       description: UI needs to know which actions can be done on one key
@@ -1965,7 +2390,7 @@ paths:
   /member-classes:
     get: # ok
       tags:
-        - security server
+        - member-classes
       summary: get list of known member classes
       operationId: getMemberClasses
       description: Administrator lists member classes.
@@ -2007,7 +2432,7 @@ paths:
   /member-classes/{id}:
     get: # ok
       tags:
-        - security server
+        - member-classes
       summary: get list of known member classes for a given instance
       operationId: getMemberClassesForInstance
       description: Administrator lists member classes for a given instance.
@@ -2047,10 +2472,55 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
+  /member-names:
+    get: # ok
+      tags:
+        - member-names
+      summary: find member name by member class and member code
+      operationId: findMemberName
+      description: Administrator looks up member's name
+      parameters:
+        - in: query
+          name: member_class
+          description: class of the member
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 255
+        - in: query
+          name: member_code
+          description: code of the member
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+            maxLength: 255
+      responses:
+        '200':
+          description: name of the member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberName'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
   /language:
     put: # ok
       tags:
-        - security server
+        - language
       summary: change language
       operationId: language
       description: Administrator changes the language for the UI.
@@ -2086,7 +2556,7 @@ paths:
   /user:
     get: # ok
       tags:
-        - security server
+        - user
       summary: get user data for the logged user
       operationId: getUser
       description: Administrator gets user data from backend.
@@ -2112,7 +2582,7 @@ paths:
   /security-servers:
     get: # ok
       tags:
-        - security server
+        - security-servers
       summary: get all security servers
       operationId: getSecurityServers
       description: SS administrator views the details of all security servers
@@ -2150,7 +2620,7 @@ paths:
   /security-servers/{id}:
     get: # ok
       tags:
-        - security server
+        - security-servers
       summary: get security server information
       operationId: getSecurityServer
       description: SS administrator views the details of a security server.
@@ -2164,6 +2634,8 @@ paths:
             format: text
             description: <instance_id>:<member_class>:<member_code>:<security_server_code>
             example: FI:GOV:123:sserver1
+            minLength: 1
+            maxLength: 1023
       responses:
         '200':
           description: ok
@@ -2186,7 +2658,7 @@ paths:
   /services/{id}:
     get: # ok
       tags:
-        - security server
+        - services
       summary: get service
       operationId: getService
       description: Administrator views selected service.
@@ -2200,7 +2672,7 @@ paths:
             example: CS:ORG:Client:myService.v1
             format: text
             minLength: 1
-            maxLength: 1535
+            maxLength: 1279
       responses:
         '200':
           description: ok
@@ -2222,7 +2694,7 @@ paths:
           description: internal server error
     patch: # ok
       tags:
-        - security server
+        - services
       summary: update service
       operationId: updateService
       description: Administrator updates the service.
@@ -2236,7 +2708,7 @@ paths:
             example: CS:ORG:Client:myService.v1
             format: text
             minLength: 1
-            maxLength: 1535
+            maxLength: 1279
       requestBody:
         content:
           application/json:
@@ -2261,13 +2733,13 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
-  /services/{id}/access-rights:
-    get: # ok
+  /services/{id}/endpoints:
+    post:
       tags:
-        - security server
-      summary: get access rights for the selected service
-      operationId: getServiceAccessRights
-      description: Administrator views service access rights.
+        - services
+      summary: create endpoint
+      operationId: addEndpoint
+      description: Administrator creates a new endpoint.
       parameters:
         - in: path
           name: id
@@ -2278,10 +2750,54 @@ paths:
             example: CS:ORG:Client:myService.v1
             format: text
             minLength: 1
-            maxLength: 255
+            maxLength: 1279
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Endpoint'
+      responses:
+        '201':
+          description: endpoint added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Endpoint'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
+  /services/{id}/service-clients:
+    get: # ok
+      tags:
+        - services
+      summary: get service clients who have access rights for the selected service
+      operationId: getServiceServiceClients
+      description: Administrator views service clients who have access to the given service
+      parameters:
+        - in: path
+          name: id
+          description: id of the service
+          required: true
+          schema:
+            type: string
+            example: CS:ORG:Client:myService.v1
+            format: text
+            minLength: 1
+            maxLength: 1279
       responses:
         '200':
-          description: list of service client and access rights
+          description: list of service clients
           content:
             application/json:
               schema:
@@ -2304,10 +2820,10 @@ paths:
           description: internal server error
     post:
       tags:
-        - security server
-      summary: add new access right for the selected service
-      operationId: addServiceAccessRight
-      description: Adds access right to the service
+        - services
+      summary: add access rights to selected service for new ServiceClients
+      operationId: addServiceServiceClients
+      description: Adds access rights to selected service for new ServiceClients
       parameters:
         - in: path
           name: id
@@ -2317,12 +2833,12 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
+            maxLength: 1279
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Subjects'
+              $ref: '#/components/schemas/ServiceClients'
       responses:
         '201':
           description: access rights added
@@ -2348,13 +2864,13 @@ paths:
           description: an existing item already exists
         '500':
           description: internal server error
-  /services/{id}/access-rights/delete:
+  /services/{id}/service-clients/delete:
     post: # ok
       tags:
-        - security server
-      summary: remove access right
-      operationId: deleteServiceAccessRight
-      description: Administrator removes access right from selected service.
+        - services
+      summary: remove access to selected service from given ServiceClients
+      operationId: deleteServiceServiceClients
+      description: Administrator removes access to selected service from given ServiceClients
       parameters:
         - in: path
           name: id
@@ -2364,12 +2880,12 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
+            maxLength: 1279
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Subjects'
+              $ref: '#/components/schemas/ServiceClients'
       responses:
         '204':
           description: access right(s) deletion was successful
@@ -2383,34 +2899,29 @@ paths:
           description: resource requested does not exists
         '500':
           description: internal server error
-  /service-clients/{id}/access-rights:
-    get: # ok
+  /endpoints/{id}:
+    get:
       tags:
-        - security server
-      summary: get access rights for the selected service client.
-      operationId: getServiceClientAccessRights
-      description: Administrator views service client's access rights.
+        - endpoints
+      operationId: getEndpoint
+      description: Administrator fetches an endpoint
       parameters:
         - in: path
           name: id
-          description: id of the service client
+          description: id of the endpoint
           required: true
           schema:
             type: string
+            example: 102
             format: text
             minLength: 1
-            maxLength: 1279
       responses:
         '200':
-          description: list of access rights
+          description: endpoint
           content:
             application/json:
               schema:
-                type: array
-                uniqueItems: true
-                description: array of access right objects
-                items:
-                  $ref: '#/components/schemas/AccessRight'
+                $ref: '#/components/schemas/Endpoint'
         '400':
           description: request was invalid
         '401':
@@ -2423,38 +2934,33 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
-    post: # ok
+    patch:
       tags:
-        - security server
-      summary: add new access right for selected service client
-      operationId: addServiceClientAccessRight
-      description: Adds access right to the service client.
+        - endpoints
+      operationId: updateEndpoint
+      description: Administrator updates an endpoint
       parameters:
         - in: path
           name: id
-          description: id of the service client
+          description: id of the endpoint
           required: true
           schema:
             type: string
+            example: 102
             format: text
             minLength: 1
-            maxLength: 1279
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Subjects'
+              $ref: '#/components/schemas/EndpointUpdate'
       responses:
-        '201':
-          description: access right(s) added
+        '200':
+          description: endpoint updated
           content:
             application/json:
               schema:
-                type: array
-                uniqueItems: true
-                description: array of added access right objects
-                items:
-                  $ref: '#/components/schemas/AccessRight'
+                $ref: '#/components/schemas/Endpoint'
         '400':
           description: request was invalid
         '401':
@@ -2469,29 +2975,143 @@ paths:
           description: an existing item already exists
         '500':
           description: internal server error
-  /service-clients/{id}/access-rights/delete:
-    post: # ok
+    delete:
       tags:
-        - security server
-      summary: remove access right
-      operationId: deleteServiceClientAccessRight
-      description: Administrator removes access right from selected service client.
+        - endpoints
+      summary: delete endpoint
+      operationId: deleteEndpoint
+      description: Administrator removes an endpoint
       parameters:
         - in: path
           name: id
-          description: id of the service client
+          required: true
+          description: id of the endpoint
+          schema:
+            type: string
+            example: 102
+            format: text
+            minLength: 1
+      responses:
+        '204':
+          description: endpoint deleted
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /endpoints/{id}/service-clients:
+    get:
+      tags:
+        - endpoints
+      summary: get service clients who have access rights for the selected endpoint
+      operationId: getEndpointServiceClients
+      description: Administrator views endpoints access rights
+      parameters:
+        - in: path
+          name: id
+          description: id of the endpoint
           required: true
           schema:
             type: string
             format: text
             minLength: 1
-            maxLength: 1279
+      responses:
+        '200':
+          description: list of access rights
+          content:
+            application/json:
+              schema:
+                type: array
+                uniqueItems: true
+                description: array of access right objects
+                items:
+                  $ref: '#/components/schemas/ServiceClient'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+    post:
+      tags:
+        - endpoints
+      summary: add access rights for given service clients to the selected endpoint
+      operationId: addEndpointServiceClients
+      description: Administrator add access rights for a service clients to the selected endpoint
+      parameters:
+        - in: path
+          name: id
+          description: id of the endpoint
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
       requestBody:
-        description: list of access rights to be deleted
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Subjects'
+              $ref: '#/components/schemas/ServiceClients'
+      responses:
+        '201':
+          description: access rights added
+          content:
+            application/json:
+              schema:
+                type: array
+                uniqueItems: true
+                description: array of added service client objects
+                items:
+                  $ref: '#/components/schemas/ServiceClient'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
+  /endpoints/{id}/service-clients/delete:
+    post:
+      tags:
+        - endpoints
+      summary: remove access rights from specified service clients to the selected endpoint
+      operationId: deleteEndpointServiceClients
+      description: Administrator removes access rights from a service clients to an endpoint
+      parameters:
+        - in: path
+          name: id
+          description: id of the endpoint
+          required: true
+          schema:
+            type: string
+            format: text
+            minLength: 1
+      requestBody:
+        description: Service client to be removed
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceClients'
       responses:
         '204':
           description: access right(s) deleted
@@ -2505,14 +3125,12 @@ paths:
           description: resource requested does not exists
         '406':
           description: request specified an invalid format
-        '409':
-          description: an existing item already exists
         '500':
           description: internal server error
   /service-descriptions/{id}:
     get: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: get service description with provided id
       operationId: getServiceDescription
       description: Administrator views a service description with a certain id.
@@ -2525,7 +3143,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '200':
           description: wanted service description
@@ -2547,7 +3164,7 @@ paths:
           description: internal server error
     patch: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: update url or service code for the selected service description
       operationId: updateServiceDescription
       description: Administrator updates the selected service description.
@@ -2560,7 +3177,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         content:
           application/json:
@@ -2594,7 +3210,7 @@ paths:
           description: internal server error
     delete: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: delete service description
       operationId: deleteServiceDescription
       description: Administrator deletes the service description.
@@ -2607,7 +3223,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '204':
           description: service description deletion was successful
@@ -2624,7 +3239,7 @@ paths:
   /service-descriptions/{id}/disable:
     put: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: disable selected service description
       operationId: disableServiceDescription
       description: Administrator disables service description.
@@ -2637,21 +3252,12 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         required: false
         content:
           application/json:
             schema:
-              title: ServiceDescriptionDisabledNotice
-              type: object
-              properties:
-                disabled_notice:
-                  type: string
-                  format: text
-                  description: disabled service notice
-                  minLength: 0
-                  maxLength: 255
+              $ref: '#/components/schemas/ServiceDescriptionDisabledNotice'
       responses:
         '204':
           description: service description disabled
@@ -2670,7 +3276,7 @@ paths:
   /service-descriptions/{id}/enable:
     put: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: enable selected service description
       operationId: enableServiceDescription
       description: Administrator enables service description.
@@ -2683,7 +3289,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '204':
           description: service description enabled
@@ -2702,7 +3307,7 @@ paths:
   /service-descriptions/{id}/refresh:
     put: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: refresh selected service description
       operationId: refreshServiceDescription
       description: Administrator refreshes service description.
@@ -2715,19 +3320,11 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         content:
           application/json:
             schema:
-              title: IgnoreWarnings
-              type: object
-              properties:
-                ignore_warnings:
-                  type: boolean
-                  default: false
-                  description: if true, any ignorable warnings are ignored. if false (or missing),
-                    any warnings cause request to fail
+              $ref: '#/components/schemas/IgnoreWarnings'
       responses:
         '200':
           description: service description refreshed
@@ -2757,7 +3354,7 @@ paths:
   /service-descriptions/{id}/services:
     get: # ok
       tags:
-        - security server
+        - service-descriptions
       summary: get services for the selected service description
       operationId: getServiceDescriptionServices
       description: Administrator views the services for the selected service description.
@@ -2770,7 +3367,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '200':
           description: list of services
@@ -2794,36 +3390,10 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
-  /system: # ok
-    get:
-      tags:
-        - security server
-      summary: get system information
-      operationId: getSystem
-      description: Administrator views the system information.
-      responses:
-        '200':
-          description: system information
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/System'
-        '400':
-          description: request was invalid
-        '401':
-          description: authentication credentials are missing
-        '403':
-          description: request has been refused
-        '404':
-          description: resource requested does not exists
-        '406':
-          description: request specified an invalid format
-        '500':
-          description: internal server error
   /system/anchor:
     get: # ok
       tags:
-        - security server
+        - system
       summary: view the configuration anchor information
       operationId: getAnchor
       description: Administrator views the configuration anchor information.
@@ -2848,20 +3418,96 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
-      summary: upload a configuration anchor file
-      operationId: uploadAnchor
-      description: Administrator uploads configuration anchor file
+        - system
+      summary: Upload a new configuration anchor file when initializing a new security server.
+        Calls to this endpoint only succeed if a configuration anchor is not already found – meaning that this endpoint can only be used when initializing a new security server.
+        For updating the anchor for an already initialized security server use the PUT /system/anchor endpoint instead
+      operationId: uploadInitialAnchor
+      description: Administrator uploads a new configuration anchor file in the security server's initialization phase
       requestBody:
         description: configuration anchor
         content:
-          application/xml:
+          application/octet-stream:
             schema:
               type: string
-              format: ascii
+              format: binary
               description: configuration anchor file
-              minLength: 1
-              maxLength: 1000000
+      responses:
+        '201':
+          description: configuration anchor uploaded
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
+    put: # ok
+      tags:
+        - system
+      summary: Upload a configuration anchor file to replace an existing one. Note that this only works if there already exists an anchor that can be replaced.
+        When initalizing a new Security Server use endpoint POST /system/anchor instead
+      operationId: replaceAnchor
+      description: Administrator uploads a configuration anchor file anytime after the Security Server has been initialized
+      requestBody:
+        description: configuration anchor
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: configuration anchor file
+      responses:
+        '201':
+          description: configuration anchor uploaded
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '409':
+          description: an existing item already exists
+        '500':
+          description: internal server error
+  /system/anchor/previews:
+    post: # ok
+      tags:
+        - system
+      summary: Read and the configuration anchor file and return the hash for a preview.
+        The instance of the anchor is also validated unless the validate_instance query parameter is explicitly set to false.
+        The anchor will not be saved
+      operationId: previewAnchor
+      description: Administrator wants to preview a configuration anchor file hash
+      parameters:
+        - in: query
+          name: validate_instance
+          description: Whether or not to validate the owner instance of the anchor.
+            Set this to false explicitly when previewing an anchor in the security server initialization phase.
+            Default value is true if the parameter is omitted.
+          required: false
+          schema:
+            type: boolean
+            default: true
+      requestBody:
+        description: configuration anchor
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: configuration anchor file
       responses:
         '201':
           description: configuration anchor uploaded
@@ -2886,7 +3532,7 @@ paths:
   /system/anchor/download:
     get: # ok
       tags:
-        - security server
+        - system
       summary: download configuration anchor information
       operationId: downloadAnchor
       description: Administrator downloads the configuration anchor information.
@@ -2897,7 +3543,7 @@ paths:
             application/xml:
               schema:
                 type: string
-                format: ascii
+                format: binary
                 description: configuration anchor file
         '400':
           description: request was invalid
@@ -2914,7 +3560,7 @@ paths:
   /system/certificate:
     get: # ok
       tags:
-        - security server
+        - system
       summary: view the security server certificate information
       operationId: getSystemCertificate
       description: Administrator views the security server TLS certificate information.
@@ -2939,7 +3585,7 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - system
       summary: generate a new internal TLS key and cert
       operationId: generateSystemTlsKeyAndCertificate
       description: Administrator generates new internal TLS key and certificate
@@ -2961,7 +3607,7 @@ paths:
   /system/certificate/export:
     get: # ok
       tags:
-        - security server
+        - system
       summary: download the security server certificate as gzip compressed tar archive
       operationId: downloadSystemCertificate
       description: Administrator downloads the security server TLS certificate.
@@ -2989,13 +3635,24 @@ paths:
   /system/certificate/csr:
     post: # ok
       tags:
-        - security server
+        - system
       summary: generate new certificate request
       operationId: generateSystemCertificateRequest
       description: Administrator generates new certificate request.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DistinguishedName'
       responses:
-        '204':
-          description: certificate request generated
+        '201':
+          description: created CSR
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                description: csr file
         '400':
           description: request was invalid
         '401':
@@ -3011,7 +3668,7 @@ paths:
   /system/certificate/import:
     post: # ok
       tags:
-        - security server
+        - system
       summary: import new internal TLS certificate.
       operationId: importSystemCertificate
       description: Administrator imports new internal TLS certificate
@@ -3024,7 +3681,7 @@ paths:
               format: binary
               description: certificate file
       responses:
-        '201':
+        '200':
           description: tls certificate imported
           content:
             application/json:
@@ -3047,7 +3704,7 @@ paths:
   /certificate-authorities:
     get: # ok
       tags:
-        - security server
+        - certificate-authorities
       summary: view the approved certificate authorities
       operationId: getApprovedCertificateAuthorities
       description: Administrator views the approved certificate authorities.
@@ -3058,6 +3715,13 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/KeyUsageType'
+        - in: query
+          name: include_intermediate_cas
+          description: if true, include also intermediate CAs. Otherwise only top CAs are included. Default value is "false".
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: list of approved certificate authorities
@@ -3082,7 +3746,7 @@ paths:
   /certificate-authorities/{ca_name}/csr-subject-fields:
     get: # ok
       tags:
-        - security server
+        - certificate-authorities
       summary: get description of subject DN fields for CSR
       operationId: getSubjectFieldDescriptions
       description: list DN field descriptions to collect CSR parameters
@@ -3121,6 +3785,13 @@ paths:
             format: text
             minLength: 1
             maxLength: 767
+        - in: query
+          name: is_new_member
+          description: whether or not the member in the member_id parameter is a new member
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: csr subject field objects
@@ -3147,7 +3818,7 @@ paths:
   /system/timestamping-services:
     get: # ok
       tags:
-        - security server
+        - system
       summary: view the configured timestamping services
       operationId: getConfiguredTimestampingServices
       description: Administrator views the configured timestamping services.
@@ -3176,7 +3847,7 @@ paths:
           description: internal server error
     post: # ok
       tags:
-        - security server
+        - system
       summary: add a configured timestamping service
       operationId: addConfiguredTimestampingService
       description: Administrator selects new timestamping service
@@ -3210,7 +3881,7 @@ paths:
   /system/timestamping-services/delete:
     post: # ok
       tags:
-        - security server
+        - system
       summary: delete configured timestamping service
       operationId: deleteConfiguredTimestampingService
       description: Administrator removes configured timestamping service.
@@ -3236,7 +3907,7 @@ paths:
   /system/version:
     get: # ok
       tags:
-        - security server
+        - system
       summary: get information for the system version
       operationId: systemVersion
       description: Administrator views key details.
@@ -3262,7 +3933,7 @@ paths:
   /timestamping-services:
     get: # ok
       tags:
-        - security server
+        - timestamping-services
       summary: view the approved timestamping services
       operationId: getApprovedTimestampingServices
       description: Administrator views the approved timestamping services.
@@ -3293,7 +3964,7 @@ paths:
   /tokens:
     get: # ok
       tags:
-        - security server
+        - tokens
       summary: get security server tokens
       operationId: getTokens
       description: Administrator views tokens of the security server.
@@ -3323,7 +3994,7 @@ paths:
   /tokens/{id}:
     get: # ok
       tags:
-        - security server
+        - tokens
       summary: get security server token information
       operationId: getToken
       description: Administrator views the token details of the security server.
@@ -3336,7 +4007,6 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       responses:
         '200':
           description: token object
@@ -3358,7 +4028,7 @@ paths:
           description: internal server error
     patch: # ok
       tags:
-        - security server
+        - tokens
       summary: update security server token information
       operationId: updateToken
       description: Administrator updates the token information.
@@ -3371,24 +4041,11 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         content:
           application/json:
             schema:
-              title: TokenName
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  type: string
-                  description: friendly name of the token
-                  format: text
-                  minLength: 1
-                  maxLength: 255
-              example:
-                name: my-token-0
+              $ref: '#/components/schemas/TokenName'
       responses:
         '200':
           description: token modified
@@ -3411,7 +4068,7 @@ paths:
   /tokens/{id}/keys-with-csrs:
     post: # ok
       tags:
-        - security server
+        - tokens
       summary: add a new key and generate a csr for it
       operationId: addKeyAndCsr
       description: Administrator adds a new key and generates a csr for it.
@@ -3424,26 +4081,11 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         content:
           application/json:
             schema:
-              title: KeyLabelWithCsrGenerate
-              type: object
-              required:
-                - key_label
-                - csr_generate_request
-              properties:
-                key_label:
-                  type: string
-                  format: text
-                  description: label for the new key
-                  minLength: 1
-                  maxLength: 255
-                  example: My new key
-                csr_generate_request:
-                  $ref: '#/components/schemas/CsrGenerate'
+              $ref: '#/components/schemas/KeyLabelWithCsrGenerate'
       responses:
         '201':
           description: key created for the token
@@ -3468,7 +4110,7 @@ paths:
   /tokens/{id}/keys:
     post: # ok
       tags:
-        - security server
+        - tokens
       summary: add new key
       operationId: addKey
       description: Adds key for selected token.
@@ -3481,22 +4123,11 @@ paths:
             type: string
             format: text
             minLength: 1
-            maxLength: 255
       requestBody:
         content:
           application/json:
             schema:
-              title: KeyLabel
-              type: object
-              properties:
-                label:
-                  type: string
-                  format: text
-                  description: label for the new key
-                  minLength: 1
-                  maxLength: 255
-              example:
-                label: My new key
+              $ref: '#/components/schemas/KeyLabel'
       responses:
         '201':
           description: key created for the token
@@ -3521,7 +4152,7 @@ paths:
   /tokens/{id}/login:
     put: # ok
       tags:
-        - security server
+        - tokens
       summary: login to token
       operationId: loginToken
       description: Login to token
@@ -3538,16 +4169,7 @@ paths:
         content:
           application/json:
             schema:
-              title: TokenPassword
-              type: object
-              properties:
-                password:
-                  type: string
-                  format: text
-                  description: password for logging in to the token
-                  minLength: 1
-              example:
-                password: sm3!!ycat
+              $ref: '#/components/schemas/TokenPassword'
       responses:
         '200':
           description: logged in
@@ -3570,7 +4192,7 @@ paths:
   /tokens/{id}/logout:
     put: # ok
       tags:
-        - security server
+        - tokens
       summary: logout from token
       operationId: logoutToken
       description: Administrator logs out from token.
@@ -3605,7 +4227,7 @@ paths:
   /xroad-instances:
     get: # ok
       tags:
-        - security server
+        - xroad-instances
       summary: get list of known xroad instance identifiers
       operationId: getXroadInstances
       description: Administrator lists xroad instance identifiers
@@ -3646,28 +4268,10 @@ components:
   schemas:
     AccessRight: # ok
       type: object
-      description: access right for clients and services
+      description: access right given for a specific subject (ServiceClient) for specific service (service_code) owned by some client. This object does not represent endpoint-level access rights
       required:
-        - id
-        - client_id
         - service_code
-        - service_title
       properties:
-        id:
-          type: string
-          format: text
-          description: access right id
-          example: 123
-          minLength: 1
-          maxLength: 255
-          readOnly: true
-        client_id:
-          type: string
-          format: text
-          description: <instance_id>:<member_class>:<member_code>:<subsystem>(optional)
-          example: FI:GOV:123:ABC
-          minLength: 1
-          maxLength: 255
         service_code:
           type: string
           format: text
@@ -3677,11 +4281,30 @@ components:
           maxLength: 255
         service_title:
           type: string
+          readOnly: true
           format: text
           description: service title
           example: client deletion
           minLength: 1
           maxLength: 255
+        rights_given_at:
+          type: string
+          format: date-time
+          description: access right given at
+          example: '2018-12-15T00:00:00.001Z'
+          readOnly: true
+          minLength: 24
+          maxLength: 24
+    AccessRights: # ok
+      type: object
+      description: object containing and array of AccessRights
+      properties:
+        items:
+          type: array
+          uniqueItems: true
+          description: array of AccessRights
+          items:
+            $ref: '#/components/schemas/AccessRight'
     Anchor: # ok
       type: object
       description: security server anchor
@@ -3724,6 +4347,13 @@ components:
           example: '2018-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
+    BackupArchive: # ok
+      type: object
+      description: security server backup archive file
+      properties:
+        file:
+          type: string
+          format: binary
     TokenCertificateSigningRequest: # ok
       type: object
       description: CSR for certificate that is stored in a Token
@@ -3789,6 +4419,26 @@ components:
           description: possible actions that can be done to this object, e.g DELETE.
             Has value only for operationIds getToken and getTokens.
             Does not consider user authorization.
+    OcspResponderDiagnostics: # ok
+      type: object
+      description: Ocsp responder diagnostics
+      required:
+        - distinguished_name
+        - ocsp_responders
+      properties:
+        distinguished_name:
+          type: string
+          format: text
+          description: CA distinguished name
+          example: C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=X-Road Test CA CN
+          minLength: 1
+          maxLength: 255
+          readOnly: true
+        ocsp_responders:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/OcspResponder'
     CertificateDetails: # ok
       type: object
       description: certificate details for any kind of certificate (TLS, auth, sign)
@@ -3911,42 +4561,57 @@ components:
             $ref: '#/components/schemas/KeyUsage'
     CertificateAuthority: # ok
       type: object
-      description: approved certificate authority information
+      description: approved certificate authority information. Only for top CAs.
       required:
         - name
-        - distinguished_name
-        - response
-        - expires_at
+        - subject_distinguished_name
+        - issuer_distinguished_name
+        - ocsp_response
+        - not_after
+        - top_ca
+        - path
         - authentication_only
       properties:
         name:
           type: string
           format: text
-          description: common name of the CA, used also as an identifier
+          description: name of the CA, as defined in global conf. Used also as an identifier
           example: X-Road Test CA CN
           minLength: 1
           maxLength: 255
-        distinguished_name:
+        subject_distinguished_name:
           type: string
           format: text
-          description: distinguished name
-          example: /C=FI/O=X-Road Test/OU=X-Road Test CA OU/CN=X-Road Test CA CN
+          description: subject distinguished name
+          example: C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=X-Road Test CA CN
           minLength: 1
-          maxLength: 255
-        response:
+          maxLength: 1024
+        issuer_distinguished_name:
           type: string
           format: text
-          description: certificate authority response
-          example: N/A
+          description: issuer distinguished name
+          example: C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=X-Road Test CA CN
           minLength: 1
-          maxLength: 1000
-        expires_at:
+          maxLength: 1024
+        ocsp_response:
+          $ref: '#/components/schemas/CertificateAuthorityOcspResponse'
+        not_after:
           type: string
           format: date-time
           description: certificate authority expires at
           example: '2099-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
+        top_ca:
+          type: boolean
+          description: if the certificate authority is top CA (instead of intermediate)
+          example: true
+        path:
+          type: string
+          format: text
+          description: encoded path string from this CA to top CA
+          example: C=FI, O=X-Road Test Intermediate, OU=X-Road Test CA OU, CN=X-Road Test CA CN Intermediate:C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=X-Road Test CA CN
+          minLength: 1
         authentication_only:
           type: boolean
           description: if certificate authority is limited for authentication use only
@@ -3961,6 +4626,17 @@ components:
         - REGISTERED
         - DELETION_IN_PROGRESS
         - GLOBAL_ERROR
+    CertificateAuthorityOcspResponse: # ok
+      type: string
+      format: enum
+      description: certificate authority OCSP status
+      example: IN_USE
+      enum:
+        - NOT_AVAILABLE
+        - OCSP_RESPONSE_UNKNOWN
+        - OCSP_RESPONSE_GOOD
+        - OCSP_RESPONSE_SUSPENDED
+        - OCSP_RESPONSE_REVOKED
     CertificateOcspStatus: # ok
       type: string
       format: enum
@@ -3973,6 +4649,18 @@ components:
         - OCSP_RESPONSE_GOOD
         - OCSP_RESPONSE_SUSPENDED
         - OCSP_RESPONSE_REVOKED
+    DistinguishedName: # ok
+      required:
+        - distinguished_name
+      type: object
+      properties:
+        name:
+          type: string
+          format: text
+          description: distinguished name
+          example: C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=X-Road Test CA CN
+          minLength: 1
+          maxLength: 255
     PossibleActions: # ok
       type: array
       description: array containing the possible actions that can be done for this item
@@ -4002,7 +4690,6 @@ components:
       required:
         - member_class
         - member_code
-        - subsystem_code
       properties:
         id:
           type: string
@@ -4012,11 +4699,20 @@ components:
           minLength: 1
           maxLength: 1023
           readOnly: true
+        instance_id:
+          type: string
+          format: text
+          description: xroad instance id
+          example: FI
+          minLength: 1
+          maxLength: 255
+          readOnly: true
         member_name:
           type: string
           format: text
           description: member name
           example: FI
+          readOnly: true
           minLength: 1
           maxLength: 255
         member_class:
@@ -4045,10 +4741,16 @@ components:
           description: if this client is the owner member of this security server
           example: false
           readOnly: true
+        has_valid_local_sign_cert:
+          type: boolean
+          description: if this client is local and has a valid sign cert
+          example: false
+          readOnly: true
         connection_type:
           $ref: '#/components/schemas/ConnectionType'
         status:
           $ref: '#/components/schemas/ClientStatus'
+          readOnly: true
     ClientAdd: # ok
       type: object
       description: request to add client. Carries a Client and ignore warnings parameter
@@ -4080,16 +4782,17 @@ components:
       example: SUCCESS
       enum:
         - SUCCESS # Everything ok
-        - CONFCLIENT_STATUS_FAILED # Global configuration client status query failed
-        - ERROR_CODE_INTERNAL # Internal error occurred."
-        - ERROR_CODE_INVALID_SIGNATURE_VALUE # Invalid signature value."
-        - ERROR_CODE_EXPIRED_CONF # The downloaded global configuration has expired."
-        - ERROR_CODE_CANNOT_DOWNLOAD_CONF # Unable to download global configuration. Check network connection to global configuration provider."
-        - ERROR_CODE_MISSING_PRIVATE_PARAM # The downloaded global configuration did not contain private parameters
-    CodeWithMetadata:
+        - ERROR_CODE_INTERNAL # Internal error occurred.
+        - ERROR_CODE_INVALID_SIGNATURE_VALUE # Invalid signature value.
+        - ERROR_CODE_EXPIRED_CONF # The downloaded global configuration has expired.
+        - ERROR_CODE_CANNOT_DOWNLOAD_CONF # Unable to download global configuration. Check network connection to global configuration provider.
+        - ERROR_CODE_MISSING_PRIVATE_PARAMS # The downloaded global configuration did not contain private parameters
+        - ERROR_CODE_UNINITIALIZED # The configuration client is initializing.
+        - UNKNOWN
+    CodeWithDetails:
       type: object
       description: object that contains a code identifier and possibly collection of
-        associated metadata. Used to relay error and warning information.
+        associated metadata or validation errors. Used to relay error and warning information.
       required:
         - code
       properties:
@@ -4106,16 +4809,36 @@ components:
           items:
             type: string
             format: text
+        validation_errors:
+          description: A dictionary object that contains validation errors bound to their respected fields. The key
+            represents the field where the validation error has happened and the value is a list of validation errors
+          type: object
+          additionalProperties: # https://swagger.io/docs/specification/data-models/dictionaries/
+            type: array
+            description: Array containing the validation errors of a field. The possible validation error values
+              are listed in the X-Road User Guide
+            items:
+              type: string
+              format: text
+          example:
+            clientAdd.client.memberCode: ["NoPercent"]
+            clientAdd.client.subsystemCode: ["NoPercent", "NoBackslashes"]
     ConnectionType: # ok
       type: string
       format: enum
       description: connection type
       example: HTTP
-      default: HTTP
+      default: HTTPS
       enum:
         - HTTP
         - HTTPS
         - HTTPS_NO_AUTH
+    ConnectionTypeWrapper: # ok
+      type: object
+      description: connection type
+      properties:
+        connection_type:
+          $ref: '#/components/schemas/ConnectionType'
     CsrFormat: # ok
       type: string
       format: enum
@@ -4211,6 +4934,15 @@ components:
           description: if true, label key is in property "label_key". If false, actual label is in property "label"
           example: true
           readOnly: true
+    DiagnosticStatusClass: # ok
+      type: string
+      format: enum
+      description: diagnostics status class
+      example: OK
+      enum:
+        - OK
+        - WAITING
+        - FAIL
     ErrorInfo:
       type: object
       description: object returned in error cases
@@ -4223,13 +4955,13 @@ components:
           description: http status code
           example: 400
         error:
-          $ref: '#/components/schemas/CodeWithMetadata'
+          $ref: '#/components/schemas/CodeWithDetails'
         warnings:
           type: array
           description: warnings that could be ignored
           uniqueItems: true
           items:
-            $ref: '#/components/schemas/CodeWithMetadata'
+            $ref: '#/components/schemas/CodeWithDetails'
     GlobalConfiguration: # ok
       type: object
       description: global configuration
@@ -4254,6 +4986,43 @@ components:
           example: '2018-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
+    InitialServerConf: # ok
+      type: object
+      description: security server initial configuration
+      properties:
+        owner_member_class:
+          type: string
+          format: text
+          description: member class
+          example: GOV
+          minLength: 1
+          maxLength: 255
+        owner_member_code:
+          type: string
+          format: text
+          description: member code
+          example: 12345678-9
+          minLength: 1
+          maxLength: 255
+        security_server_code:
+          type: string
+          format: text
+          description: security server code
+          example: SS1
+          minLength: 1
+          maxLength: 255
+        software_token_pin:
+          type: string
+          format: text
+          description: pin code for the initial software token
+          example: sup3rs3cr3t_p!n
+          minLength: 1
+          maxLength: 255
+        ignore_warnings:
+          type: boolean
+          default: false
+          description: if true, any ignorable warnings are ignored. if false (or missing),
+            any warnings cause request to fail
     LocalGroup: # ok
       type: object
       description: group
@@ -4301,6 +5070,73 @@ components:
           uniqueItems: true
           items:
             $ref: '#/components/schemas/GroupMember'
+    LocalGroupAdd: # ok
+      type: object
+      description: model for adding a new LocalGroup
+      required:
+        - code
+        - description
+      properties:
+        code:
+          type: string
+          format: text
+          description: group code
+          example: groupcode
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          format: text
+          description: group description
+          example: description
+          minLength: 1
+          maxLength: 255
+    LocalGroupDescription: # ok
+      type: object
+      required:
+        - description
+      properties:
+        description:
+          type: string
+          description: description for the LocalGroup
+          format: text
+          minLength: 1
+          maxLength: 255
+      example:
+        name: This is an awesome local group!
+    GlobalConfDiagnostics: # ok
+      type: object
+      description: global configuration diagnostics
+      required:
+        - status_class
+        - status_code
+        - prev_update_at
+        - next_update_at
+      properties:
+        status_class:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/DiagnosticStatusClass'
+        status_code:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/ConfigurationStatus'
+        prev_update_at:
+          type: string
+          format: date-time
+          description: last time updated
+          example: '2018-12-15T00:00:00.001Z'
+          minLength: 24
+          maxLength: 24
+          readOnly: true
+        next_update_at:
+          type: string
+          format: date-time
+          description: last time updated
+          example: '2018-12-15T00:00:00.001Z'
+          minLength: 24
+          maxLength: 24
+          readOnly: true
     GroupMember: # ok
       type: object
       description: group member
@@ -4330,6 +5166,34 @@ components:
           example: '2018-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
+    IgnoreWarnings: # ok
+      type: object
+      properties:
+        ignore_warnings:
+          type: boolean
+          default: false
+          description: if true, any ignorable warnings are ignored. if false (or missing),
+            any warnings cause request to fail
+    InitializationStatus: # ok
+      type: object
+      description: Initialization status of the Security Server
+      required:
+        - is_anchor_imported
+        - is_server_code_initialized
+        - is_server_owner_initialized
+        - software_token_init_status
+      properties:
+        is_anchor_imported:
+          type: boolean
+          description: whether a configuration anchor has been imported or not
+        is_server_code_initialized:
+          type: boolean
+          description: whether the server code of the security server has been initialized or not
+        is_server_owner_initialized:
+          type: boolean
+          description: whether the server owner of the security server has been initialized or not
+        software_token_init_status:
+          $ref: '#/components/schemas/TokenInitStatus'
     KeyWithCertificateSigningRequestId: # ok
       type: object
       description: Key and TokenCertificateSigningRequest id
@@ -4401,6 +5265,45 @@ components:
           description: possible actions that can be done to this object, e.g DELETE.
             Has value only for operationIds getToken and getTokens.
             Does not consider user authorization.
+    KeyName: # ok
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Friendly name of a key
+          format: text
+          minLength: 1
+          maxLength: 255
+      example:
+        name: my-key-0
+    KeyLabel: # ok
+      type: object
+      properties:
+        label:
+          type: string
+          format: text
+          description: label for the new key
+          minLength: 1
+          maxLength: 255
+      example:
+        label: My new key
+    KeyLabelWithCsrGenerate: # ok
+      type: object
+      required:
+        - key_label
+        - csr_generate_request
+      properties:
+        key_label:
+          type: string
+          format: text
+          description: label for the new key
+          minLength: 0
+          maxLength: 255
+          example: My new key
+        csr_generate_request:
+          $ref: '#/components/schemas/CsrGenerate'
     KeyUsage: # ok
       type: string
       format: enum
@@ -4451,50 +5354,67 @@ components:
           minLength: 2
           maxLength: 2
           readOnly: true
+    MemberName: # ok
+      type: object
+      description: member's name
+      properties:
+        member_name:
+          type: string
+          format: text
     Members: # ok
       type: object
-      description: request object containing an array of member ids
+      description: Request object containing an array of member ids. The id must be an X-Road member id or subsystem id
       properties:
         items:
           type: array
           description: array of members to be added
+          example: ["FI:GOV:123", "FI:GOV:123:SS1", "FI:GOV:123:SS2"]
           items:
             type: string
             format: text
             minLength: 1
             maxLength: 1023
-    OcspResponders: # ok
+    OcspResponder: # ok
       type: object
-      description: ocsp responce
+      description: OCSP responder diagnostics
       required:
         - url
-        - status
-        - updated_at
+        - status_class
+        - status_code
         - next_update_at
       properties:
         url:
           type: string
           format: url
-          description: service url
-          example: https://domain.com/service
+          description: url of the OCSP responder
+          example: http://dev.xroad.rocks:123
           minLength: 1
           maxLength: 255
-        status:
-          $ref: '#/components/schemas/OcspStatus'
-        updated_at:
+          readOnly: true
+        status_class:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/DiagnosticStatusClass'
+        status_code:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/OcspStatus'
+        prev_update_at:
           type: string
           format: date-time
           description: last time updated
           example: '2018-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
+          readOnly: true
         next_update_at:
           type: string
           format: date-time
-          description: last time updated
+          description: next time updated
           example: '2018-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
+          readOnly: true
     OcspStatus: # ok
       type: string
       format: enum
@@ -4506,6 +5426,13 @@ components:
         - ERROR_CODE_OCSP_FAILED # Unable to fetch response from the OCSP responder.
         - ERROR_CODE_OCSP_RESPONSE_INVALID # Unable to parse the OCSP response.
         - ERROR_CODE_OCSP_UNINITIALIZED # Status request not sent yet.
+        - UNKNOWN
+    OrphanInformation: # ok
+      type: object
+      properties:
+        orphans_exist:
+          type: boolean
+          default: false
     SecurityServer: # ok
       type: object
       description: security server information
@@ -4551,6 +5478,19 @@ components:
           description: security server address (ip or name)
           example: 192.168.1.100
           maxLength: 255
+    SecurityServerAddress: # ok
+      type: object
+      required:
+        - address
+      properties:
+        address:
+          type: string
+          description: Security server's IP address or DNS name
+          format: text
+          minLength: 1
+          maxLength: 255
+      example:
+        address: 127.0.0.1
     Service: # ok
       type: object
       description: service for the service description
@@ -4566,14 +5506,21 @@ components:
           description: encoded service id, including client id
           example: CS:ORG:Client:myService.v1
           minLength: 1
-          maxLength: 1535
-        service_code:
+          maxLength: 1279
+        full_service_code:
           type: string
           format: text
           description: encoded service code and version
           example: myService.v1
           minLength: 1
           maxLength: 511
+        service_code:
+          type: string
+          format: text
+          description: encoded service code
+          example: myService
+          minLength: 1
+          maxLength: 255
         timeout:
           type: integer
           format: uint
@@ -4581,6 +5528,14 @@ components:
           example: 60
           minimum: 0
           maximum: 1000
+        title:
+          type: string
+          readOnly: true
+          format: text
+          description: service title
+          example: client deletion
+          minLength: 1
+          maxLength: 255
         ssl_auth:
           type: boolean
           description: service ssl auth
@@ -4604,44 +5559,32 @@ components:
           description: list of endpoints linked to this service
           items:
             $ref: '#/components/schemas/Endpoint'
-    Endpoint:
-      type: object
-      description: Endpoint for a service
-      required:
-        - id
-        - service_code
-        - method
-        - path
-      properties:
-        id:
-          type: string
-          description: unique identifier
-          example: 15
-        service_code:
-          type: string
-          example: example_service_code
-        method:
-          type: string
-          description: http method mapeed to this endpoint
-          example: 'GET'
-          default: '*'
-        path:
-          type: string
-          description: relative path where this endpoint is mapped to
-          example: '/foo'
-          default: '**'
-        generated:
-          type: boolean
-          description: has endpoint been generated from openapi3 description
-          example: true
     ServiceUpdate: # ok
       type: object
       description: object for updating a service or all services within service description
       required:
-        - service
+        - url
+        - timeout
+        - ssl_auth
       properties:
-        service:
-          $ref: '#/components/schemas/Service'
+        url:
+          type: string
+          format: url
+          description: service url
+          example: https://domain.com/service
+          minLength: 1
+          maxLength: 255
+        timeout:
+          type: integer
+          format: uint
+          description: service time out value
+          example: 60
+          minimum: 0
+          maximum: 1000
+        ssl_auth:
+          type: boolean
+          description: service ssl auth
+          example: true
         url_all:
           description: url is applied for all services
           type: boolean
@@ -4657,29 +5600,103 @@ components:
           type: boolean
           example: false
           default: false
+        ignore_warnings:
+          type: boolean
+          default: false
+          description: if true, any ignorable warnings are ignored. if false (or missing),
+            any warnings cause request to fail
+    Endpoint:
+      type: object
+      description: Endpoint for a service
+      required:
+        - service_code
+        - method
+        - path
+      properties:
+        id:
+          type: string
+          description: unique identifier
+          example: 15
+        service_code:
+          type: string
+          example: example_service_code
+        method:
+          type: string
+          description: http method mapped to this endpoint
+          example: 'GET'
+          enum: [ '*', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'TRACE' ]
+        path:
+          type: string
+          description: relative path where this endpoint is mapped to
+          example: '/foo'
+        generated:
+          type: boolean
+          description: has endpoint been generated from openapi3 description
+          example: true
+          readOnly: true
+    EndpointUpdate:
+      type: object
+      description: Object for updating endpoints method and/or path
+      properties:
+        method:
+          type: string
+          description: http method mapped to this endpoint
+          example: 'GET'
+          enum: [ '*', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'TRACE' ]
+        path:
+          type: string
+          description: relative path where this endpoint is mapped to
+          example: '/foo'
     ServiceClient: # ok
       type: object
-      description: service client
+      description: service client. May be a subsystem, local group, or a global group
       required:
-        - subject
-        - rights_given_at
-        - access_rights
+        - id
       properties:
-        subject:
-          $ref: '#/components/schemas/Subject'
+        id:
+          type: string
+          format: text
+          description: subject id - can be a subsystem id <instance_id>:<member_class>:<member_code>:<subsystem> | globalgroup id <instance_id>:<group_code> | localgroup resource id in number format <id>
+          example: DEV:ORG:1234:Subsystem | DEV:security-server-owners | 123
+          minLength: 1
+          maxLength: 1279
+        name:
+          type: string
+          format: text
+          description: name of the ServiceClient - can be the name of a member or the description of a group
+          example: Security server owners
+          readOnly: true
+          minLength: 1
+          maxLength: 255
+        local_group_code:
+          type: string
+          format: text
+          description: group code in case the object is a local group
+          example: My own Local group code
+          minLength: 1
+          maxLength: 255
+          readOnly: true
+        service_client_type:
+          $ref: '#/components/schemas/ServiceClientType'
+          readOnly: true
         rights_given_at:
           type: string
           format: date-time
-          description: access right given at
+          description: time when access right were given at. When listing client's service clients without specifying the service, the time when first service access right was given to this service client for any service. When listing service clients for a specific service, time when service client was added permission to that service.
           example: '2018-12-15T00:00:00.001Z'
+          readOnly: true
           minLength: 24
           maxLength: 24
-        access_rights:
+    ServiceClients: # ok
+      type: object
+      description: object containing and array of ServiceClients
+      properties:
+        items:
           type: array
-          description: list of access rights - this will be null when requested via services/{id}/access-rights endpoint
           uniqueItems: true
+          description: array of ServiceClients
           items:
-            $ref: '#/components/schemas/AccessRight'
+            $ref: '#/components/schemas/ServiceClient'
     ServiceDescription: # ok
       type: object
       description: WSDL/OPENAPI3/REST service
@@ -4765,6 +5782,15 @@ components:
           default: false
         type:
           $ref: '#/components/schemas/ServiceType'
+    ServiceDescriptionDisabledNotice: # ok
+      type: object
+      properties:
+        disabled_notice:
+          type: string
+          format: text
+          description: disabled service notice
+          minLength: 0
+          maxLength: 255
     ServiceDescriptionUpdate:
       type: object
       description: request object for updating a service description url or service code
@@ -4809,39 +5835,7 @@ components:
         - WSDL
         - REST
         - OPENAPI3
-    Subject: # ok
-      type: object
-      description: subject
-      required:
-        - id
-        - subject_type
-      properties:
-        id:
-          type: string
-          format: text
-          description: subject id - can be a subsystem id <instance_id>:<member_class>:<member_code>:<subsystem> | globalgroup id <instance_id>:<group_code> | localgroup resource id in number format <id>
-          example: DEV:ORG:1234:Subsystem | DEV:security-server-owners | 123
-          minLength: 1
-          maxLength: 1279
-        member_name_group_description:
-          type: string
-          format: text
-          description: name of the subject - can be the name of a member or the description of a group
-          example: Security server owners
-          readOnly: true
-          minLength: 1
-          maxLength: 255
-        local_group_code:
-          type: string
-          format: text
-          description: group code in case the object is a local group
-          example: My own Local group code
-          minLength: 1
-          maxLength: 255
-          readOnly: true
-        subject_type:
-          $ref: '#/components/schemas/SubjectType'
-    SubjectType: # ok
+    ServiceClientType: # ok
       type: string
       format: text
       description: subject type
@@ -4850,49 +5844,6 @@ components:
         - GLOBALGROUP
         - LOCALGROUP
         - SUBSYSTEM
-    Subjects: # ok
-      type: object
-      description: object containing and array of subject ids
-      properties:
-        items:
-          type: array
-          uniqueItems: true
-          description: array of subject ids
-          items:
-            $ref: '#/components/schemas/Subject'
-    System: # ok
-      type: object
-      description: system parameters
-      required:
-        - anchor
-        - configuration
-        - timestamping_services
-        - ocsp_responders
-        - certificate_authorities
-        - tls_certificate
-        - version
-      properties:
-        anchor:
-          $ref: '#/components/schemas/Anchor'
-        configuration:
-          $ref: '#/components/schemas/GlobalConfiguration'
-        timestamping_services:
-          type: array
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/TimestampingService'
-        ocsp_responders:
-          $ref: '#/components/schemas/OcspResponders'
-        certificate_authorities:
-          type: array
-          description: system certificate authorities
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/CertificateAuthority'
-        tls_certificate:
-          $ref: '#/components/schemas/CertificateDetails'
-        version:
-          $ref: '#/components/schemas/Version'
     TimestampingService: # ok
       type: object
       description: timestamping services
@@ -4916,22 +5867,13 @@ components:
           maxLength: 255
     TimestampingServiceDiagnostics: # ok
       type: object
-      description: timestamping services
+      description: timestamping service diagnostics
       required:
-        - name
         - url
-        - updated_at
-        - message
-        - status
+        - status_class
+        - status_code
+        - prev_update_at
       properties:
-        name:
-          type: string
-          format: text
-          description: name of the time stamping service
-          example: X-Road Test TSA CN
-          minLength: 1
-          maxLength: 255
-          readOnly: true
         url:
           type: string
           format: url
@@ -4940,24 +5882,21 @@ components:
           minLength: 1
           maxLength: 255
           readOnly: true
-        updated_at:
+        status_class:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/DiagnosticStatusClass'
+        status_code:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/TimestampingStatus'
+        prev_update_at:
           type: string
           format: date-time
           description: last time updated
           example: '2018-12-15T00:00:00.001Z'
           minLength: 24
           maxLength: 24
-          readOnly: true
-        message:
-          type: string
-          format: text
-          description: timestamping service message
-          example: ok
-          minLength: 1
-          maxLength: 255
-          readOnly: true
-        status:
-          $ref: '#/components/schemas/TimestampingStatus'
           readOnly: true
     TimestampingStatus: # ok
       type: string
@@ -4968,10 +5907,9 @@ components:
         - SUCCESS # Everything ok
         - ERROR_CODE_TIMESTAMP_REQUEST_TIMED_OUT # Connection to the timestamp server timed out. Check the network connection to the timestamp server.
         - ERROR_CODE_MALFORMED_TIMESTAMP_SERVER_URL # Malformed timestamp server URL. Check the URL.
-        - ERROR_CODE_UNKNOWN # Unknown error code.
-        - ERROR_CODE_UNINITIALIZED # The configuration client is initializing.
         - ERROR_CODE_TIMESTAMP_UNINITIALIZED # Connection ok, no timestamp request made yet.
-        - ERROR_CODE_CONNECTION_FAILED # Connection to configuration client failed. Ensure that xroad-confclient is running.
+        - ERROR_CODE_INTERNAL # Internal error occurred.
+        - UNKNOWN
     Token: # ok
       type: object
       description: token
@@ -5041,6 +5979,47 @@ components:
           description: possible actions that can be done to this object, e.g DELETE.
             Has value only for operationIds getToken and getTokens.
             Does not consider user authorization.
+    TokenInitStatus: # ok
+      type: string
+      format: enum
+      description: whether a token has been initialized or not – if the software token init status
+        cannot be resolved (e.g. signer module is offline), the value is UNKNOWN
+      example: INITIALIZED
+      enum:
+        - INITIALIZED
+        - NOT_INITIALIZED
+        - UNKNOWN
+    TokenName: # ok
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: friendly name of the token
+          format: text
+          minLength: 1
+          maxLength: 255
+      example:
+        name: my-token-0
+    TokensLoggedOut: # ok
+      description: response that tells if hsm tokens were logged out during the restore process
+      type: object
+      properties:
+        hsm_tokens_logged_out:
+          description: whether any hsm tokens were logged out during the restore process
+          type: boolean
+          default: false
+    TokenPassword: # ok
+      type: object
+      properties:
+        password:
+          type: string
+          format: text
+          description: password for logging in to the token
+          minLength: 1
+      example:
+        password: sm3!!ycat
     TokenStatus: # ok
       type: string
       format: text

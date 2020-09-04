@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -25,15 +26,20 @@
 package org.niis.xroad.restapi.auth;
 
 import lombok.extern.slf4j.Slf4j;
+import org.niis.xroad.restapi.config.audit.AuditEventLoggingFacade;
+import org.niis.xroad.restapi.config.audit.RestApiAuditEvent;
 import org.niis.xroad.restapi.domain.PersistentApiKeyType;
-import org.niis.xroad.restapi.repository.ApiKeyRepository;
+import org.niis.xroad.restapi.service.ApiKeyService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken;
 import org.springframework.stereotype.Component;
+
+import static org.niis.xroad.restapi.auth.AuthenticationIpWhitelist.REGULAR_API_WHITELIST;
 
 /**
  * AuthenticationManager which expects Authentication.principal to be
@@ -44,34 +50,50 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class ApiKeyAuthenticationManager implements AuthenticationManager {
 
-    @Autowired
-    private ApiKeyRepository apiKeyRepository;
+    private final ApiKeyAuthenticationHelper apiKeyAuthenticationHelper;
+    private final AuthenticationHeaderDecoder authenticationHeaderDecoder;
+    private final GrantedAuthorityMapper permissionMapper;
+    private final AuthenticationIpWhitelist authenticationIpWhitelist;
+    private final AuditEventLoggingFacade auditEventLoggingFacade;
 
     @Autowired
-    private AuthenticationHeaderDecoder authenticationHeaderDecoder;
-
-    @Autowired
-    private GrantedAuthorityMapper permissionMapper;
+    public ApiKeyAuthenticationManager(ApiKeyAuthenticationHelper apiKeyAuthenticationHelper,
+            AuthenticationHeaderDecoder authenticationHeaderDecoder,
+            GrantedAuthorityMapper permissionMapper,
+            @Qualifier(REGULAR_API_WHITELIST) AuthenticationIpWhitelist authenticationIpWhitelist,
+            AuditEventLoggingFacade auditEventLoggingFacade) {
+        this.apiKeyAuthenticationHelper = apiKeyAuthenticationHelper;
+        this.authenticationHeaderDecoder = authenticationHeaderDecoder;
+        this.permissionMapper = permissionMapper;
+        this.authenticationIpWhitelist = authenticationIpWhitelist;
+        this.auditEventLoggingFacade = auditEventLoggingFacade;
+    }
 
     @Override
     public Authentication authenticate(Authentication authentication) throws AuthenticationException {
-        String encodedAuthenticationHeader = (String) authentication.getPrincipal();
-        String apiKeyValue = authenticationHeaderDecoder.decodeApiKey(encodedAuthenticationHeader);
-        PersistentApiKeyType key;
-
         try {
-            key = apiKeyRepository.get(apiKeyValue);
-        } catch (ApiKeyRepository.ApiKeyNotFoundException notFound) {
-            throw new BadCredentialsException("The API key was not found or not the expected value.");
-        } catch (Exception e) {
-            throw new BadCredentialsException("Unknown problem when getting API key", e);
-        }
+            authenticationIpWhitelist.validateIpAddress(authentication);
+            String encodedAuthenticationHeader = (String) authentication.getPrincipal();
+            String apiKeyValue = authenticationHeaderDecoder.decodeApiKey(encodedAuthenticationHeader);
+            PersistentApiKeyType key;
 
-        PreAuthenticatedAuthenticationToken authenticationWithGrants =
-                new PreAuthenticatedAuthenticationToken(createPrincipal(key),
-                        authentication.getCredentials(),
-                        permissionMapper.getAuthorities(key.getRoles()));
-        return authenticationWithGrants;
+            try {
+                key = apiKeyAuthenticationHelper.get(apiKeyValue);
+            } catch (ApiKeyService.ApiKeyNotFoundException notFound) {
+                throw new BadCredentialsException("The API key was not found or not the expected value.");
+            } catch (Exception e) {
+                throw new BadCredentialsException("Unknown problem when getting API key", e);
+            }
+
+            PreAuthenticatedAuthenticationToken authenticationWithGrants =
+                    new PreAuthenticatedAuthenticationToken(createPrincipal(key),
+                            authentication.getCredentials(),
+                            permissionMapper.getAuthorities(key.getRoles()));
+            return authenticationWithGrants;
+        } catch (Exception e) {
+            auditEventLoggingFacade.auditLogFail(RestApiAuditEvent.API_KEY_AUTHENTICATION, e);
+            throw e;
+        }
     }
 
     /**

@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -26,12 +27,9 @@ package org.niis.xroad.restapi.openapi;
 
 import ee.ria.xroad.common.identifier.ClientId;
 
-import lombok.extern.slf4j.Slf4j;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.stubbing.Answer;
-import org.niis.xroad.restapi.facade.GlobalConfFacade;
 import org.niis.xroad.restapi.openapi.model.Client;
 import org.niis.xroad.restapi.openapi.model.IgnoreWarnings;
 import org.niis.xroad.restapi.openapi.model.Service;
@@ -39,19 +37,13 @@ import org.niis.xroad.restapi.openapi.model.ServiceDescription;
 import org.niis.xroad.restapi.openapi.model.ServiceDescriptionDisabledNotice;
 import org.niis.xroad.restapi.openapi.model.ServiceDescriptionUpdate;
 import org.niis.xroad.restapi.openapi.model.ServiceType;
-import org.niis.xroad.restapi.service.UrlValidator;
 import org.niis.xroad.restapi.util.TestUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.test.context.support.WithMockUser;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -65,28 +57,18 @@ import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.niis.xroad.restapi.util.TestUtils.CLIENT_ID_SS1_INITIAL_SERVICEDESCRIPTION_COUNT;
+import static org.niis.xroad.restapi.util.TestUtils.OWNER_SERVER_ID;
 
 /**
  * Test ServiceDescriptionsApiController
  */
-@RunWith(SpringRunner.class)
-@SpringBootTest
-@AutoConfigureTestDatabase
-@Transactional
-@Slf4j
-public class ServiceDescriptionsApiControllerIntegrationTest {
+public class ServiceDescriptionsApiControllerIntegrationTest extends AbstractApiControllerTestContext {
 
     @Autowired
-    private ServiceDescriptionsApiController serviceDescriptionsApiController;
+    ServiceDescriptionsApiController serviceDescriptionsApiController;
 
     @Autowired
-    private ClientsApiController clientsApiController;
-
-    @MockBean
-    private GlobalConfFacade globalConfFacade;
-
-    @MockBean
-    private UrlValidator urlValidator;
+    ClientsApiController clientsApiController;
 
     @Before
     public void setup() {
@@ -97,6 +79,9 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
                     : "test-member" + "NAME";
         });
         when(urlValidator.isValidUrl(any())).thenReturn(true);
+        when(currentSecurityServerSignCertificates.getSignCertificateInfos()).thenReturn(new ArrayList<>());
+        when(serverConfService.getSecurityServerId()).thenReturn(OWNER_SERVER_ID);
+        when(currentSecurityServerId.getServerId()).thenReturn(OWNER_SERVER_ID);
     }
 
     @Test
@@ -197,11 +182,11 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
         assertEquals("https://soapservice.com/v1/Endpoint?wsdl", serviceDescription.getUrl());
         Set<String> serviceIds = getServiceIds(serviceDescription);
         Set<String> serviceCodes = getServiceCodes(serviceDescription);
-        assertEquals(3, serviceIds.size());
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_GET_RANDOM));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_CALCULATE_PRIME));
+        assertEquals(4, serviceIds.size());
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CODE_GET_RANDOM));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CALCULATE_PRIME));
         assertEquals(3, serviceCodes.size());
-        assertTrue(serviceCodes.contains(TestUtils.SERVICE_GET_RANDOM));
+        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CODE_GET_RANDOM));
         assertTrue(serviceCodes.contains(TestUtils.SERVICE_CALCULATE_PRIME));
 
         ServiceDescriptionUpdate serviceDescriptionUpdate = new ServiceDescriptionUpdate()
@@ -217,16 +202,16 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
         serviceIds = getServiceIds(serviceDescription);
         serviceCodes = getServiceCodes(serviceDescription);
         assertEquals(2, serviceIds.size());
-        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_GET_RANDOM));
-        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_CALCULATE_PRIME));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_XROAD_GET_RANDOM));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_BMI));
+        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CODE_GET_RANDOM));
+        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CALCULATE_PRIME));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_XROAD_GET_RANDOM));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CODE_BMI));
 
         assertEquals(2, serviceCodes.size());
-        assertFalse(serviceCodes.contains(TestUtils.SERVICE_GET_RANDOM));
+        assertFalse(serviceCodes.contains(TestUtils.SERVICE_CODE_GET_RANDOM));
         assertFalse(serviceCodes.contains(TestUtils.SERVICE_CALCULATE_PRIME));
         assertTrue(serviceCodes.contains(TestUtils.SERVICE_XROAD_GET_RANDOM));
-        assertTrue(serviceCodes.contains(TestUtils.SERVICE_BMI));
+        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CODE_BMI));
     }
 
     @Test
@@ -237,11 +222,11 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
         Set<String> serviceIds = getServiceIds(serviceDescription);
         Set<String> serviceCodes = getServiceCodes(serviceDescription);
         assertEquals(2, serviceIds.size());
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.SERVICE_XROAD_GET_RANDOM_OLD));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.SERVICE_BMI_OLD));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.FULL_SERVICE_XROAD_GET_RANDOM_OLD));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.FULL_SERVICE_CODE_BMI_OLD));
         assertEquals(2, serviceCodes.size());
         assertTrue(serviceCodes.contains(TestUtils.SERVICE_XROAD_GET_RANDOM_OLD));
-        assertTrue(serviceCodes.contains(TestUtils.SERVICE_BMI_OLD));
+        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CODE_BMI_OLD));
 
         // ignore warningDeviations (about adding and deleting services)
         ServiceDescription refreshed = serviceDescriptionsApiController.refreshServiceDescription("3",
@@ -251,21 +236,21 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
         serviceCodes = getServiceCodes(refreshed);
         assertEquals(2, serviceIds.size());
         // refreshed wsdl has updated serviceIds and the refreshedDate should be updated
-        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.SERVICE_XROAD_GET_RANDOM_OLD));
-        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.SERVICE_BMI_OLD));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.SERVICE_XROAD_GET_RANDOM));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.SERVICE_BMI));
+        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.FULL_SERVICE_XROAD_GET_RANDOM_OLD));
+        assertFalse(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.FULL_SERVICE_CODE_BMI_OLD));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.FULL_SERVICE_XROAD_GET_RANDOM));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS2 + ":" + TestUtils.FULL_SERVICE_CODE_BMI));
 
         assertEquals(2, serviceCodes.size());
         // refreshed wsdl has updated serviceCodes and the refreshedDate should be updated
         assertFalse(serviceCodes.contains(TestUtils.SERVICE_XROAD_GET_RANDOM_OLD));
-        assertFalse(serviceCodes.contains(TestUtils.SERVICE_BMI_OLD));
+        assertFalse(serviceCodes.contains(TestUtils.SERVICE_CODE_BMI_OLD));
         assertTrue(serviceCodes.contains(TestUtils.SERVICE_XROAD_GET_RANDOM));
-        assertTrue(serviceCodes.contains(TestUtils.SERVICE_BMI));
+        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CODE_BMI));
         assertTrue(refreshed.getRefreshedAt().isAfter(serviceDescription.getRefreshedAt()));
     }
 
-    @Test(expected = AccessDeniedException.class)
+    @Test(expected = BadRequestException.class)
     @WithMockUser(authorities = { "REFRESH_REST" })
     public void refreshRestServiceDescriptionWithoutRights() {
         serviceDescriptionsApiController.refreshServiceDescription("6", new IgnoreWarnings().ignoreWarnings(false));
@@ -281,12 +266,12 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
         assertEquals("https://soapservice.com/v1/Endpoint?wsdl", serviceDescription.getUrl());
         Set<String> serviceIds = getServiceIds(serviceDescription);
         Set<String> serviceCodes = getServiceCodes(serviceDescription);
-        assertEquals(3, serviceIds.size());
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_GET_RANDOM));
-        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_CALCULATE_PRIME));
+        assertEquals(4, serviceIds.size());
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CODE_GET_RANDOM));
+        assertTrue(serviceIds.contains(TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.FULL_SERVICE_CALCULATE_PRIME));
         assertEquals(3, serviceCodes.size());
-        assertTrue(serviceCodes.contains(TestUtils.SERVICE_GET_RANDOM));
-        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CALCULATE_PRIME));
+        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CODE_GET_RANDOM));
+        assertTrue(serviceCodes.contains(TestUtils.SERVICE_CODE_GET_RANDOM));
 
         try {
             serviceDescriptionsApiController.getServiceDescription("123451");
@@ -308,10 +293,11 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
                 serviceDescriptionsApiController.getServiceDescriptionServices("1");
         assertEquals(HttpStatus.OK, response.getStatusCode());
         List<Service> services = response.getBody();
-        assertEquals(3, services.size());
-        Service getRandomService = getService(services, TestUtils.CLIENT_ID_SS1 + ":" + TestUtils.SERVICE_GET_RANDOM);
+        assertEquals(4, services.size());
+        Service getRandomService = getService(services, TestUtils.CLIENT_ID_SS1 + ":"
+                + TestUtils.FULL_SERVICE_CODE_GET_RANDOM);
         assertEquals("https://soapservice.com/v1/Endpoint", getRandomService.getUrl());
-        assertEquals(TestUtils.SERVICE_GET_RANDOM, getRandomService.getServiceCode());
+        assertEquals(TestUtils.SERVICE_CODE_GET_RANDOM, getRandomService.getServiceCode());
 
         // test one without services - should return OK but empty list
         // (resource exists, but is an empty collection)
@@ -332,19 +318,20 @@ public class ServiceDescriptionsApiControllerIntegrationTest {
         }
     }
 
-
     private Set<String> getServiceIds(ServiceDescription serviceDescription) {
         return serviceDescription.getServices()
                 .stream()
                 .map(Service::getId)
                 .collect(Collectors.toSet());
     }
+
     private Set<String> getServiceCodes(ServiceDescription serviceDescription) {
         return serviceDescription.getServices()
                 .stream()
                 .map(Service::getServiceCode)
                 .collect(Collectors.toSet());
     }
+
     private Service getService(List<Service> services, String id) {
         return services.stream()
                 .filter(s -> id.equals(s.getId()))

@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -30,12 +31,14 @@ import ee.ria.xroad.common.identifier.ClientId;
 
 import com.google.common.collect.Streams;
 import org.apache.commons.lang.StringUtils;
-import org.niis.xroad.restapi.cache.SecurityServerOwner;
+import org.niis.xroad.restapi.cache.CurrentSecurityServerId;
+import org.niis.xroad.restapi.cache.CurrentSecurityServerSignCertificates;
 import org.niis.xroad.restapi.facade.GlobalConfFacade;
 import org.niis.xroad.restapi.openapi.BadRequestException;
 import org.niis.xroad.restapi.openapi.model.Client;
 import org.niis.xroad.restapi.openapi.model.ClientStatus;
 import org.niis.xroad.restapi.openapi.model.ConnectionType;
+import org.niis.xroad.restapi.util.ClientUtils;
 import org.niis.xroad.restapi.util.FormatUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -54,7 +57,9 @@ import static org.niis.xroad.restapi.converter.Converters.ENCODED_ID_SEPARATOR;
 public class ClientConverter {
 
     private final GlobalConfFacade globalConfFacade;
-    private final SecurityServerOwner securityServerOwner; // request scoped
+    private final CurrentSecurityServerId securityServerOwner; // request scoped
+    // request scoped contains all certificates of type sign
+    private final CurrentSecurityServerSignCertificates currentSecurityServerSignCertificates;
 
     public static final int INSTANCE_INDEX = 0;
     public static final int MEMBER_CLASS_INDEX = 1;
@@ -63,24 +68,29 @@ public class ClientConverter {
 
     @Autowired
     public ClientConverter(GlobalConfFacade globalConfFacade,
-            SecurityServerOwner securityServerOwner) {
+            CurrentSecurityServerId securityServerOwner,
+            CurrentSecurityServerSignCertificates currentSecurityServerSignCertificates) {
         this.globalConfFacade = globalConfFacade;
         this.securityServerOwner = securityServerOwner;
+        this.currentSecurityServerSignCertificates = currentSecurityServerSignCertificates;
     }
 
     /**
-     * convert ClientType into openapi Client class
+     *
      * @param clientType
      * @return
      */
     public Client convert(ClientType clientType) {
         Client client = new Client();
         client.setId(convertId(clientType.getIdentifier()));
+        client.setInstanceId(clientType.getIdentifier().getXRoadInstance());
         client.setMemberClass(clientType.getIdentifier().getMemberClass());
         client.setMemberCode(clientType.getIdentifier().getMemberCode());
         client.setSubsystemCode(clientType.getIdentifier().getSubsystemCode());
         client.setMemberName(globalConfFacade.getMemberName(clientType.getIdentifier()));
-        client.setOwner(clientType.getIdentifier().equals(securityServerOwner.getId()));
+        client.setOwner(clientType.getIdentifier().equals(securityServerOwner.getServerId().getOwner()));
+        client.setHasValidLocalSignCert(ClientUtils.hasValidLocalSignCert(clientType.getIdentifier(),
+                currentSecurityServerSignCertificates.getSignCertificateInfos()));
         Optional<ClientStatus> status = ClientStatusMapping.map(clientType.getClientStatus());
         client.setStatus(status.orElse(null));
         Optional<ConnectionType> connectionTypeEnum =
@@ -138,8 +148,7 @@ public class ClientConverter {
      * @throws BadRequestException if encoded id could not be decoded
      */
     public ClientId convertId(String encodedId) throws BadRequestException {
-        int separators = FormatUtils.countOccurences(encodedId, ENCODED_ID_SEPARATOR);
-        if (separators != MEMBER_CODE_INDEX && separators != SUBSYSTEM_CODE_INDEX) {
+        if (!isEncodedClientId(encodedId)) {
             throw new BadRequestException("Invalid client id " + encodedId);
         }
         List<String> parts = Arrays.asList(encodedId.split(String.valueOf(ENCODED_ID_SEPARATOR)));
@@ -190,5 +199,19 @@ public class ClientConverter {
      */
     public List<Client> convertMemberInfosToClients(List<MemberInfo> memberInfos) {
         return memberInfos.stream().map(this::convertMemberInfoToClient).collect(Collectors.toList());
+    }
+
+    public boolean isEncodedSubsystemId(String encodedId) {
+        int separators = FormatUtils.countOccurences(encodedId, Converters.ENCODED_ID_SEPARATOR);
+        return separators == SUBSYSTEM_CODE_INDEX;
+    }
+
+    public boolean isEncodedMemberId(String encodedId) {
+        int separators = FormatUtils.countOccurences(encodedId, Converters.ENCODED_ID_SEPARATOR);
+        return separators == MEMBER_CODE_INDEX;
+    }
+
+    public boolean isEncodedClientId(String encodedId) {
+        return isEncodedMemberId(encodedId) || isEncodedSubsystemId(encodedId);
     }
 }

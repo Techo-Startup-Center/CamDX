@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -27,16 +28,16 @@ package org.niis.xroad.restapi.converter;
 import ee.ria.xroad.common.conf.serverconf.model.GroupMemberType;
 import ee.ria.xroad.common.conf.serverconf.model.LocalGroupType;
 import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.SecurityServerId;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.niis.xroad.restapi.cache.SecurityServerOwner;
+import org.niis.xroad.restapi.cache.CurrentSecurityServerId;
+import org.niis.xroad.restapi.cache.CurrentSecurityServerSignCertificates;
 import org.niis.xroad.restapi.facade.GlobalConfFacade;
 import org.niis.xroad.restapi.openapi.model.LocalGroup;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit4.SpringRunner;
 
+import java.util.ArrayList;
 import java.util.Date;
 
 import static org.junit.Assert.assertEquals;
@@ -44,14 +45,13 @@ import static org.junit.Assert.assertEquals;
 /**
  * Test LocalGroupConverter
  */
-@RunWith(SpringRunner.class)
-@SpringBootTest
-public class LocalGroupConverterTest {
+public class LocalGroupConverterTest extends AbstractConverterTestContext {
 
     public static final String MEMBER_NAME_PREFIX = "member-name-for-";
 
     private LocalGroupConverter localGroupConverter;
     private ClientConverter clientConverter;
+    private CurrentSecurityServerSignCertificates currentSecurityServerSignCertificates;
 
     @Before
     public void setup() {
@@ -62,8 +62,10 @@ public class LocalGroupConverterTest {
             }
         };
         ClientId ownerId = ClientId.create("XRD2", "GOV", "M4");
+        SecurityServerId ownerSsId = SecurityServerId.create(ownerId, "CS");
 
-        clientConverter = new ClientConverter(globalConfFacade, new SecurityServerOwner(ownerId));
+        clientConverter = new ClientConverter(globalConfFacade, new CurrentSecurityServerId(ownerSsId),
+                new CurrentSecurityServerSignCertificates(new ArrayList<>()));
         localGroupConverter = new LocalGroupConverter(clientConverter, globalConfFacade);
     }
 

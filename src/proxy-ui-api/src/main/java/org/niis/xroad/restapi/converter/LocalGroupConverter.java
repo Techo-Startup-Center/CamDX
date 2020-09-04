@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -32,6 +33,7 @@ import com.google.common.collect.Streams;
 import org.niis.xroad.restapi.facade.GlobalConfFacade;
 import org.niis.xroad.restapi.openapi.model.GroupMember;
 import org.niis.xroad.restapi.openapi.model.LocalGroup;
+import org.niis.xroad.restapi.openapi.model.LocalGroupAdd;
 import org.niis.xroad.restapi.util.FormatUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -86,7 +88,7 @@ public class LocalGroupConverter {
     }
 
     /**
-     * Converts Group to LocalGroupType. Ignores Group#id field since it is obsolete in LocalGroupType
+     * Converts LocalGroup to LocalGroupType. Ignores LocalGroup#id field since it is obsolete in LocalGroupType
      * @param group
      * @return LocalGroupType
      */
@@ -100,6 +102,21 @@ public class LocalGroupConverter {
             localGroupType.getGroupMember().addAll(group.getMembers().stream()
                     .map(this::convert).collect(Collectors.toList()));
         }
+
+        return localGroupType;
+    }
+
+    /**
+     * Converts LocalGroupAdd to LocalGroupType
+     * @param group
+     * @return LocalGroupType
+     */
+    public LocalGroupType convert(LocalGroupAdd group) {
+        LocalGroupType localGroupType = new LocalGroupType();
+
+        localGroupType.setDescription(group.getDescription());
+        localGroupType.setGroupCode(group.getCode());
+        localGroupType.setUpdated(new Date());
 
         return localGroupType;
     }

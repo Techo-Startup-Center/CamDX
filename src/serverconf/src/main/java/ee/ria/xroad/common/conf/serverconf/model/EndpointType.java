@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -75,5 +76,16 @@ public class EndpointType {
         return other.getServiceCode().equals(serviceCode)
                 && other.getMethod().equals(method)
                 && other.getPath().equals(path);
+    }
+
+    /**
+     * Return true is this endpoint is base endpoint and false otherwise.
+     *
+     * Base endpoint is in other words service (code) level endpoint.
+     * Each service has one base endpoint.
+     * Base endpoint has method '*' and path '**'.
+     */
+    public final boolean isBaseEndpoint() {
+        return this.method.equals(ANY_METHOD) && this.path.equals(ANY_PATH);
     }
 }

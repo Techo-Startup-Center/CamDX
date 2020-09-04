@@ -6,7 +6,7 @@
 
 **X-ROAD 6**
 
-Version: 2.36
+Version: 2.46
 Doc. ID: UG-SS
 
 ---
@@ -69,6 +69,16 @@ Doc. ID: UG-SS
  04.11.2019 | 2.34    | Added information about REST API request rate and size limits | Janne Mattila
  07.11.2019 | 2.35    | Add more information about service descriptions to chapter [6] | Ilkka Seppälä
  05.12.2019 | 2.36    | Add information about timestamping failover capabilities in chapter [10.2](#102-managing-the-timestamping-services) | Petteri Kivimäki
+ 24.02.2020 | 2.37    | Updated notes about key caching after changing internal TLS key and certificate [10.3](#103-changing-the-internal-tls-key-and-certificate) | Caro Hautamäki
+ 26.03.2020 | 2.38    | Added chapter on updating API keys [19.1.3](#1913-updating-api-keys) | Petteri Kivimäki
+ 30.03.2020 | 2.39    | Added description of pre-restore backups | Ilkka Seppälä
+ 01.04.2020 | 2.40    | Added notes about IP whitelists for APIs | Janne Mattila
+ 03.06.2020 | 2.41    | Updated audit logging description | Janne Mattila
+ 05.06.2020 | 2.42    | Added chapter about validation errors [19.4](#194-validation-errors) | Caro Hautamäki
+ 25.06.2020 | 2.43    | Update environmental and operational monitoring JMXMP details | Petteri Kivimäki
+ 08.07.2020 | 2.44    | Update chapter on access rights [7](#7-access-rights) | Petteri Kivimäki
+ 30.07.2020 | 2.45    | Added mention about proxy_ui_api.log to [17 Logs and System Services](#17-logs-and-system-services) | Janne Mattila
+ 10.08.2020 | 2.46    | Added mention about unit start rate limits to [17.1 System Services](#171-system-services) | Janne Mattila
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -181,10 +191,12 @@ Doc. ID: UG-SS
   - [19.1 API key management operations](#191-api-key-management-operations)
     - [19.1.1 Creating new API keys](#1911-creating-new-api-keys)
     - [19.1.2 Listing API keys](#1912-listing-api-keys)
-    - [19.1.3 Revoking API keys](#1913-revoking-api-keys)
-    - [19.1.4 API key caching](#1914-api-key-caching)
+    - [19.1.3 Updating API keys](#1913-updating-api-keys)
+    - [19.1.4 Revoking API keys](#1914-revoking-api-keys)
+    - [19.1.5 API key caching](#1915-api-key-caching)
   - [19.2 Executing REST calls](#192-executing-rest-calls)
   - [19.3 Correlation ID HTTP header](#193-correlation-id-http-header)
+  - [19.4 Validation errors](#194-validation-errors)
 - [20 Migrating to Remote Database Host](#20-migrating-to-remote-database-host)
 
 <!-- vim-markdown-toc -->
@@ -276,6 +288,8 @@ See X-Road terms and abbreviations documentation \[[TA-TERMS](#Ref_TERMS)\].
 20. <a id="Ref_PR-META" class="anchor"></a>\[PR-META\] X-Road: Service Metadata Protocol. Document ID: [PR-META](../Protocols/pr-meta_x-road_service_metadata_protocol.md).
 
 21. <a id="Ref_PR-MREST" class="anchor"></a>\[PR-MREST\] X-Road: Service Metadata Protocol for REST. Document ID: [PR-MREST](../Protocols/pr-mrest_x-road_service_metadata_protocol_for_rest.md).
+
+22. <a id="Ref_UG-SYSPAR" class="anchor"></a>\[UG-SYSPAR\] X-Road: System Parameters User Guide. Document ID: [UG-SYSPAR](../Manuals/ug-syspar_x-road_v6_system_parameters.md).
 
 
 ## 2 User Management
@@ -1072,7 +1086,7 @@ It is possible to define access rights on two levels for REST services:
 -   REST service level
 -   endpoint level
 
-In general, a REST service usually has multiple endpoints. When access rights are defined on the service level, they apply to all the endpoints of the REST service. Instead, defining access rights on the endpoint level gives access to specific endpoint(s) only.
+In general, a REST service usually has multiple endpoints. When access rights are defined on the service level, they apply to all the endpoints of the REST service. Instead, defining access rights on the endpoint level gives access to specific endpoint(s) only. The service level access rights support both service-based and service client-based access rights management. The endpoint level access rights support only service based access rights management.
 
 
 ### 7.1 Changing the Access Rights of a Service
@@ -1097,7 +1111,7 @@ To change the access rights to a service, follow these steps.
 
 **Access rights:** [Service Administrator](#xroad-service-administrator)
 
-The service client view (**Configuration** -&gt; **Security Server Clients** -&gt; **Service Clients**) displays all the access rights subjects of the services mediated by this security server client. In other words, if an X-Road subsystem or group has been granted the access right to a service of this client, then the subject is shown in this view.
+The service client view (**Configuration** -&gt; **Security Server Clients** -&gt; **Service Clients**) displays all the service level access rights subjects of the services mediated by this security server client. In other words, if an X-Road subsystem or group has been granted a service level access right to a service of this client, then the subject is shown in this view. Subjects that have been granted an endpoint level access right to a REST service, are not shown in the view.
 
 To add a service client, follow these steps.
 
@@ -1127,6 +1141,8 @@ To change the service client's access rights, follow these steps.
 -   To remove access rights to a service from the service client, select one or more services from the table and click **Remove Selected**, then click **Confirm**.
 
 -   To remove all access rights from the service client, click **Remove All** and then click **Confirm**.
+
+-   Removing service level access rights from the service client also removes all REST API endpoint level access rights to the endpoints of the service. In other words, removing access rights from the service client removes all access rights to a service and its endpoints.
 
 -   To add access rights to a service client, start by clicking **Add Service**. In the window that opens, select the service(s) that you wish to grant to the subject (already granted services are displayed in gray) and click **Add Selected to ACL**. To add all services found by the search, click **Add All to ACL**. Note that access rights to REST API endpoints can not be added using this view, those need to be added on **Services** tab as described in [7.1](#71-changing-the-access-rights-of-a-service).
 
@@ -1350,7 +1366,7 @@ _To import a new TLS certificate_, follow these steps.
 
    The imported certificate must be in PEM-format to be accepted. Certificate chains are supported; concatenate possible intermediate certificate(s) to the server certificate before importing the file.
 
-   Note that importing a new TLS certificate will restart the xroad-proxy and thus affects providing services from the security server.
+   Note that the Internal TLS Key and Certificate are cached by default for 60 seconds (default cache period for serverconf) so generating a new key and importing a new certificate might affect providing services from the security server for the caching period. The caching period can be changed with System Parameters \[[UG-SYSPAR](#Ref_UG-SYSPAR)\]
 
 _To export the security server’s internal TLS certificate_, follow these steps.
 
@@ -1515,23 +1531,36 @@ The security server keeps an audit log. The audit log events are generated by th
 
 Actions that change the system state or configuration but are not carried out using the user interface are not logged (for example, X-Road software installation and upgrade, user creation and permission granting, and changing the configuration files).
 
-An audit log record contains
+An audit log record contains correlation-id, which can be used to link the record to other log messages about the same request.
+
+An audit log record also contains
 
 -   the description of the user action,
 
 -   the date and time of the event,
 
--   the username of the user performing the action, and
+-   the username of the user performing the action
+
+-   the authentication type used for this request (Session, ApiKey or HttpBasicPam)
+    - `Session` – session based authentication (web application)
+    - `ApiKey` - direct API call using API key authentication
+    - `HttpBasicPam` – HTTP basic authentication with PAM login (for api key management API operations)
+
+-   the API url for this request, and
 
 -   the data related to the event.
 
 For example, registering a new client in the security server produces the following log record:
 
-  `2015-07-03T10:21:59+03:00 my-security-server-host INFO [X-Road Proxy UI] 2015-07-03 10:21:59+0300 - {"event":"Register client", "user":"admin1", "data":{"clientIdentifier":{"xRoadInstance":"EE", "memberClass":"COM",  "memberCode":"member1"}, "clientStatus":"registration in progress"}}`
+  `2020-06-03T11:00:51+00:00 my-security-server-host correlation-id: [24b47d04dc6e1c49] INFO  [X-Road Proxy Admin REST API] 2020-06-03T11:00:51.944Z - {"event":"Register client","user":"admin1","auth":"Session","url":"/api/clients/LXD:GOV:M1:audit-test/register","data":{"clientIdentifier":{"xRoadInstance":"LXD","memberClass":"GOV","memberCode":"M1","subsystemCode":"audit-test","clientStatus":"registration in progress"}}}`
 
-The event is present in JSON \[[JSON](#Ref_JSON)\] format, in order to ensure machine processability. The field event represents the description of the event, the field user represents the user name of the performer, and the field data represents data related with the event. The failed action event record contains an additional field reason for the error message. For example:
+The event is present in JSON \[[JSON](#Ref_JSON)\] format, in order to ensure machine processability.
+The field event represents the description of the event, the field user represents the user name of the performer, and the field data represents data related with the event.
+Field auth represents the authentication type, and url represents the API url.
+The failed action event record contains additional fields reason for the error message, and boolean warning to document whether failure was due to an unhandled warning.
+For example:
 
-  `2015-07-03T11:55:39+03:00 my-security-server-host INFO [X-Road Proxy UI] 2015-07-03 11:55:39+0300 - {"event":"Log in to token failed", "user":"admin1", "reason":"PIN incorrect", "data":{"tokenId":"0", "tokenSerialNumber":null, "tokenFriendlyName":"softToken-0"}}`
+  `2020-06-03T10:57:46+00:00 my-security-server-host correlation-id: [49458d51a0bbe9ed] INFO  [X-Road Proxy Admin REST API] 2020-06-03T10:57:46.417Z - {"event":"Log in to token failed","user":"admin1","reason":"org.niis.xroad.restapi.service.TokenService$PinIncorrectException: Signer.PinIncorrect: PIN incorrect","warning":false,"auth":"Session","url":"/api/tokens/0/login","data":{"tokenId":"0","tokenSerialNumber":null,"tokenFriendlyName":"softToken-0"}}`
 
 By default, audit log is located in the file
 
@@ -1590,6 +1619,8 @@ To **restore configuration**, follow these steps.
 1.  Click **Restore** on the appropriate row in the list of configuration backup files and click **Confirm**.
 
 2.  A window opens displaying the output of the restore script; click **OK** to close it.
+
+If something goes wrong while restoring the configuration it is possible to revert back to the old configuration. Security Server stores so called pre-restore configuration automatically to `/var/lib/xroad/conf_prerestore_backup.tar`. Either move it to `/var/lib/xroad/backup/` folder and utilize the user interface to restore it or use the command line interaface described in the next chapter.
 
 To **delete a configuration backup file**, click **Delete** on the appropriate row in the configuration backup file list and then click **Confirm**.
 
@@ -1807,7 +1838,7 @@ The configuration anchor (renamed as `configuration-anchor.xml`) file must be ma
 
 The operational monitoring daemon makes health data available over the JMXMP protocol. The Zabbix monitoring software can be configured to gather that data periodically, using its built in JMX interface type.
 
-By default, the operational monitoring daemon exposes health data over JMXMP on localhost, port 9011, with no authentication configured and TLS enabled (see `/etc/xroad/services/opmonitor.conf`). This configuration has to be customized for external tools such as Zabbix to be able to access the data. Please refer to the documentation at \[[JMX](#Ref_JMX)\] for instructions on configuring access to the JMX interface of the operational monitoring daemon.
+By default, the operational monitoring daemon JMXMP is disabled. JMXMP must be enabled for external tools such as Zabbix to be able to access the data. Please refer to the documentation at \[[JMX](#Ref_JMX)\] for instructions on configuring access to the JMX interface of the operational monitoring daemon.
 
 For Zabbix to be able to gather data over JMX, the Zabbix Java gateway must be installed. See \[[ZABBIX-GATEWAY](#Ref_ZABBIX-GATEWAY)\] for instructions.
 
@@ -1834,7 +1865,7 @@ Monitoring extension schema is defined in \[[MONITORING_XSD](#Ref_MONITORING_XSD
 
 Environmental monitoring provides also a standard JMX endpoint which can be accessed with any JMX client (for example Java's jconsole application). See \[[ARC-ENVMON](#Ref_ARC-ENVMON)\] for details.
 
-JMX is disabled on default. JMX is enabled by adding standard JMX-related options to the executable java process as in example by \[[ZABBIX-JMX](#Ref_ZABBIX-JMX)\]. Monitor process options are defined in security server's path `/etc/xroad/services/monitor.conf`.
+JMX is disabled on default. JMX is enabled by adding standard JMX-related options to the executable java process as in example by \[[ZABBIX-JMX](#Ref_ZABBIX-JMX)\].
 
 ### 16.3 Limiting environmental monitoring remote data set
 
@@ -1855,9 +1886,10 @@ The most important system services of a security server are as follows.
  `xroad-jetty `     | Application server running the user interface | `/var/log/xroad/jetty/`
  `xroad-proxy`      | Message exchanger                             | `/var/log/xroad/proxy.log`
  `xroad-signer`     | Manager process for key settings              | `/var/log/xroad/signer.log`
+ `xroad-proxy-ui-api`  | Management UI and REST API                 | `/var/log/xroad/proxy_ui_api.log` and <br/>`/var/log/xroad/proxy_ui_api_access.log` 
  `nginx`            | Web server that exchanges the services of the user interface's application server and the message exchanger | `/var/log/nginx/`
 
-System services are managed through the *upstart* facility.
+System services are managed through the *systemd* facility.
 
 **To start a service**, issue the following command as a `root` user:
 
@@ -1867,6 +1899,9 @@ System services are managed through the *upstart* facility.
 
     service <service> stop
 
+Services use the [default unit start rate limits](https://www.freedesktop.org/software/systemd/man/systemd-system.conf.html#DefaultStartLimitIntervalSec=).
+An exception to this is `xroad-proxy-ui-api`, which uses a longer start rate limit ([5 starts / 40 seconds](../../src/packages/src/xroad/ubuntu/bionic/debian/xroad-proxy-ui-api.service))
+to prevent infinite restart-loop in some specific error situations.
 
 ### 17.2 Logging configuration
 
@@ -1979,17 +2014,19 @@ PROXY_UI_API_PARAMS=" $PROXY_UI_API_PARAMS -Drequest.sizelimit.binary.upload=1MB
 
 An API key is linked to a role or roles, and grants access to the operations that are allowed for that role/roles.
 A separate REST api exists for API key management.
-Access to API key management is limited to localhost (`127.0.0.1`).
-API key management API is authenticated to with [HTTP basic authentication](https://en.wikipedia.org/wiki/Basic_access_authentication) (username and password).
+API key management API is authenticated to with [HTTP basic authentication](https://en.wikipedia.org/wiki/Basic_access_authentication) (username and password)
+or with session authentication (for admin web application).
+Basic authentication access is limited to localhost by default, but this can
+be changed using System Parameters \[[UG-SYSPAR](#Ref_UG-SYSPAR)\].
 
 #### 19.1.1 Creating new API keys
 
-A new API key is created with a `POST` request to `/api/api-key`. Message body must contain the roles to be
+A new API key is created with a `POST` request to `/api/api-keys`. Message body must contain the roles to be
 associated with the key. Server responds with data that contains the actual API key. After this point the key
 cannot be retrieved, as it is not stored in plaintext.
 
 ```
-curl -X POST -u <user>:<password> https://localhost:4000/api/api-key --data '["XROAD_SECURITYSERVER_OBSERVER","XROAD_REGISTRATION_OFFICER"]' --header "Content-Type: application/json" -k
+curl -X POST -u <user>:<password> https://localhost:4000/api/api-keys --data '["XROAD_SECURITYSERVER_OBSERVER","XROAD_REGISTRATION_OFFICER"]' --header "Content-Type: application/json" -k
 {
   "roles": [
     "XROAD_REGISTRATION_OFFICER",
@@ -2005,10 +2042,10 @@ In this example the created key was `23bc57cd-b1ba-4702-9657-8d53e335c843`.
 
 #### 19.1.2 Listing API keys
 
-Existing API keys can be listed with a `GET` request to `/api/api-key`. This lists all keys, regardless of who has created them.
+Existing API keys can be listed with a `GET` request to `/api/api-keys`. This lists all keys, regardless of who has created them.
 
 ```
-curl -X GET -u <user>:<password> https://localhost:4000/api/api-key -k
+curl -X GET -u <user>:<password> https://localhost:4000/api/api-keys -k
 [
   {
     "id": 59,
@@ -2024,17 +2061,34 @@ curl -X GET -u <user>:<password> https://localhost:4000/api/api-key -k
 
 ```
 
-#### 19.1.3 Revoking API keys
+#### 19.1.3 Updating API keys
 
-An API key can be revoked with a `DELETE` request to `/api/api-key/{id}`. Server responds with `HTTP 200` if
+An existing API key is updated with a `PUT` request to `/api/api-key/{id}`. Message body must contain the roles to be
+associated with the key. Server responds with data that contains the key id and roles associated with the key.
+
+```
+curl -X PUT -u <user>:<password> https://localhost:4000/api/api-key/60 --data '["XROAD_SECURITYSERVER_OBSERVER","XROAD_REGISTRATION_OFFICER"]' --header "Content-Type: application/json" -k
+{
+  "id": 60,
+  "roles": [
+    "XROAD_REGISTRATION_OFFICER",
+    "XROAD_SECURITYSERVER_OBSERVER"
+  ]
+}
+
+```
+
+#### 19.1.4 Revoking API keys
+
+An API key can be revoked with a `DELETE` request to `/api/api-keys/{id}`. Server responds with `HTTP 200` if
 revocation was successful and `HTTP 404` if key did not exist.
 
 ```
-curl -X DELETE -u <user>:<password> https://localhost:4000/api/api-key/60  -k
+curl -X DELETE -u <user>:<password> https://localhost:4000/api/api-keys/60  -k
 
 ```
 
-#### 19.1.4 API key caching
+#### 19.1.5 API key caching
 
 API keys are cached in memory. In typical security server configurations this does not create problems.
 However, if you have configured a setup where multiple security servers share the same `serverconf` database,
@@ -2070,6 +2124,8 @@ curl --header "Authorization: X-Road-apikey token=ff6f55a8-cc63-4e83-aa4c-55f99d
 
 The available APIs are documented in OpenAPI specification (TBD). Access rights for different APIs follow the same rules
 as the corresponding UI operations.
+Access to regular APIs is allowed from all IP addresses by default, but this can
+be changed using System Parameters \[[UG-SYSPAR](#Ref_UG-SYSPAR)\].
 
 ### 19.3 Correlation ID HTTP header
 
@@ -2083,6 +2139,20 @@ For example, these log messages are related to an API call with correlation ID `
 2019-08-26 13:16:23,611 [https-jsse-nio-4000-exec-10] correlation-id:[3d5f193102435242] DEBUG o.s.s.w.c.HttpSessionSecurityContextRepository - The HttpSession is currently null, and the HttpSessionSecurityContextRepository is prohibited from creating an HttpSession (because the allowSessionCreation property is false) - SecurityContext thus not stored for next request
 2019-08-26 13:16:23,611 [https-jsse-nio-4000-exec-10] correlation-id:[3d5f193102435242] WARN  o.s.w.s.m.m.a.ExceptionHandlerExceptionResolver - Resolved [org.niis.xroad.restapi.exceptions.ConflictException: local group with code koodi6 already added]
 2019-08-26 13:16:23,611 [https-jsse-nio-4000-exec-10] correlation-id:[3d5f193102435242] DEBUG o.s.s.w.a.ExceptionTranslationFilter - Chain processed normally
+```
+
+### 19.4 Validation errors
+
+An error response from the REST API can include validation errors if an unsupported parameter was provided with the request. 
+
+In addition to the validation messages declared in Java Validation API, the following validation errors are possible:
+```
+Normalized
+NoColons
+NoSemicolons
+NoForwardslashes
+NoBackslashes
+NoPercents
 ```
 
 ## 20 Migrating to Remote Database Host

@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -33,20 +34,30 @@ import java.util.Arrays;
 import java.util.Optional;
 
 /**
- * Mapping between ConnectionType in api (enum) and model (string)
+ * Mapping between ConnectionType in api (enum) and model (IsAuthentication enum)
  */
 @Getter
 public enum ConnectionTypeMapping {
-    NOSSL(IsAuthentication.NOSSL.name(), ConnectionType.HTTP),
-    SSLNOAUTH(IsAuthentication.SSLNOAUTH.name(), ConnectionType.HTTPS_NO_AUTH),
-    SSLAUTH(IsAuthentication.SSLAUTH.name(), ConnectionType.HTTPS);
+    NOSSL(IsAuthentication.NOSSL, ConnectionType.HTTP),
+    SSLNOAUTH(IsAuthentication.SSLNOAUTH, ConnectionType.HTTPS_NO_AUTH),
+    SSLAUTH(IsAuthentication.SSLAUTH, ConnectionType.HTTPS);
 
-    private final String isAuthentication; // ClientType isAuthentication values (from DB)
+    private final IsAuthentication isAuthentication; // ClientType isAuthentication values (from DB)
     private final ConnectionType connectionTypeEnum;
 
-    ConnectionTypeMapping(String isAuthentication, ConnectionType connectionTypeEnum) {
+    ConnectionTypeMapping(IsAuthentication isAuthentication, ConnectionType connectionTypeEnum) {
         this.isAuthentication = isAuthentication;
         this.connectionTypeEnum = connectionTypeEnum;
+    }
+
+    /**
+     * Return matching ConnectionTypeEnum, if any. Convenience method for mapping isAuthentication
+     * Strings instead of IsAuthentication enum values
+     * @param isAuthenticationString
+     * value
+     */
+    public static Optional<ConnectionType> map(String isAuthenticationString) {
+        return getFor(isAuthenticationString).map(ConnectionTypeMapping::getConnectionTypeEnum);
     }
 
     /**
@@ -54,7 +65,7 @@ public enum ConnectionTypeMapping {
      * @param isAuthentication
      * @return
      */
-    public static Optional<ConnectionType> map(String isAuthentication) {
+    public static Optional<ConnectionType> map(IsAuthentication isAuthentication) {
         return getFor(isAuthentication).map(ConnectionTypeMapping::getConnectionTypeEnum);
     }
 
@@ -63,7 +74,7 @@ public enum ConnectionTypeMapping {
      * @param connectionTypeEnum
      * @return
      */
-    public static Optional<String> map(ConnectionType connectionTypeEnum) {
+    public static Optional<IsAuthentication> map(ConnectionType connectionTypeEnum) {
         return getFor(connectionTypeEnum).map(ConnectionTypeMapping::getIsAuthentication);
     }
 
@@ -72,9 +83,20 @@ public enum ConnectionTypeMapping {
      * @param isAuthentication
      * @return
      */
-    public static Optional<ConnectionTypeMapping> getFor(String isAuthentication) {
+    public static Optional<ConnectionTypeMapping> getFor(IsAuthentication isAuthentication) {
         return Arrays.stream(values())
                 .filter(mapping -> mapping.isAuthentication.equals(isAuthentication))
+                .findFirst();
+    }
+
+    /**
+     * return item matching ClientType isAuthenticationString, if any
+     * @param isAuthenticationString
+     * @return
+     */
+    public static Optional<ConnectionTypeMapping> getFor(String isAuthenticationString) {
+        return Arrays.stream(values())
+                .filter(mapping -> mapping.isAuthentication.name().equals(isAuthenticationString))
                 .findFirst();
     }
 

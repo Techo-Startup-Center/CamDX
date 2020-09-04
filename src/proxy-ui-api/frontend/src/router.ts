@@ -1,4 +1,29 @@
-import Router, { Route, NavigationGuard } from 'vue-router';
+/*
+ * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+ * Copyright (c) 2018 Estonian Information System Authority (RIA),
+ * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+ * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+import Router, { NavigationGuard, Route } from 'vue-router';
 import { sync } from 'vuex-router-sync';
 import TabsBase from '@/components/layout/TabsBase.vue';
 import AppLogin from '@/views/AppLogin.vue';
@@ -10,11 +35,12 @@ import SignAndAuthKeys from '@/views/KeysAndCertificates/SignAndAuthKeys/SignAnd
 import SSTlsCertificate from '@/views/KeysAndCertificates/SecurityServerTlsCertificate/SecurityServerTlsCertificate.vue';
 import ApiKey from '@/views/KeysAndCertificates/ApiKey/ApiKey.vue';
 import Settings from '@/views/Settings/Settings.vue';
-import SystemParameters from '@/views/Settings/SystemParameters.vue';
-import BackupAndRestore from '@/views/Settings/BackupAndRestore.vue';
+import SystemParameters from '@/views/Settings/SystemParameters/SystemParameters.vue';
+import BackupAndRestore from '@/views/Settings/BackupAndRestore/BackupAndRestore.vue';
 import Diagnostics from '@/views/Diagnostics/Diagnostics.vue';
 import AddSubsystem from '@/views/AddSubsystem/AddSubsystem.vue';
 import AddClient from '@/views/AddClient/AddClient.vue';
+import AddMember from '@/views/AddMember/AddMember.vue';
 import Subsystem from '@/views/Clients/Subsystem.vue';
 import ClientDetails from '@/views/Clients/Details/ClientDetails.vue';
 import InternalServers from '@/views/Clients/InternalServers/InternalServers.vue';
@@ -30,11 +56,19 @@ import KeyDetails from '@/views/KeyDetails/KeyDetails.vue';
 import CertificateDetails from '@/views/CertificateDetails/CertificateDetails.vue';
 import Service from '@/views/Service/Service.vue';
 import GenerateCertificateSignRequest from '@/views/GenerateCertificateSignRequest/GenerateCertificateSignRequest.vue';
+import AddKey from '@/views/AddKey/AddKey.vue';
 import store from '@/store';
 import { Permissions, RouteName } from '@/global';
-import ServiceEndpoints from '@/views/Service/Endpoints/Endpoints.vue';
 import ServiceParameters from '@/views/Service/Parameters/ServiceParameters.vue';
 import InternalCertificateDetails from '@/views/InternalCertificateDetails/InternalCertificateDetails.vue';
+import EndpointDetails from '@/views/Service/Endpoints/Endpoint/EndpointDetails.vue';
+import EndpointAccessRights from '@/views/Service/Endpoints/Endpoint/EndpointAccessRights.vue';
+import Endpoints from '@/views/Service/Endpoints/Endpoints.vue';
+import GenerateInternalCsr from '@/views/KeysAndCertificates/SecurityServerTlsCertificate/GenerateInternalCsr.vue';
+import CreateApiKeyStepper from '@/views/KeysAndCertificates/ApiKey/CreateApiKeyStepper.vue';
+import ServiceClientAccessRights from '@/views/Clients/ServiceClients/ServiceClientAccessRights.vue';
+import InitialConfiguration from '@/views/InitialConfiguration/InitialConfiguration.vue';
+import AddServiceClientAccessRights from '@/views/Clients/ServiceClients/AddServiceClientAccessRightsWizard.vue';
 
 // At the moment the vue router does not have a type for Next.
 // Using this solution was recommended in a github comment:
@@ -46,6 +80,7 @@ const router = new Router({
     {
       path: '/',
       component: AppBase,
+      redirect: { name: RouteName.Clients },
       children: [
         {
           path: '/keys',
@@ -60,7 +95,7 @@ const router = new Router({
               path: '',
               component: SignAndAuthKeys,
               props: true,
-              meta: { permission: Permissions.VIEW_CLIENT_DETAILS },
+              meta: { permission: Permissions.VIEW_KEYS },
             },
             {
               name: RouteName.ApiKey,
@@ -77,6 +112,20 @@ const router = new Router({
               meta: { permission: Permissions.VIEW_CLIENT_ACL_SUBJECTS },
             },
           ],
+        },
+        {
+          name: RouteName.CreateApiKey,
+          path: '/keys/apikey/create',
+          component: CreateApiKeyStepper,
+          props: true,
+          meta: { permission: Permissions.VIEW_CLIENT_ACL_SUBJECTS },
+        },
+        {
+          name: RouteName.GenerateInternalCSR,
+          path: '/keys/tsl-cert/generate-csr',
+          component: GenerateInternalCsr,
+          meta: { permission: Permissions.GENERATE_INTERNAL_SSL_CSR },
+          props: true,
         },
         {
           name: RouteName.Diagnostics,
@@ -110,9 +159,13 @@ const router = new Router({
         },
         {
           name: RouteName.AddSubsystem,
-          path: '/add-subsystem',
+          path:
+            '/add-subsystem/:instanceId/:memberClass/:memberCode/:memberName',
           components: {
             default: AddSubsystem,
+          },
+          props: {
+            default: true,
           },
         },
         {
@@ -120,6 +173,16 @@ const router = new Router({
           path: '/add-client',
           components: {
             default: AddClient,
+          },
+        },
+        {
+          name: RouteName.AddMember,
+          path: '/add-member/:instanceId/:memberClass/:memberCode',
+          components: {
+            default: AddMember,
+          },
+          props: {
+            default: true,
           },
         },
         {
@@ -201,7 +264,7 @@ const router = new Router({
         },
         {
           name: RouteName.Clients,
-          path: '',
+          path: '/clients',
           components: {
             default: Clients,
             top: TabsBase,
@@ -242,6 +305,22 @@ const router = new Router({
           meta: { permission: Permissions.VIEW_CLIENT_INTERNAL_CERT_DETAILS },
         },
         {
+          name: RouteName.ServiceClientAccessRights,
+          path: '/subsystem/:id/serviceclients/:serviceClientId',
+          props: { default: true },
+          components: {
+            default: ServiceClientAccessRights,
+          },
+        },
+        {
+          name: RouteName.AddServiceClientAccessRight,
+          path: '/subsystem/serviceclients/:id/add',
+          props: { default: true },
+          components: {
+            default: AddServiceClientAccessRights,
+          },
+        },
+        {
           name: RouteName.LocalGroup,
           path: '/localgroup/:clientId/:groupId',
           components: {
@@ -275,19 +354,43 @@ const router = new Router({
               props: { default: true },
             },
             {
-              name: RouteName.ServiceEndpoints,
+              name: RouteName.Endpoints,
               path: '/service/:clientId/:serviceId/endpoints',
               components: {
-                default: ServiceEndpoints,
+                default: Endpoints,
               },
             },
           ],
+        },
+        {
+          name: RouteName.EndpointDetails,
+          path: '/service/:clientId/:serviceId/endpoints/:id',
+          components: {
+            default: EndpointDetails,
+          },
+          props: { default: true },
+        },
+        {
+          name: RouteName.EndpointAccessRights,
+          path: '/service/:clientId/:serviceId/endpoints/:id/accessrights',
+          components: {
+            default: EndpointAccessRights,
+          },
+          props: { default: true },
         },
         {
           name: RouteName.GenerateCertificateSignRequest,
           path: '/generate-csr/:keyId',
           components: {
             default: GenerateCertificateSignRequest,
+          },
+          props: { default: true },
+        },
+        {
+          name: RouteName.AddKey,
+          path: '/add-key/:tokenId',
+          components: {
+            default: AddKey,
           },
           props: { default: true },
         },
@@ -299,8 +402,37 @@ const router = new Router({
           },
           props: { default: true },
         },
+
+        {
+          name: RouteName.InitialConfiguration,
+          path: '/initial-configuration',
+          components: {
+            default: InitialConfiguration,
+          },
+          beforeEnter: (to, from, next) => {
+            // Coming from login is ok
+            if (from.name === RouteName.Login) {
+              next();
+              return;
+            }
+
+            // Coming from somewhere else, needs a check
+            if (store.getters.needsInitialization) {
+              // Check if the user has permission to initialize the server
+              if (!store.getters.hasPermission(Permissions.INIT_CONFIG)) {
+                store.dispatch(
+                  'showErrorMessageCode',
+                  'initialConfiguration.noPermission',
+                );
+                return;
+              }
+              next();
+            }
+          },
+        },
       ],
     },
+
     {
       path: '/login',
       name: RouteName.Login,
@@ -314,14 +446,24 @@ const router = new Router({
 });
 
 router.beforeEach((to: Route, from: Route, next: Next) => {
-
   // Going to login
-  if (to.name === 'login') {
+  if (to.name === RouteName.Login) {
     next();
     return;
   }
 
   if (store.getters.isAuthenticated) {
+    // Server is not initialized
+    if (store.getters.needsInitialization) {
+      if (to.name !== RouteName.InitialConfiguration) {
+        // Redirect to init
+        next({
+          name: RouteName.InitialConfiguration,
+        });
+        return;
+      }
+    }
+
     if (!to.meta.permission) {
       next();
     } else if (store.getters.hasPermission(to.meta.permission)) {
@@ -336,7 +478,7 @@ router.beforeEach((to: Route, from: Route, next: Next) => {
     return;
   } else {
     next({
-      path: '/login',
+      name: RouteName.Login,
     });
   }
 });

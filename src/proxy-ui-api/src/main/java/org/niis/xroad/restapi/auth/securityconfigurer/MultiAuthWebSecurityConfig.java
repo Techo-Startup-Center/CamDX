@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -43,7 +44,7 @@ import org.springframework.security.config.annotation.web.configuration.WebSecur
  *
  * Uses form login and session cookie based auth for rest apis with Vue frontend
  *
- * Uses http basic authentication for manage api-key api.
+ * Uses http basic authentication for manage api-keys api.
  *
  * Uses authentication tokens for rest apis, when session cookies are not available.
  *
@@ -51,7 +52,7 @@ import org.springframework.security.config.annotation.web.configuration.WebSecur
  *
  * Security is configured with from 4 different WebSecurityConfigurerAdapters.
  * Authentication configurations are used in the following order:
- * - ManageApiKeysWebSecurityConfigurerAdapter, @Order(1), matches /api/api-key/**
+ * - ManageApiKeysWebSecurityConfigurerAdapter, @Order(1), matches /api/api-keys/**
  * - ApiWebSecurityConfigurerAdapter, @Order(2), matches /api/**
  * - StaticAssetsWebSecurityConfig, @Order(3), matches static asset paths such as /js/**
  * - FormLoginWebSecurityConfigurerAdapter, @Order(100), matches any URL (denies /api/**)

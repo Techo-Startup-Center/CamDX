@@ -1,5 +1,6 @@
 /**
  * The MIT License
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -29,24 +30,31 @@ import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.XRoadId;
 
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
+import org.niis.xroad.restapi.config.audit.AuditEventMethod;
+import org.niis.xroad.restapi.controller.ServiceClientHelper;
+import org.niis.xroad.restapi.converter.EndpointConverter;
 import org.niis.xroad.restapi.converter.ServiceClientConverter;
+import org.niis.xroad.restapi.converter.ServiceClientIdentifierConverter;
 import org.niis.xroad.restapi.converter.ServiceConverter;
-import org.niis.xroad.restapi.converter.SubjectConverter;
-import org.niis.xroad.restapi.dto.AccessRightHolderDto;
+import org.niis.xroad.restapi.converter.comparator.ServiceClientSortingComparator;
+import org.niis.xroad.restapi.dto.ServiceClientDto;
+import org.niis.xroad.restapi.openapi.model.Endpoint;
 import org.niis.xroad.restapi.openapi.model.Service;
 import org.niis.xroad.restapi.openapi.model.ServiceClient;
+import org.niis.xroad.restapi.openapi.model.ServiceClients;
 import org.niis.xroad.restapi.openapi.model.ServiceUpdate;
-import org.niis.xroad.restapi.openapi.model.Subject;
-import org.niis.xroad.restapi.openapi.model.SubjectType;
-import org.niis.xroad.restapi.openapi.model.Subjects;
 import org.niis.xroad.restapi.service.AccessRightService;
 import org.niis.xroad.restapi.service.ClientNotFoundException;
-import org.niis.xroad.restapi.service.IdentifierNotFoundException;
+import org.niis.xroad.restapi.service.EndpointAlreadyExistsException;
+import org.niis.xroad.restapi.service.EndpointNotFoundException;
+import org.niis.xroad.restapi.service.InvalidHttpsUrlException;
 import org.niis.xroad.restapi.service.InvalidUrlException;
-import org.niis.xroad.restapi.service.LocalGroupNotFoundException;
+import org.niis.xroad.restapi.service.ServiceClientNotFoundException;
+import org.niis.xroad.restapi.service.ServiceClientService;
+import org.niis.xroad.restapi.service.ServiceDescriptionService;
 import org.niis.xroad.restapi.service.ServiceNotFoundException;
 import org.niis.xroad.restapi.service.ServiceService;
+import org.niis.xroad.restapi.service.UnhandledWarningsException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -54,35 +62,47 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
+
+import static org.niis.xroad.restapi.config.audit.RestApiAuditEvent.ADD_REST_ENDPOINT;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditEvent.ADD_SERVICE_ACCESS_RIGHTS;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditEvent.EDIT_SERVICE_PARAMS;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditEvent.REMOVE_SERVICE_ACCESS_RIGHTS;
 
 /**
  * services api
  */
 @Controller
-@RequestMapping("/api")
+@RequestMapping(ApiUtil.API_V1_PREFIX)
 @Slf4j
 @PreAuthorize("denyAll")
 public class ServicesApiController implements ServicesApi {
 
     private final ServiceConverter serviceConverter;
     private final ServiceClientConverter serviceClientConverter;
+    private final EndpointConverter endpointConverter;
     private final ServiceService serviceService;
-    private final SubjectConverter subjectConverter;
     private final AccessRightService accessRightService;
+    private final ServiceClientHelper serviceClientHelper;
+    private final ServiceClientService serviceClientService;
+    private final ServiceClientSortingComparator serviceClientSortingComparator;
 
     @Autowired
     public ServicesApiController(ServiceConverter serviceConverter, ServiceClientConverter serviceClientConverter,
-            ServiceService serviceService, SubjectConverter subjectConverter, AccessRightService accessRightService) {
+            ServiceService serviceService, AccessRightService accessRightService,
+            EndpointConverter endpointConverter, ServiceClientHelper serviceClientHelper,
+            ServiceClientService serviceClientService) {
         this.serviceConverter = serviceConverter;
         this.serviceClientConverter = serviceClientConverter;
         this.serviceService = serviceService;
-        this.subjectConverter = subjectConverter;
         this.accessRightService = accessRightService;
+        this.endpointConverter = endpointConverter;
+        this.serviceClientHelper = serviceClientHelper;
+        this.serviceClientService = serviceClientService;
+        this.serviceClientSortingComparator = new ServiceClientSortingComparator();
     }
 
     @Override
@@ -96,18 +116,21 @@ public class ServicesApiController implements ServicesApi {
 
     @Override
     @PreAuthorize("hasAuthority('EDIT_SERVICE_PARAMS')")
+    @AuditEventMethod(event = EDIT_SERVICE_PARAMS)
     public ResponseEntity<Service> updateService(String id, ServiceUpdate serviceUpdate) {
         ClientId clientId = serviceConverter.parseClientId(id);
         String fullServiceCode = serviceConverter.parseFullServiceCode(id);
-        Service service = serviceUpdate.getService();
         Service updatedService = null;
+        boolean ignoreWarnings = serviceUpdate.getIgnoreWarnings();
         try {
             updatedService = serviceConverter.convert(
-                    serviceService.updateService(clientId, fullServiceCode, service.getUrl(), serviceUpdate.getUrlAll(),
-                            service.getTimeout(), serviceUpdate.getTimeoutAll(),
-                            Boolean.TRUE.equals(service.getSslAuth()), serviceUpdate.getSslAuthAll()),
+                    serviceService.updateService(clientId, fullServiceCode,
+                            serviceUpdate.getUrl(), serviceUpdate.getUrlAll(),
+                            serviceUpdate.getTimeout(), serviceUpdate.getTimeoutAll(),
+                            Boolean.TRUE.equals(serviceUpdate.getSslAuth()), serviceUpdate.getSslAuthAll(),
+                            ignoreWarnings),
                     clientId);
-        } catch (InvalidUrlException e) {
+        } catch (InvalidUrlException | InvalidHttpsUrlException | UnhandledWarningsException e) {
             throw new BadRequestException(e);
         } catch (ClientNotFoundException | ServiceNotFoundException e) {
             throw new ResourceNotFoundException(e);
@@ -127,86 +150,84 @@ public class ServicesApiController implements ServicesApi {
 
     @Override
     @PreAuthorize("hasAuthority('VIEW_SERVICE_ACL')")
-    public ResponseEntity<List<ServiceClient>> getServiceAccessRights(String encodedServiceId) {
+    public ResponseEntity<List<ServiceClient>> getServiceServiceClients(String encodedServiceId) {
         ClientId clientId = serviceConverter.parseClientId(encodedServiceId);
         String fullServiceCode = serviceConverter.parseFullServiceCode(encodedServiceId);
-        List<AccessRightHolderDto> accessRightHolderDtos = null;
+        List<ServiceClientDto> serviceClientDtos = null;
         try {
-            accessRightHolderDtos = accessRightService.getAccessRightHoldersByService(clientId, fullServiceCode);
-        } catch (ClientNotFoundException | ServiceNotFoundException e) {
+            serviceClientDtos = serviceClientService.getServiceClientsByService(clientId, fullServiceCode);
+        } catch (ClientNotFoundException | ServiceNotFoundException | EndpointNotFoundException e) {
             throw new ResourceNotFoundException(e);
         }
-        List<ServiceClient> serviceClients = serviceClientConverter.convertAccessRightHolderDtos(accessRightHolderDtos);
+        List<ServiceClient> serviceClients = serviceClientConverter.convertServiceClientDtos(serviceClientDtos);
+        Collections.sort(serviceClients, serviceClientSortingComparator);
         return new ResponseEntity<>(serviceClients, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAuthority('EDIT_SERVICE_ACL')")
     @Override
-    public ResponseEntity<Void> deleteServiceAccessRight(String encodedServiceId, Subjects subjects) {
+    @AuditEventMethod(event = REMOVE_SERVICE_ACCESS_RIGHTS)
+    public ResponseEntity<Void> deleteServiceServiceClients(String encodedServiceId, ServiceClients serviceClients) {
         ClientId clientId = serviceConverter.parseClientId(encodedServiceId);
         String fullServiceCode = serviceConverter.parseFullServiceCode(encodedServiceId);
-        // LocalGroups with numeric ids (PK)
-        Set<Long> localGroupIds = getLocalGroupIds(subjects);
-        List<XRoadId> xRoadIds = getXRoadIdsButSkipLocalGroups(subjects);
         try {
-            accessRightService.deleteSoapServiceAccessRights(clientId, fullServiceCode, new HashSet<>(xRoadIds),
-                    localGroupIds);
+            Set<XRoadId> xRoadIds = serviceClientHelper.processServiceClientXRoadIds(serviceClients);
+            accessRightService.deleteSoapServiceAccessRights(clientId, fullServiceCode, new HashSet<>(xRoadIds));
         } catch (ServiceNotFoundException | ClientNotFoundException e) {
             throw new ResourceNotFoundException(e);
-        } catch (LocalGroupNotFoundException | AccessRightService.AccessRightNotFoundException e) {
+        } catch (AccessRightService.AccessRightNotFoundException | ServiceClientNotFoundException e) {
             throw new BadRequestException(e);
+        } catch (ServiceClientIdentifierConverter.BadServiceClientIdentifierException e) {
+            throw serviceClientHelper.wrapInBadRequestException(e);
         }
         return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
     @PreAuthorize("hasAuthority('EDIT_SERVICE_ACL')")
     @Override
-    public ResponseEntity<List<ServiceClient>> addServiceAccessRight(String encodedServiceId, Subjects subjects) {
+    @AuditEventMethod(event = ADD_SERVICE_ACCESS_RIGHTS)
+    public ResponseEntity<List<ServiceClient>> addServiceServiceClients(String encodedServiceId,
+            ServiceClients serviceClients) {
         ClientId clientId = serviceConverter.parseClientId(encodedServiceId);
         String fullServiceCode = serviceConverter.parseFullServiceCode(encodedServiceId);
-        Set<Long> localGroupIds = getLocalGroupIds(subjects);
-        List<XRoadId> xRoadIds = getXRoadIdsButSkipLocalGroups(subjects);
-        List<AccessRightHolderDto> accessRightHolderDtos;
+        List<ServiceClientDto> serviceClientDtos;
         try {
-            accessRightHolderDtos = accessRightService.addSoapServiceAccessRights(clientId, fullServiceCode,
-                    new HashSet<>(xRoadIds), localGroupIds);
-        } catch (ClientNotFoundException | ServiceNotFoundException
-                | AccessRightService.EndpointNotFoundException e) {
+            Set<XRoadId> xRoadIds = serviceClientHelper.processServiceClientXRoadIds(serviceClients);
+            serviceClientDtos = accessRightService.addSoapServiceAccessRights(clientId, fullServiceCode,
+                    xRoadIds);
+        } catch (ClientNotFoundException | ServiceNotFoundException e) {
             throw new ResourceNotFoundException(e);
-        } catch (LocalGroupNotFoundException | IdentifierNotFoundException e) {
+        } catch (ServiceClientNotFoundException e) {
             throw new BadRequestException(e);
         } catch (AccessRightService.DuplicateAccessRightException e) {
             throw new ConflictException(e);
+        } catch (ServiceClientIdentifierConverter.BadServiceClientIdentifierException e) {
+            throw serviceClientHelper.wrapInBadRequestException(e);
         }
-        List<ServiceClient> serviceClients = serviceClientConverter.convertAccessRightHolderDtos(accessRightHolderDtos);
-        return new ResponseEntity<>(serviceClients, HttpStatus.OK);
+        List<ServiceClient> serviceClientsResult = serviceClientConverter.convertServiceClientDtos(
+                serviceClientDtos);
+        Collections.sort(serviceClientsResult, serviceClientSortingComparator);
+        return new ResponseEntity<>(serviceClientsResult, HttpStatus.OK);
     }
 
-    private List<XRoadId> getXRoadIdsButSkipLocalGroups(Subjects subjects) {
-        // SubjectConverter cannot resolve the correct XRoadId from LocalGroup subject's numeric id
-        subjects.getItems().removeIf(hasNumericIdAndIsLocalGroup);
-        return subjectConverter.convertId(subjects.getItems());
-    }
+    @Override
+    @PreAuthorize("hasAuthority('ADD_OPENAPI3_ENDPOINT')")
+    @AuditEventMethod(event = ADD_REST_ENDPOINT)
+    public ResponseEntity<Endpoint> addEndpoint(String id, Endpoint endpoint) {
+        ServiceType serviceType = getServiceType(id);
 
-    private Set<Long> getLocalGroupIds(Subjects subjects) {
-        return subjects.getItems()
-                .stream()
-                .filter(hasNumericIdAndIsLocalGroup)
-                .map(subject -> Long.parseLong(subject.getId()))
-                .collect(Collectors.toSet());
-    }
-
-    /**
-     * The client-provided Subjects only contain id and subjectType when adding or deleting access rights.
-     * The id of a LocalGroup is numeric so SubjectConverter cannot resolve the correct XRoadId from it.
-     * Therefore LocalGroups need to be handled separately from other types of subjects.
-     */
-    private Predicate<Subject> hasNumericIdAndIsLocalGroup = subject -> {
-        boolean hasNumericId = StringUtils.isNumeric(subject.getId());
-        boolean isLocalGroup = subject.getSubjectType() == SubjectType.LOCALGROUP;
-        if (!hasNumericId && isLocalGroup) {
-            throw new BadRequestException("LocalGroup id is not numeric: " + subject.getId());
+        if (endpoint.getId() != null) {
+            throw new BadRequestException("Passing id for endpoint while creating it is not allowed");
         }
-        return hasNumericId && isLocalGroup;
-    };
+        Endpoint ep;
+        try {
+            ep = endpointConverter.convert(serviceService.addEndpoint(serviceType,
+                    endpoint.getMethod().toString(), endpoint.getPath()));
+        } catch (EndpointAlreadyExistsException e) {
+            throw new ConflictException(e);
+        } catch (ServiceDescriptionService.WrongServiceDescriptionTypeException e) {
+            throw new BadRequestException(e);
+        }
+        return ApiUtil.createCreatedResponse("/api/endpoints/{id}", ep, ep.getId());
+    }
 }
