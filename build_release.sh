@@ -1,8 +1,9 @@
 #!/bin/sh
 
 BUILD_IMAGE=xroad-package-build:1.0
-PKG_DEB_IMAGE=xroad-package-rpm:1.0
-PKG_RPM_IMAGE=xroad-package-deb:1.0
+PKG_DEB_IMAGE=xroad-package-deb:1.0
+PKG_DEB_FOCAL_IMAGE=xroad-package-deb-focal:1.0
+PKG_RPM_IMAGE=xroad-package-rpm:1.0
 
 cd "`dirname "$0"`"
 
@@ -23,6 +24,10 @@ buildPkgDebImage() {
 	echo "Package deb image '$BUILD_IMAGE' does not yet exist, building it now."
 	( cd src/packages/docker/deb-bionic/ && pwd && docker build -t $PKG_DEB_IMAGE . )
 }
+buildPkgDebFocalImage() {
+	echo "Package deb image '$BUILD_IMAGE' does not yet exist, building it now."
+	( cd src/packages/docker/deb-focal/ && pwd && docker build -t $PKG_DEB_FOCAL_IMAGE . )
+}
 buildPkgRpmImage() {
 	echo "Package rpm image '$BUILD_IMAGE' does not yet exist, building it now."
 	( cd src/packages/docker/rpm/ && pwd && docker build -t $PKG_RPM_IMAGE . )
@@ -38,6 +43,7 @@ test $? = 0 || errorExit "Error getting docker image list"
 
 echo "$IMAGES" | grep -q "^${BUILD_IMAGE}$" || buildBuildImage || errorExit "Error building build image."
 echo "$IMAGES" | grep -q "^${PKG_DEB_IMAGE}$" || buildPkgDebImage || errorExit "Error building pkg deb image."
+echo "$IMAGES" | grep -q "^${PKG_DEB_FOCAL_IMAGE}$" || buildPkgDebFocalImage || errorExit "Error building pkg deb focal image."
 echo "$IMAGES" | grep -q "^${PKG_RPM_IMAGE}$" || buildPkgRpmImage || errorExit "Error building pkg rpm image."
 
 make -C src clean || /bin/true
@@ -58,8 +64,15 @@ echo "Done: build of rpm packages."
 echo
 
 echo
-echo "Step 3: build of deb packages..."
+echo "Step 3: build of deb packages for ubuntu 18.04..."
 echo
 docker run -v `pwd`:`pwd` -w `pwd` "$PKG_DEB_IMAGE" bash -c "./src/packages/build-deb.sh bionic -release" || errorExit "Error running build of deb packages."
+echo "Done: build of deb packages."
+echo
+
+echo
+echo "Step 4: build of deb packages for ubuntu 20.04..."
+echo
+docker run -v `pwd`:`pwd` -w `pwd` "$PKG_DEB_FOCAL_IMAGE" bash -c "./src/packages/build-deb.sh focal -release" || errorExit "Error running build of deb packages."
 echo "Done: build of deb packages."
 echo
