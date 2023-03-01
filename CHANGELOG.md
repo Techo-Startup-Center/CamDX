@@ -1,5 +1,12 @@
 # Change Log
 
+## 6.25.2 - 2022-04-25
+- XRDDEV-1971: Update dependencies with known vulnerabilities
+
+## 6.25.1 - 2022-01-10
+- XRDDEV-1887: Update dependencies with known vulnerabilities
+- XRDDEV-1855: (backport) Restrict xxe globally
+
 ## 6.25.0 - 2020-11-26
 - XRDDEV-1222: Update installation and user guides
 - XRDDEV-1299: Add Ubuntu 20.04 packaging

@@ -9,7 +9,6 @@ buildscript {
     }
     repositories {
         mavenCentral()
-        jcenter()
     }
 }
 
@@ -21,7 +20,7 @@ plugins {
 }
 
 ext {
-    set('springCloudVersion', "Hoxton.SR8")
+    set('springCloudVersion', "Hoxton.SR12")
 }
 
 sourceSets {
@@ -245,11 +244,13 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-cache")
     implementation('org.springframework.cloud:spring-cloud-starter-sleuth')
     implementation('org.kohsuke:libpam4j:1.11')
-    implementation('org.apache.commons:commons-compress:1.20')
+    implementation('org.apache.commons:commons-compress:1.21')
     implementation('wsdl4j:wsdl4j:1.6.3')
     implementation('com.github.vladimir-bukhtoyarov:bucket4j-core:4.10.0')
     implementation("io.swagger.parser.v3:swagger-parser-v3:${swaggerParserVersion}")
     implementation('io.swagger:swagger-annotations:1.6.2')
+    //overrides spring bom version
+    implementation('org.glassfish:jakarta.el:3.0.4')
 
     testImplementation project(':common-test')
     testImplementation('org.springframework.boot:spring-boot-starter-test')
