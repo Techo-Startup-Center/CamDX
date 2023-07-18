@@ -1,7 +1,7 @@
 #!/bin/bash
 source compile_env.sh
 
-RELEASE="SNAPSHOT"
+RELEASE="RELEASE"
 
 for i in "$@"; do
 case "$i" in
@@ -16,6 +16,7 @@ case "$i" in
         ;;
 esac
 done
+RELEASE="RELEASE"
 
 ARGUMENTS=("-PxroadBuildType=$RELEASE" --stacktrace build runProxyTest runMetaserviceTest runProxymonitorMetaserviceTest)
 

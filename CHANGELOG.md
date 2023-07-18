@@ -1,6 +1,6 @@
 # Change Log
 
-## 7.2.2 - 2023-03-24
+## 7.2.2 - 2023-05-11
 - XRDDEV-2283 Liquibase does not work when upgrading from previous versions on RHEL
 
 ## 7.2.1 - 2023-02-10

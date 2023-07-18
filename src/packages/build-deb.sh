@@ -69,6 +69,8 @@ else
   readonly PACKAGE_VERSION="$2"
 fi
 
+#STATIC_PACKAGE_VERSION=7.2.2
+
 case "$1" in
     focal)
         prepare ubuntu20.04
