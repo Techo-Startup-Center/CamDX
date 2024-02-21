@@ -19,7 +19,7 @@ Requires:  systemd
 %if 0%{?el7}
 Requires:  rlwrap
 %endif
-Requires:  jre-11-headless, tzdata-java
+Requires:  jre-11-headless
 Requires:  crudini, hostname, sudo, openssl
 
 %define src %{_topdir}/..
@@ -51,12 +51,11 @@ mkdir -p %{buildroot}/var/lib/xroad/backup
 mkdir -p %{buildroot}/etc/xroad/backup.d
 
 ln -s /usr/share/xroad/jlib/common-db-1.0.jar %{buildroot}/usr/share/xroad/jlib/common-db.jar
-ln -s /usr/share/xroad/jlib/postgresql-42.5.4.jar %{buildroot}/usr/share/xroad/jlib/postgresql.jar
-ln -s /usr/share/xroad/db/liquibase-core-4.19.0.jar %{buildroot}/usr/share/xroad/db/liquibase-core.jar
+ln -s /usr/share/xroad/jlib/postgresql-42.5.2.jar %{buildroot}/usr/share/xroad/jlib/postgresql.jar
 
 cp -p %{_sourcedir}/base/xroad-base.service %{buildroot}%{_unitdir}
-cp -p %{srcdir}/../../../common/common-db/build/libs/common-db-1.0.jar %{buildroot}/usr/share/xroad/jlib/
-cp -p %{srcdir}/../../../security-server/admin-service/application/build/unpacked-libs/postgresql-42.5.4.jar %{buildroot}/usr/share/xroad/jlib/
+cp -p %{srcdir}/../../../common-db/build/libs/common-db-1.0.jar %{buildroot}/usr/share/xroad/jlib/
+cp -p %{srcdir}/../../../proxy-ui-api/build/unpacked-libs/postgresql-42.5.2.jar %{buildroot}/usr/share/xroad/jlib/
 cp -p %{srcdir}/default-configuration/common.ini %{buildroot}/etc/xroad/conf.d/
 cp -p %{srcdir}/../../../LICENSE.txt %{buildroot}/usr/share/doc/%{name}/LICENSE.txt
 cp -p %{srcdir}/../../../3RD-PARTY-NOTICES.txt %{buildroot}/usr/share/doc/%{name}/3RD-PARTY-NOTICES.txt
@@ -96,8 +95,7 @@ rm -rf %{buildroot}
 /usr/share/xroad/scripts/serverconf_migrations/add_acl.xsl
 /usr/share/xroad/scripts/_setup_db.sh
 /usr/share/xroad/scripts/xroad-base.sh
-/usr/share/xroad/db/liquibase-core.jar
-/usr/share/xroad/db/liquibase-core-*.jar
+/usr/share/xroad/db/liquibase-core-4.19.0.jar
 /usr/share/xroad/db/liquibase.sh
 %doc /usr/share/doc/%{name}/LICENSE.txt
 %doc /usr/share/doc/%{name}/3RD-PARTY-NOTICES.txt
@@ -117,19 +115,6 @@ if [ $1 -gt 1 ] ; then
       java_home=$(grep '^JAVA_HOME=' /etc/xroad/services/global.conf);
       if [ -n "$java_home" ]; then
         echo "$java_home" >>/etc/xroad/services/local.conf
-      fi
-    fi
-
-    # 7.3.0 remove JAVA_HOME from local.conf if it points to java < 11
-    if [ -f /etc/xroad/services/local.conf ]; then
-      java_home=$(grep -oP '^\s*JAVA_HOME=\K(.*)' /etc/xroad/services/local.conf | tail -n 1)
-      if [ -n "$java_home" ]; then
-        java_version=$("$java_home"/bin/java -version 2>&1 | grep -i version | cut -d '"' -f2 | cut -d. -f1)
-        if [[ $java_version -lt 11 ]]; then
-          sed -E -i 's/^(\s*JAVA_HOME=)/# \1/g' /etc/xroad/services/local.conf \
-                  && echo "Removed JAVA_HOME from /etc/xroad/services/local.conf" >&2 \
-                  || echo "Failed to remove JAVA_HOME from /etc/xroad/services/local.conf" >&2
-        fi
       fi
     fi
 fi
@@ -175,21 +160,5 @@ chmod -R o=rwX,g=rX,o= /etc/xroad/services/* /etc/xroad/conf.d/*
 
 #enable xroad services by default
 echo 'enable xroad-*.service' > %{_presetdir}/90-xroad.preset
-
-if [ $1 -gt 1 ] ; then
-  # 7.3.0. Check that the default java version is at least 11
-  java_version_supported() {
-    local java_exec=$1
-    local java_version=$("$java_exec" -version 2>&1 | grep -i version | cut -d '"' -f2 | cut -d. -f1)
-    [[ $java_version -ge 11 ]]
-  }
-  if ! java_version_supported /etc/alternatives/java; then
-    if [ -x /etc/alternatives/jre_11/bin/java ] && java_version_supported /etc/alternatives/jre_11/bin/java; then
-      alternatives --set java $(readlink -f /etc/alternatives/jre_11)/bin/java
-    else
-      echo "Cannot find supported java version. Please set system default java installation with 'alternatives' command." >&2
-    fi
-  fi
-fi
 
 %changelog
