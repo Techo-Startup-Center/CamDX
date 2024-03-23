@@ -8,6 +8,11 @@ function builddeb {
     local suffix="$3"
     local packageVersion="$4"
 
+    echo "root ". $1
+    echo "dist ". $2
+    echo "suffix ". $3
+    echo "packageVersion". $4
+
     pushd "$(pwd)"
     cd "$root/$dist"
     cp ../generic/* debian/
@@ -61,11 +66,11 @@ mkdir -p build/xroad
 cp -a src/xroad/ubuntu build/xroad/
 
 # version was not given, use empty
-if [ -z "$2" ]; then
-  readonly PACKAGE_VERSION="$(date --utc --date @`git show -s --format=%ct` +'%Y%m%d%H%M%S')$(git show -s --format=git%h --abbrev=7)"
-else
+#if [ -z "$2" ]; then
+#  readonly PACKAGE_VERSION="$(date --utc --date @`git show -s --format=%ct` +'%Y%m%d%H%M%S')$(git show -s --format=git%h --abbrev=7)"
+#else
   readonly PACKAGE_VERSION="$2"
-fi
+#fi
 
 case "$1" in
     focal)
