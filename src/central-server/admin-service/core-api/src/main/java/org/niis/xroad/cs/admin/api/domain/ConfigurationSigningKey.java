@@ -1,4 +1,4 @@
-/**
+/*
  * The MIT License
  * <p>
  * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
@@ -39,6 +39,7 @@ import java.time.Instant;
 @NoArgsConstructor
 @EqualsAndHashCode
 public class ConfigurationSigningKey {
+    private int id;
     private String keyIdentifier;
     private byte[] cert;
     private Instant keyGeneratedAt;

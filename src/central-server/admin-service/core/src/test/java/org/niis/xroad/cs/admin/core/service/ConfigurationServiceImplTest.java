@@ -5,17 +5,17 @@
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
- * <p>
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * <p>
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * <p>
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -28,6 +28,7 @@
 package org.niis.xroad.cs.admin.core.service;
 
 import ee.ria.xroad.common.CodedException;
+import ee.ria.xroad.common.util.TimeUtils;
 import ee.ria.xroad.commonui.OptionalPartsConf;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -42,14 +43,18 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.niis.xroad.common.exception.NotFoundException;
 import org.niis.xroad.common.exception.ServiceException;
+import org.niis.xroad.cs.admin.api.domain.ConfigurationSigningKey;
 import org.niis.xroad.cs.admin.api.dto.ConfigurationParts;
 import org.niis.xroad.cs.admin.api.dto.File;
 import org.niis.xroad.cs.admin.api.dto.GlobalConfDownloadUrl;
 import org.niis.xroad.cs.admin.api.dto.HAConfigStatus;
 import org.niis.xroad.cs.admin.api.service.ConfigurationService;
 import org.niis.xroad.cs.admin.api.service.SystemParameterService;
+import org.niis.xroad.cs.admin.core.entity.ConfigurationSigningKeyEntity;
 import org.niis.xroad.cs.admin.core.entity.ConfigurationSourceEntity;
 import org.niis.xroad.cs.admin.core.entity.DistributedFileEntity;
+import org.niis.xroad.cs.admin.core.entity.mapper.ConfigurationSigningKeyMapper;
+import org.niis.xroad.cs.admin.core.entity.mapper.ConfigurationSigningKeyMapperImpl;
 import org.niis.xroad.cs.admin.core.entity.mapper.DistributedFileMapper;
 import org.niis.xroad.cs.admin.core.entity.mapper.DistributedFileMapperImpl;
 import org.niis.xroad.cs.admin.core.repository.ConfigurationSigningKeyRepository;
@@ -60,6 +65,7 @@ import org.niis.xroad.restapi.config.audit.AuditDataHelper;
 import org.niis.xroad.restapi.config.audit.RestApiAuditProperty;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -71,6 +77,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -91,7 +98,7 @@ class ConfigurationServiceImplTest {
     private static final String FILE_NAME = "fileName";
     private static final String FILE_NAME_PRIVATE_PARAMS = "private-params.xml";
     private static final String CONTENT_IDENTIFIER = "Content";
-    private static final Instant FILE_UPDATED_AT = Instant.now();
+    private static final Instant FILE_UPDATED_AT = TimeUtils.now();
     private static final byte[] FILE_DATA = "file-data".getBytes(UTF_8);
     private static final String NODE_LOCAL_CONTENT_ID = CONTENT_ID_PRIVATE_PARAMETERS;
     private static final String TEST_CONFIGURATION_PART = "TEST-CONFIGURATION-PART";
@@ -115,6 +122,8 @@ class ConfigurationServiceImplTest {
     private DistributedFileMapper distributedFileMapper = new DistributedFileMapperImpl();
     @Mock
     private ConfigurationSigningKeyRepository configurationSigningKeyRepository;
+    @Spy
+    private final ConfigurationSigningKeyMapper configurationSigningKeyMapper = new ConfigurationSigningKeyMapperImpl();
     private ConfigurationServiceImpl configurationServiceHa;
 
     @BeforeEach
@@ -204,6 +213,25 @@ class ConfigurationServiceImplTest {
             assertThat(configurationService.getConfigurationParts(INTERNAL)).isEmpty();
             verifyNoInteractions(distributedFileRepository);
         }
+
+        @Test
+        void getNodeAddressesWithOrderedConfigurationSigningKeys() {
+            ConfigurationSigningKeyEntity confSigningkey1 = mock(ConfigurationSigningKeyEntity.class);
+            when(confSigningkey1.getId()).thenReturn(2);
+
+            ConfigurationSigningKeyEntity confSigningkey2 = mock(ConfigurationSigningKeyEntity.class);
+            when(confSigningkey2.getId()).thenReturn(1);
+
+            when(configurationSourceRepository.findAll()).thenReturn(List.of(configurationSource));
+            when(configurationSource.getConfigurationSigningKeys()).thenReturn(Set.of(confSigningkey1, confSigningkey2));
+            when(configurationSource.getHaNodeName()).thenReturn(HA_NODE_NAME);
+            when(systemParameterService.getCentralServerAddress(HA_NODE_NAME)).thenReturn(CENTRAL_SERVICE);
+
+            List<ConfigurationSigningKey> configurationSigningKeys =
+                    configurationServiceHa.getNodeAddressesWithOrderedConfigurationSigningKeys().get(CENTRAL_SERVICE);
+            assertThat(configurationSigningKeys).hasSize(2);
+            assertThat(configurationSigningKeys.get(0).getId()).isLessThan(configurationSigningKeys.get(1).getId());
+        }
     }
 
     @Nested
@@ -215,7 +243,7 @@ class ConfigurationServiceImplTest {
 
             final GlobalConfDownloadUrl result = configurationService.getGlobalDownloadUrl(INTERNAL);
 
-            assertThat(result.getUrl()).isEqualTo("http://" + CENTRAL_SERVICE + "/internalconf");
+            assertThat(result.getUrl()).isEqualTo("https://" + CENTRAL_SERVICE + "/internalconf");
         }
 
         @Test
@@ -225,7 +253,7 @@ class ConfigurationServiceImplTest {
 
             final GlobalConfDownloadUrl result = configurationService.getGlobalDownloadUrl(EXTERNAL);
 
-            assertThat(result.getUrl()).isEqualTo("http://" + CENTRAL_SERVICE + "/externalconf");
+            assertThat(result.getUrl()).isEqualTo("https://" + CENTRAL_SERVICE + "/externalconf");
         }
     }
 
@@ -238,7 +266,8 @@ class ConfigurationServiceImplTest {
                 distributedFileRepository,
                 distributedFileMapper,
                 auditDataHelper,
-                configurationPartValidator);
+                configurationPartValidator,
+                configurationSigningKeyMapper);
     }
 
     @Nested
@@ -312,7 +341,7 @@ class ConfigurationServiceImplTest {
 
         @Test
         void getConfigurationPartFile() {
-            var fileEntity = new DistributedFileEntity(VERSION, FILE_NAME, CONTENT_IDENTIFIER, Instant.now());
+            var fileEntity = new DistributedFileEntity(VERSION, FILE_NAME, CONTENT_IDENTIFIER, TimeUtils.now());
             fileEntity.setFileData(new byte[]{1, 2, 3});
 
             when(distributedFileRepository.findByContentIdAndVersion(CONTENT_IDENTIFIER, VERSION, null))
