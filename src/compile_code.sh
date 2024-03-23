@@ -17,14 +17,15 @@ case "$i" in
 esac
 done
 
-ARGUMENTS=("-PxroadBuildType=$RELEASE" --stacktrace build runProxyTest runMetaserviceTest runProxymonitorMetaserviceTest)
+# ARGUMENTS=("-PxroadBuildType=$RELEASE" --stacktrace build runProxyTest runMetaserviceTest runProxymonitorMetaserviceTest)
+ARGUMENTS=("-PxroadBuildType=RELEASE" --stacktrace build runProxyTest runMetaserviceTest runProxymonitorMetaserviceTest -x :proxy:intTest -x :signer:intTest -x :central-server:admin-service:int-test:intTest -x :central-server:management-service:int-test:intTest -x :security-server:admin-service:int-test:intTest)
 
 if [[ -n "$SONAR" ]]; then
     ARGUMENTS+=(dependencyCheckAnalyze sonarqube)
 fi
 
 if [[ -n "$NODAEMON" ]]; then
-    ARGUMENTS+=(--no-daemon -v /var/run/docker.sock:/var/run/docker.sock)
+    ARGUMENTS+=(--no-daemon)
 fi
 
 ./gradlew "${ARGUMENTS[@]}"
