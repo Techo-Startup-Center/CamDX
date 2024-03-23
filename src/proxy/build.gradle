@@ -13,6 +13,8 @@ sourceSets {
 }
 
 dependencies {
+    implementation(project(':common:common-db'))
+
     implementation project(':common:common-util')
     implementation project(':common:common-verifier')
     implementation project(':serverconf')
@@ -37,6 +39,7 @@ dependencies {
     intTestRuntimeOnly project(':signer')
     intTestImplementation project(":common:common-test")
     intTestImplementation project(":common:common-int-test")
+    testImplementation project(':common:common-db')
 }
 
 jar {
