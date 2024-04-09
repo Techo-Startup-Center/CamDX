@@ -1,4 +1,4 @@
-FROM ubuntu:focal
+FROM ubuntu:jammy
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get -qq update \
@@ -17,10 +17,10 @@ RUN apt-get -qq update \
   && apt-get -qq install postgresql postgresql-contrib \
   && apt-get -qq clean
 
-ARG VERSION
-ARG DIST=focal-$VERSION
-ARG REPO=https://artifactory.niis.org/xroad-release-deb
-ARG REPO_KEY=https://artifactory.niis.org/api/gpg/key/public
+ARG VERSION=7.3.2
+ARG DIST=jammy-$VERSION
+ARG REPO=https://repository.camdx.gov.kh/repository/camdx-deb-jammy-7.3.2
+ARG REPO_KEY=https://repository.camdx.gov.kh/repository/camdx-anchors/api/gpg/key/0x04194DBF-pub.asc
 ARG COMPONENT=main
 ARG CERTS_PATH=/etc/xroad/ssl
 
