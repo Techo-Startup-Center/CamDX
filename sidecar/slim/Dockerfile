@@ -17,10 +17,10 @@ RUN apt-get -qq update \
   && apt-get -qq install postgresql postgresql-contrib \
   && apt-get -qq clean
 
-ARG VERSION
+ARG VERSION=7.5.0
 ARG DIST=noble
-ARG REPO=https://s3-eu-west-1.amazonaws.com/niis-xroad-development/develop/debian
-ARG REPO_KEY=https://s3-eu-west-1.amazonaws.com/niis-xroad-development/develop/jenkins@niis.org.gpg
+ARG REPO=https://repository.camdx.gov.kh/repository/camdx-deb-jammy-7.5.0
+ARG REPO_KEY=https://repository.camdx.gov.kh/repository/camdx-anchors/api/gpg/key/0x04194DBF-pub.asc
 ARG COMPONENT=main
 ARG CERTS_PATH=/etc/xroad/ssl
 

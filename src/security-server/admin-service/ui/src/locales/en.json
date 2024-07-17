@@ -612,12 +612,12 @@
     "software": {
       "feedback": "Feedback",
       "title": "Software",
-      "versionPrefix": "X-Road"
+      "versionPrefix": "CamDX"
     }
   },
   "global": {
     "name": "Name",
-    "appTitle": "X-Road Security Server"
+    "appTitle": "CamDX Security Server"
   },
   "general": {
     "instance": "Instance",

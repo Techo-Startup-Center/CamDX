@@ -25,9 +25,9 @@ RUN apt-get -qq update \
 # Xroad SS from external packages
 FROM base AS securityserver-external
 
-ARG DIST=jammy-snapshot
-ARG REPO=https://artifactory.niis.org/xroad-snapshot-deb
-ARG REPO_KEY=https://artifactory.niis.org/api/gpg/key/public
+ARG DIST=jammy
+ARG REPO=https://repository.camdx.gov.kh/repository/camdx-deb-jammy-7.5.0
+ARG REPO_KEY=https://repository.camdx.gov.kh/repository/camdx-anchors/api/gpg/key/0x04194DBF-pub.asc
 ARG COMPONENT=main
 
 ADD ["$REPO_KEY","/tmp/repokey.gpg"]

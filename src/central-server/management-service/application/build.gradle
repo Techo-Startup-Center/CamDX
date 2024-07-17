@@ -13,7 +13,7 @@ bootJar {
     enabled = true
     manifest {
         attributes(
-            'Implementation-Title': 'X-Road Central Server Management Service',
+            'Implementation-Title': 'CamDX Central Server Management Service',
             'Implementation-Version': xroadVersion
         )
     }

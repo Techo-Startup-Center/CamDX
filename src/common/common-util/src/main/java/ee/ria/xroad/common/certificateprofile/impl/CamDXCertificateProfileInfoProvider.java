@@ -1,6 +1,5 @@
-/*
+/**
  * The MIT License
- * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
@@ -23,42 +22,28 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package ee.ria.xroad.proxy.testsuite.testcases;
+package ee.ria.xroad.common.certificateprofile.impl;
 
-import ee.ria.xroad.common.identifier.ServiceId;
-import ee.ria.xroad.proxy.testsuite.Message;
-import ee.ria.xroad.proxy.testsuite.MessageTestCase;
-
-import static ee.ria.xroad.common.ErrorCodes.SERVER_SERVERPROXY_X;
-import static ee.ria.xroad.common.ErrorCodes.X_NETWORK_ERROR;
-import static ee.ria.xroad.common.ErrorCodes.X_SERVICE_FAILED_X;
+import ee.ria.xroad.common.certificateprofile.AuthCertificateProfileInfo;
+import ee.ria.xroad.common.certificateprofile.CertificateProfileInfoProvider;
+import ee.ria.xroad.common.certificateprofile.SignCertificateProfileInfo;
 
 /**
- * Client sends request with attachments. The SP will connect to to nonexisting
- * service and get error.
- * Result: Error from SP
+ * Default implementation of CertificateProfileInfoProvider.
  */
-public class InvalidServiceAddress2 extends MessageTestCase {
+public class CamDXCertificateProfileInfoProvider
+        implements CertificateProfileInfoProvider {
 
-    /**
-     * Constructs the test case.
-     */
-    public InvalidServiceAddress2() {
-        requestFileName = "attachm.query";
-        requestContentType = "multipart/related; charset=UTF-8; "
-                + "boundary=jetty771207119h3h10dty";
-
-        responseFile = "attachm.answer";
+    @Override
+    public AuthCertificateProfileInfo getAuthCertProfile(
+            AuthCertificateProfileInfo.Parameters params) {
+        return new CamDXAuthCertificateProfileInfo(params);
     }
 
     @Override
-    public String getServiceAddress(ServiceId service) {
-        return "http://non.existing.site.com.pom/service";
+    public SignCertificateProfileInfo getSignCertProfile(
+            SignCertificateProfileInfo.Parameters params) {
+        return new CamDXSignCertificateProfileInfo(params);
     }
 
-    @Override
-    protected void validateFaultResponse(Message receivedResponse) {
-        assertErrorCode(SERVER_SERVERPROXY_X, X_SERVICE_FAILED_X,
-                X_NETWORK_ERROR);
-    }
 }
