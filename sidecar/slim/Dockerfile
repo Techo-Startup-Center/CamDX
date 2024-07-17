@@ -1,4 +1,4 @@
-FROM ubuntu:jammy
+FROM ubuntu:noble
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get -qq update \
@@ -17,9 +17,9 @@ RUN apt-get -qq update \
   && apt-get -qq install postgresql postgresql-contrib \
   && apt-get -qq clean
 
-ARG VERSION=7.4.2
-ARG DIST=jammy-$VERSION
-ARG REPO=https://repository.camdx.gov.kh/repository/camdx-deb-jammy-7.4.2
+ARG VERSION=7.5.0
+ARG DIST=noble
+ARG REPO=https://repository.camdx.gov.kh/repository/camdx-deb-jammy-7.5.0
 ARG REPO_KEY=https://repository.camdx.gov.kh/repository/camdx-anchors/api/gpg/key/0x04194DBF-pub.asc
 ARG COMPONENT=main
 ARG CERTS_PATH=/etc/xroad/ssl
