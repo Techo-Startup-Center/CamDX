@@ -65,7 +65,11 @@ setup_database() {
     source /etc/xroad/db_libpq.env
   fi
 
-  export PGOPTIONS="-c client-min-messages=warning -c search_path=$db_schema,public ${PGOPTIONS_EXTRA-}"
+  if [[ ! -z $PGOPTIONS_EXTRA ]]; then
+    PGOPTIONS_EXTRA=" ${PGOPTIONS_EXTRA}"
+  fi
+
+  export PGOPTIONS="-c client-min-messages=warning -c search_path=$db_schema,public${PGOPTIONS_EXTRA-}"
 
   pat='^jdbc:postgresql://([^/]*)($|/([^\?]*)(.*)$)'
   if [[ "$db_url" =~ $pat ]]; then
@@ -82,8 +86,8 @@ setup_database() {
   local db_addr=${hosts[0]%%:*}
   local db_port=${hosts[0]##*:}
 
-  local_psql() { su -l -c "psql -qtA -p ${db_port:-5432} $*" postgres; }
-  remote_psql() { psql -h "${db_addr:-127.0.0.1}" -p "${db_port:-5432}" -qtA "$@"; }
+  local_psql() { su -l -c "psql -qtA -p ${PGPORT:-$db_port} $*" postgres; }
+  remote_psql() { psql -h "${PGHOST:-$db_addr}" -p "${PGPORT:-$db_port}" -qtA "$@"; }
 
   psql_dbuser() {
     PGDATABASE="$db_database" PGUSER="$db_conn_user" PGPASSWORD="$db_password" remote_psql "$@"
@@ -187,9 +191,11 @@ EOF
     context="--contexts=admin"
   fi
 
+  url_concat_string="$([[ "$db_url" == *"?"* ]] && echo "&" || echo "?")"
+
   LIQUIBASE_HOME="$(pwd)" JAVA_OPTS="-Ddb_user=$db_user -Ddb_schema=$db_schema" /usr/share/xroad/db/liquibase.sh \
     --classpath=/usr/share/xroad/jlib/postgresql.jar \
-    --url="jdbc:postgresql://$db_host/$db_database?currentSchema=${db_schema},public" \
+    --url="${db_url}${url_concat_string}currentSchema=${db_schema},public" \
     --changeLogFile=${db_name}-changelog.xml \
     --password="${db_admin_password}" \
     --username="${db_admin_conn_user}" \
