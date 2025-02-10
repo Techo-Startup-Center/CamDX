@@ -485,6 +485,18 @@
     "username": "Username",
     "certificationService": "Certification Service"
   },
+  "footer": {
+    "copyright": {
+      "company": "Nordic Institute for Interoperability Solutions (NIIS)",
+      "licenceInfo": "Licence info",
+      "title": "Copyright"
+    },
+    "software": {
+      "feedback": "Feedback",
+      "title": "Software",
+      "versionPrefix": "CamDX"
+    }
+  },
   "global": {
     "appTitle": "X-Road Security Server"
   },

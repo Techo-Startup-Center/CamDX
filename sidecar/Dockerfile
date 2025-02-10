@@ -1,5 +1,5 @@
 ARG VERSION
-ARG TAG=niis/xroad-security-server-sidecar
+ARG TAG=registry.camdx.gov.kh/camdx-ss/security-server-sidecar
 FROM $TAG:$VERSION-slim
 RUN mv /usr/share/xroad/jlib/addon/proxy/messagelog.conf.disabled /usr/share/xroad/jlib/addon/proxy/messagelog.conf  \
   && mv /usr/share/xroad/jlib/addon/proxy/opmonitoring.conf.disabled /usr/share/xroad/jlib/addon/proxy/opmonitoring.conf \
