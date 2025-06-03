@@ -7,7 +7,7 @@ pipeline {
       }
 
       parameters {
-          string(name: 'CONTAINER_REGISTRY', defaultValue: 'container-registrytechostartup.center', description: 'Container Registry URL to push the Image')
+          string(name: 'CONTAINER_REGISTRY', defaultValue: 'container-registry.techostartup.center', description: 'Container Registry URL to push the Image')
           string(name: 'CONTAINER_REGISTRY_PROJECT_NAME', defaultValue: 'camdx', description: 'Project path to push the Image')
       }
 
