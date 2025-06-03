@@ -44,7 +44,7 @@ pipeline {
                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh '''
                        echo "Starting X-Road build using Docker..."
-                         chmod +x build_packages.sh
+                         chmod +x ./src/build_packages.sh
                          ./src/build_packages.sh -d
                      '''
                    }
