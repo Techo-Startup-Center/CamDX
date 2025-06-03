@@ -45,7 +45,7 @@ pipeline {
                      sh '''
                        echo "Starting X-Road build using Docker..."
                          chmod +x build_packages.sh
-                         ./build_packages.sh -d
+                         ./src/build_packages.sh -d
                      '''
                    }
                  }
