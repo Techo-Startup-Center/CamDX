@@ -24,7 +24,7 @@ pipeline {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                    withCredentials([
                      usernamePassword(
-                       credentialsId: 'container-registry-jenkins',
+                       credentialsId: 'docker-credentials',
                        usernameVariable: 'DOCKER_USERNAME',
                        passwordVariable: 'DOCKER_PASSWORD'
                      )
