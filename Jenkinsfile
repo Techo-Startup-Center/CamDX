@@ -1,14 +1,14 @@
 pipeline {
-//       agent {
-//         kubernetes {
-//           yamlFile 'pod-template.yaml'
-//           defaultContainer 'docker-cli'
-//         }
       agent {
         kubernetes {
-          inheritFrom 'xroad-builder-ubuntu24'
+          yamlFile 'pod-template.yaml'
+          defaultContainer 'docker-cli'
         }
-      }
+//       agent {
+//         kubernetes {
+//           inheritFrom 'xroad-builder-ubuntu24'
+//         }
+//       }
 
       parameters {
           string(name: 'CONTAINER_REGISTRY', defaultValue: 'container-registry-dev.techostartup.center', description: 'Container Registry URL to push the Image')
