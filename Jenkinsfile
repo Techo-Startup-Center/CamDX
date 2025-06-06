@@ -5,11 +5,6 @@ pipeline {
           defaultContainer 'docker-cli'
         }
       }
-//       agent {
-//         kubernetes {
-//           inheritFrom 'xroad-builder-ubuntu24'
-//         }
-//       }
 
       parameters {
           string(name: 'CONTAINER_REGISTRY', defaultValue: 'container-registry-dev.techostartup.center', description: 'Container Registry URL to push the Image')
@@ -25,7 +20,7 @@ pipeline {
     stages {
          stage('Docker Login') {
              steps {
-               container('xroad-builder-ubuntu24') {
+               container('corretto21-docker-cli') {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                    withCredentials([
                      usernamePassword(
@@ -45,7 +40,7 @@ pipeline {
 
            stage('Build X-Road Packages using Docker') {
                steps {
-                 container('xroad-builder-ubuntu24') {
+                 container('corretto21-docker-cli') {
                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh '''
                        echo "Starting X-Road build using Docker..."
@@ -59,7 +54,7 @@ pipeline {
 
            stage('Push Docker Image') {
              steps {
-               container('xroad-builder-ubuntu24') {
+               container('corretto21-docker-cli') {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh """
                           echo \$DOCKER_PASS | docker login ${DOCKER_REGISTRY} -u \$DOCKER_USER --password-stdin
