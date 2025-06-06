@@ -1,8 +1,12 @@
 pipeline {
       agent {
+//         kubernetes {
+//           yamlFile 'pod-template.yaml'
+//           defaultContainer 'docker-cli'
+//         }
+      agent {
         kubernetes {
-          yamlFile 'pod-template.yaml'
-          defaultContainer 'docker-cli'
+          inheritFrom 'maven-amazoncorretto-21-alpine'
         }
       }
 
