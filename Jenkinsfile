@@ -4,6 +4,7 @@ pipeline {
           yamlFile 'pod-template.yaml'
           defaultContainer 'docker-cli'
         }
+      }
 //       agent {
 //         kubernetes {
 //           inheritFrom 'xroad-builder-ubuntu24'
