@@ -6,12 +6,12 @@ pipeline {
 //         }
       agent {
         kubernetes {
-          inheritFrom 'maven-amazoncorretto-21-alpine'
+          inheritFrom 'xroad-builder-ubuntu24'
         }
       }
 
       parameters {
-          string(name: 'CONTAINER_REGISTRY', defaultValue: 'container-registry.techostartup.center', description: 'Container Registry URL to push the Image')
+          string(name: 'CONTAINER_REGISTRY', defaultValue: 'container-registry-dev.techostartup.center', description: 'Container Registry URL to push the Image')
           string(name: 'CONTAINER_REGISTRY_PROJECT_NAME', defaultValue: 'camdx', description: 'Project path to push the Image')
       }
 
@@ -24,7 +24,7 @@ pipeline {
     stages {
          stage('Docker Login') {
              steps {
-               container('docker-cli') {
+               container('xroad-builder-ubuntu24') {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                    withCredentials([
                      usernamePassword(
@@ -44,7 +44,7 @@ pipeline {
 
            stage('Build X-Road Packages using Docker') {
                steps {
-                 container('docker-cli') {
+                 container('xroad-builder-ubuntu24') {
                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh '''
                        echo "Starting X-Road build using Docker..."
@@ -58,7 +58,7 @@ pipeline {
 
            stage('Push Docker Image') {
              steps {
-               container('docker-cli') {
+               container('xroad-builder-ubuntu24') {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh """
                           echo \$DOCKER_PASS | docker login ${DOCKER_REGISTRY} -u \$DOCKER_USER --password-stdin
