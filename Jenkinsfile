@@ -1,5 +1,5 @@
 pipeline {
-      agent {
+//       agent {
 //         kubernetes {
 //           yamlFile 'pod-template.yaml'
 //           defaultContainer 'docker-cli'
