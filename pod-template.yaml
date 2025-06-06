@@ -30,6 +30,10 @@ spec:
       env:
         - name: DOCKER_HOST
           value: unix:///var/run/docker.sock
+      securityContext:
+        runAsUser: 1001         # 👈 Run as builder user
+        runAsGroup: 1001        # 👈 Set group as builder's group
+        runAsNonRoot: true
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
