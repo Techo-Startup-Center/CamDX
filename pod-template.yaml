@@ -9,10 +9,12 @@ spec:
       hostnames:
         - artifactory-registry-dev.techostartup.center
         - container-registry-dev.techostartup.center
+
   containers:
     - name: jnlp
       image: jenkins/inbound-agent:latest
       tty: true
+
     - name: docker
       image: docker:28-dind
       securityContext:
@@ -20,8 +22,9 @@ spec:
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
-    - name: docker-cli
-      image: docker:28-cli
+
+    - name: corretto21-docker-cli
+      image: container-registry-dev.techostartup.center/camdx/corretto21-docker-cli:latest  # Replace with your actual registry
       command: ["cat"]
       tty: true
       env:
@@ -30,6 +33,7 @@ spec:
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
+
   volumes:
     - name: docker-socket
       emptyDir: {}
