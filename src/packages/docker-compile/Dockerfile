@@ -15,6 +15,7 @@ RUN apt-get -qq update \
   && apt-get -qq upgrade \
   && apt-get -qq install -y curl software-properties-common gawk \
      openjdk-21-jdk-headless build-essential git unzip debhelper \
+     ca-certificates curl unzip \
   && apt-get -qq autoremove \
   && apt-get -qq clean
 
