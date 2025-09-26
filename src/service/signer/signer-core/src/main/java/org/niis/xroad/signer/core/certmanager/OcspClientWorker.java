@@ -52,6 +52,7 @@ import java.io.IOException;
 import java.net.ConnectException;
 import java.security.Principal;
 import java.security.PrivateKey;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -242,7 +243,8 @@ public class OcspClientWorker {
         return new ArrayList<>(certs);
     }
 
-    OCSPResp queryCertStatus(X509Certificate subject, OcspVerifierOptions verifierOptions) throws Exception {
+    OCSPResp queryCertStatus(X509Certificate subject, OcspVerifierOptions verifierOptions)
+            throws CertificateEncodingException, IOException {
         X509Certificate issuer = globalConfProvider.getCaCert(globalConfProvider.getInstanceIdentifier(), subject);
 
         PrivateKey signerKey = ocspClient.getOcspRequestKey(subject);
@@ -322,7 +324,7 @@ public class OcspClientWorker {
         serviceStatus.getOcspResponderStatusMap().put(responderURI, responderStatus);
     }
 
-    void updateCertStatuses(Map<String, OCSPResp> statuses) throws Exception {
+    void updateCertStatuses(Map<String, OCSPResp> statuses) throws IOException {
         List<String> hashes = new ArrayList<>(statuses.size());
         List<String> responses = new ArrayList<>(statuses.size());
 

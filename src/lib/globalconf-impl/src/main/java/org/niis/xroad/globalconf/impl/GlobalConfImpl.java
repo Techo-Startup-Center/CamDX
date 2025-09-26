@@ -42,6 +42,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.operator.OperatorCreationException;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.globalconf.GlobalConfSource;
 import org.niis.xroad.globalconf.cert.CertChain;
@@ -58,6 +59,7 @@ import org.niis.xroad.globalconf.model.SharedParametersCache;
 
 import java.io.IOException;
 import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -270,22 +272,24 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     @Override
-    public ClientId.Conf getSubjectName(
-            SignCertificateProfileInfo.Parameters parameters,
-            X509Certificate cert) throws Exception {
+    public ClientId.Conf getSubjectName(SignCertificateProfileInfo.Parameters parameters, X509Certificate cert) {
         log.trace("getSubjectName({})", parameters.getClientId());
 
-        return getSignCertificateProfileInfo(parameters, cert)
-                .getSubjectIdentifier(cert);
+        try {
+            return getSignCertificateProfileInfo(parameters, cert)
+                    .getSubjectIdentifier(cert);
+        } catch (CertificateEncodingException | IOException e) {
+            throw XrdRuntimeException.systemException(e);
+        }
     }
 
     @Override
-    public List<String> getOcspResponderAddresses(X509Certificate member) throws Exception {
+    public List<String> getOcspResponderAddresses(X509Certificate member) throws CertificateEncodingException, IOException {
         return doGetOcspResponderAddressesForCertificate(member, false);
     }
 
     private List<String> doGetOcspResponderAddressesForCertificate(X509Certificate certificate, boolean certificateIsCA)
-            throws Exception {
+            throws CertificateEncodingException, IOException {
         List<String> responders = new ArrayList<>();
 
         for (SharedParametersCache p : globalConfSource.getSharedParametersCaches()) {
@@ -320,7 +324,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
 
 
     @Override
-    public List<String> getOcspResponderAddressesForCaCertificate(X509Certificate caCert) throws Exception {
+    public List<String> getOcspResponderAddressesForCaCertificate(X509Certificate caCert) throws CertificateEncodingException, IOException {
         return doGetOcspResponderAddressesForCertificate(caCert, true);
     }
 
@@ -347,7 +351,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
 
     @Override
     public X509Certificate getCaCert(String instanceIdentifier,
-                                     X509Certificate memberCert) throws Exception {
+                                     X509Certificate memberCert) throws CertificateEncodingException, IOException {
         if (memberCert == null) {
             throw new IllegalArgumentException(
                     "Member certificate must be present to find CA cert!");
@@ -382,8 +386,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     @Override
-    public CertChain getCertChain(String instanceIdentifier,
-                                  X509Certificate subject) throws Exception {
+    public CertChain getCertChain(String instanceIdentifier, X509Certificate subject) throws CertificateEncodingException, IOException {
         if (subject == null) {
             throw new IllegalArgumentException("Member certificate must be present to find cert chain!");
         }
@@ -439,7 +442,8 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     @Override
-    public SecurityServerId.Conf getServerId(X509Certificate cert) throws Exception {
+    public SecurityServerId.Conf getServerId(X509Certificate cert)
+            throws CertificateEncodingException, IOException, OperatorCreationException {
         for (SharedParametersCache p : getSharedParametersCaches()) {
             String b64 = encodeBase64(calculateCertHash(p.getInstanceIdentifier(), cert));
             SharedParameters.SecurityServer server = p.getServerByAuthCert().get(b64);
@@ -514,7 +518,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
     @Override
     public AuthCertificateProfileInfo getAuthCertificateProfileInfo(
             AuthCertificateProfileInfo.Parameters parameters,
-            X509Certificate cert) throws Exception {
+            X509Certificate cert) throws CertificateEncodingException, IOException, CertificateParsingException {
         if (!CertUtils.isAuthCert(cert)) {
             throw new IllegalArgumentException(
                     "Certificate must be authentication certificate");
@@ -528,7 +532,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
     @Override
     public SignCertificateProfileInfo getSignCertificateProfileInfo(
             SignCertificateProfileInfo.Parameters parameters,
-            X509Certificate cert) throws Exception {
+            X509Certificate cert) throws CertificateEncodingException, IOException {
         if (!CertUtils.isSigningCert(cert)) {
             throw new IllegalArgumentException(
                     "Certificate must be signing certificate");
@@ -560,7 +564,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     @Override
-    public List<X509Certificate> getTspCertificates() throws Exception {
+    public List<X509Certificate> getTspCertificates() {
         return getSharedParameters().stream()
                 .flatMap(p -> p.getApprovedTSAs().stream())
                 .map(SharedParameters.ApprovedTSA::getCert)
@@ -627,7 +631,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     @Override
-    public X509Certificate getCentralServerSslCertificate() throws Exception {
+    public X509Certificate getCentralServerSslCertificate() {
         byte[] certBytes = getPrivateParameters().getManagementService()
                 .getAuthCertRegServiceCert();
         return certBytes != null ? CryptoUtils.readCertificate(certBytes) : null;
@@ -704,7 +708,7 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     private CertificateProfileInfoProvider getCertProfile(
-            String instanceIdentifier, X509Certificate cert) throws Exception {
+            String instanceIdentifier, X509Certificate cert) throws CertificateEncodingException, IOException {
         X509Certificate caCert = getCaCert(instanceIdentifier, cert);
         SharedParametersCache p = getSharedParametersCache(instanceIdentifier);
 
@@ -763,5 +767,14 @@ public class GlobalConfImpl implements GlobalConfProvider {
         return Optional.ofNullable(serverAddress)
                 .map(addr -> getSharedParametersCache(instanceIdentifier).getSecurityServersByAddress().get(addr))
                 .map(SharedParameters.SecurityServer::getMaintenanceMode);
+    }
+
+    @Override
+    public Set<SecurityServerId> getClientSecurityServers(ClientId clientId) {
+        return getSharedParametersCache(clientId.getXRoadInstance())
+                .getSecurityServersByClientId().getOrDefault(clientId, Set.of())
+                .stream()
+                .map(securityServer -> SecurityServerId.Conf.create(securityServer.getOwner(), securityServer.getServerCode()))
+                .collect(toSet());
     }
 }

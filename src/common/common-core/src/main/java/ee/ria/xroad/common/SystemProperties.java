@@ -125,11 +125,16 @@ public final class SystemProperties {
     public static final String PROXY_UI_API_ACME_ACCOUNT_KEY_PAIR_EXPIRATION_IN_DAYS =
             PREFIX + "proxy-ui-api.acme-certificate-account-key-pair-expiration";
 
-    /** property name of whether the service should listen on port 80 for incoming acme challenge requests */
+    /** property name of whether the service should listen on acme challenge port (default 80) for incoming requests */
     public static final String PROXY_UI_API_ACME_CHALLENGE_PORT_ENABLED =
             PREFIX + "proxy-ui-api.acme-challenge-port-enabled";
     public static final String PROXY_UI_API_ACME_CHALLENGE_PORT_ENABLED_ENV =
             propertyNameToEnvVariable(PROXY_UI_API_ACME_CHALLENGE_PORT_ENABLED);
+
+    /** property name of the acme challenge port, default 80.
+     * When changing this, it still needs to me mapped to port 80 externally (e.g. when running in docker container) */
+    public static final String PROXY_UI_API_ACME_CHALLENGE_PORT = PREFIX + "proxy-ui-api.acme-challenge-port";
+    public static final String PROXY_UI_API_ACME_CHALLENGE_PORT_ENV = propertyNameToEnvVariable(PROXY_UI_API_ACME_CHALLENGE_PORT);
 
     public static final String PROXY_UI_API_ACME_RENEWAL_ACTIVE =
             PREFIX + "proxy-ui-api.acme-renewal-active";
@@ -487,6 +492,9 @@ public final class SystemProperties {
     public static final String DEFAULT_SIGNER_KEY_NAMED_CURVE = "secp256r1";
     public static final KeyAlgorithm DEFAULT_SOFT_TOKEN_PIN_KEYSTORE_ALGORITHM = KeyAlgorithm.RSA;
 
+    public static final String DEFAULT_DOWNLOADER_READ_TIMEOUT = "30000";
+    public static final String DEFAULT_DOWNLOADER_CONNECT_TIMEOUT = "10000";
+
     // AntiDos ----------------------------------------------------------------
 
     /** Property name of the AntiDos on/off switch */
@@ -528,6 +536,12 @@ public final class SystemProperties {
 
     public static final String CONFIGURATION_CLIENT_GLOBAL_CONF_HOSTNAME_VERIFICATION =
             PREFIX + "configuration-client.global-conf-hostname-verification";
+
+    public static final String CONFIGURATION_CLIENT_DOWNLOADER_READ_TIMEOUT =
+            PREFIX + "configuration-client.downloader-read-timeout";
+
+    public static final String CONFIGURATION_CLIENT_DOWNLOADER_CONNECT_TIMEOUT =
+            PREFIX + "configuration-client.downloader-connect-timeout";
 
     public static final String CONFIGURATION_CLIENT_ALLOWED_FEDERATIONS =
             PREFIX + "configuration-client.allowed-federations";
@@ -910,6 +924,12 @@ public final class SystemProperties {
         String isAcmeChallengePortEnabled = Optional.ofNullable(System.getenv().get(PROXY_UI_API_ACME_CHALLENGE_PORT_ENABLED_ENV))
                 .orElse(System.getProperty(PROXY_UI_API_ACME_CHALLENGE_PORT_ENABLED, FALSE));
         return TRUE.equalsIgnoreCase(isAcmeChallengePortEnabled);
+    }
+
+    public static int getAcmeChallengePort() {
+        String acmeChallengePort = Optional.ofNullable(System.getenv().get(PROXY_UI_API_ACME_CHALLENGE_PORT_ENV))
+                .orElse(System.getProperty(PROXY_UI_API_ACME_CHALLENGE_PORT, "80"));
+        return Integer.parseInt(acmeChallengePort);
     }
 
     /**
@@ -1343,6 +1363,14 @@ public final class SystemProperties {
 
     public static boolean isConfigurationClientGlobalConfHostnameVerificationEnabled() {
         return Boolean.parseBoolean(System.getProperty(CONFIGURATION_CLIENT_GLOBAL_CONF_HOSTNAME_VERIFICATION, TRUE));
+    }
+
+    public static int getConfigurationClientDownloaderReadTimeout() {
+        return Integer.parseInt(System.getProperty(CONFIGURATION_CLIENT_DOWNLOADER_READ_TIMEOUT, DEFAULT_DOWNLOADER_READ_TIMEOUT));
+    }
+
+    public static int getConfigurationClientDownloaderConnectTimeout() {
+        return Integer.parseInt(System.getProperty(CONFIGURATION_CLIENT_DOWNLOADER_CONNECT_TIMEOUT, DEFAULT_DOWNLOADER_CONNECT_TIMEOUT));
     }
 
     public static String getConfigurationClientAllowedFederations() {
