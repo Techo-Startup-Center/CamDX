@@ -20,7 +20,7 @@ pipeline {
     stages {
          stage('Docker Login') {
              steps {
-               container('corretto21-docker-cli') {
+               container('docker-cli') {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                    withCredentials([
                      usernamePassword(
@@ -40,7 +40,7 @@ pipeline {
 
            stage('Build X-Road Packages using Docker') {
                steps {
-                 container('corretto21-docker-cli') {
+                 container('docker-cli') {
                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh '''
                        echo "Starting X-Road build using Docker..."
@@ -54,7 +54,7 @@ pipeline {
 
            stage('Push Docker Image') {
              steps {
-               container('corretto21-docker-cli') {
+               container('docker-cli') {
                  withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh """
                           echo \$DOCKER_PASS | docker login ${DOCKER_REGISTRY} -u \$DOCKER_USER --password-stdin

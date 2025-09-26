@@ -9,12 +9,10 @@ spec:
       hostnames:
         - artifactory-registry-dev.techostartup.center
         - container-registry-dev.techostartup.center
-
   containers:
     - name: jnlp
       image: jenkins/inbound-agent:latest
       tty: true
-
     - name: docker
       image: docker:28-dind
       securityContext:
@@ -22,22 +20,22 @@ spec:
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
-
-    - name: corretto21-docker-cli
-      image: container-registry-dev.techostartup.center/camdx/corretto21-docker-cli:latest  # Replace with your actual registry
+        - name: docker-cache
+          mountPath: /var/lib/docker  # Mount the PVC here
+    - name: docker-cli
+      image: docker:28-cli
       command: ["cat"]
       tty: true
       env:
         - name: DOCKER_HOST
           value: unix:///var/run/docker.sock
-      securityContext:
-        runAsUser: 1001         # 👈 Run as builder user
-        runAsGroup: 1001        # 👈 Set group as builder's group
-        runAsNonRoot: true
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
-
   volumes:
     - name: docker-socket
       emptyDir: {}
+
+    - name: docker-cache
+      persistentVolumeClaim:
+        claimName: jenkins-agent-docker-build-cache-pvc  # Ensure this PVC exists
