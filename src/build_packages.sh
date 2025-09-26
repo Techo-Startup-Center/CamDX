@@ -1,9 +1,12 @@
 #!/bin/bash
 set -e
-export XROAD=$(
-  cd "$(dirname "$0")"
-  pwd
-)
+#export XROAD=$(
+#  cd "$(dirname "$0")"
+#  pwd
+#)
+
+cd "$(dirname "$0")"
+export XROAD=$(pwd)
 
 HAS_DOCKER=""
 PACKAGE_ONLY=false
