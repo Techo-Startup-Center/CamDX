@@ -16,20 +16,10 @@ RUN apt-get -qq update \
 ARG uid=1000
 ARG gid=1000
 
-# Step 1: remove existing user/group (ignore errors)
-RUN groupdel builder || true
-RUN userdel builder || true
-
-# Step 2: create group
-RUN echo "Creating group with GID=${gid}" \
-    && groupadd -g ${gid} builder
-
-# Step 3: create user
-RUN echo "Creating user with UID=${uid}" \
-    && useradd -m -u ${uid} -g ${gid} builder
-
-# Step 4: create Gradle cache and set ownership
-RUN mkdir -p /mnt/gradle-cache \
+# Use system-assigned UID/GID to avoid conflicts
+RUN groupadd builder \
+    && useradd -m -g builder builder \
+    && mkdir -p /mnt/gradle-cache \
     && chown -R builder:builder /mnt/gradle-cache
 
 USER builder
