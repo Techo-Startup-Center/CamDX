@@ -44,8 +44,8 @@ pipeline {
                    withEnv(["DOCKER_HOST=unix:///var/run/docker.sock"]) {
                      sh '''
                        echo "Starting X-Road build using Docker..."
-                         chmod +x ./src/build_packages.sh
-                         ./src/build_packages.sh -d
+                         chmod +x /home/jenkins/agent/workspace/camdx/src/build_packages.sh
+                         /home/jenkins/agent/workspace/camdx/src/build_packages.sh -d
                      '''
                    }
                  }
