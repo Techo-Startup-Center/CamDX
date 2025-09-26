@@ -50,8 +50,8 @@ pipeline {
                          ls -lah src || true
                          file src/build_packages.sh || true
                          head -n 3 src/build_packages.sh || true
-]                         chmod +x /home/jenkins/agent/workspace/camdx/src/build_packages.sh
-                         /home/jenkins/agent/workspace/camdx/src/build_packages.sh -d
+                         chmod +x /home/jenkins/agent/workspace/camdx/src/build_packages.sh
+                         bash /home/jenkins/agent/workspace/camdx/src/build_packages.sh -d
                      '''
                    }
                  }
