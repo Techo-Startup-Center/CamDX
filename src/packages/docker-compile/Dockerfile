@@ -51,7 +51,7 @@ ENV GRADLE_VERSION=9.0.0
 # ----------------------------------------
 USER root
 RUN mkdir -p $GRADLE_USER_HOME \
-    && wget -q --show-progress --progress=bar:force:noscroll \
+    && wget --no-check-certificate -q --show-progress --progress=bar:force:noscroll \
        https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip \
        -O $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip \
     && unzip $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip -d $GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION} \
