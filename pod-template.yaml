@@ -23,8 +23,8 @@ spec:
         - name: docker-cache
           mountPath: /var/lib/docker  # Mount the PVC here
     - name: docker-cli
-      image: docker:28-cli-bullseye  # Debian-based, includes bash
-      command: ["cat"]
+      image: docker:28-cli
+      command: [ "sh", "-c", "apk add --no-cache bash && cat" ]
       tty: true
       env:
         - name: DOCKER_HOST
