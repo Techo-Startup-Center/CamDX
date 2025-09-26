@@ -31,6 +31,12 @@ USER builder
 WORKDIR /mnt
 ENV GRADLE_USER_HOME=/mnt/gradle-cache
 
+# Ping Google DNS and Google domain
+RUN echo "Checking network connectivity..." \
+    && ping -c 2 8.8.8.8 \
+    && ping -c 2 google.com \
+    && curl -I https://services.gradle.org
+
 # Pre-download Gradle distribution for offline builds
 RUN curl -fsSL https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -o $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip \
     && mkdir -p $GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION} \
