@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y iputils-ping curl \
 USER builder
 
 # Pre-download Gradle distribution for offline builds
-RUN curl -fsSL https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -o $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip \
+RUN curl -k -fsSL https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -o $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip \
     && mkdir -p $GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION} \
     && unzip $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip -d $GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION} \
     && rm $GRADLE_USER_HOME/gradle-${GRADLE_VERSION}-bin.zip
