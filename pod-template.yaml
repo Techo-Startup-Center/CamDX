@@ -23,7 +23,7 @@ spec:
         - name: docker-cache
           mountPath: /var/lib/docker  # Mount the PVC here
     - name: docker-cli
-      image: docker:28-cli
+      image: docker:28-cli-bullseye  # Debian-based, includes bash
       command: ["cat"]
       tty: true
       env:
