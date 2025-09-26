@@ -56,9 +56,9 @@ abstract class LocationVersionResolver {
         return new VersionRangeResolver(connectionConfig, location, minVersion, maxVersion);
     }
 
-    abstract String chooseVersion(String url) throws Exception;
+    abstract String chooseVersion(String url) throws URISyntaxException, IOException;
 
-    ConfigurationLocation toVersionedLocation() throws Exception {
+    ConfigurationLocation toVersionedLocation() throws URISyntaxException, IOException {
         String versionedUrl = chooseVersion(location.getDownloadURL());
         return new ConfigurationLocation(
                 location.getInstanceIdentifier(), versionedUrl, location.getVerificationCerts());
@@ -75,7 +75,7 @@ abstract class LocationVersionResolver {
             this.maxVersion = maxVersion;
         }
 
-        String chooseVersion(String url) throws IOException, URISyntaxException {
+        String chooseVersion(String url) throws URISyntaxException, IOException {
             URIBuilder uriBuilder = new URIBuilder(url);
             if (versionParameterPresent(uriBuilder)) return url;
 

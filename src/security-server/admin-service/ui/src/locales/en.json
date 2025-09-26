@@ -1,15 +1,4 @@
 {
-  "403": {
-    "goBack": "Go back",
-    "mainTitle": "Permission denied",
-    "text": "Seems like you do not have the permission to view this page. If you think this is a mistake, check if you are logged into the correct account or contact your administrator to inquire about your permissions.",
-    "topTitle": "Forbidden"
-  },
-  "404": {
-    "pageNotFound": "404 - page not found",
-    "text": "Seems like you found the",
-    "textUnicorn": "unicorn"
-  },
   "accessRights": {
     "addServiceClients": "Add subjects",
     "addServiceClientsSuccess": "Access rights added successfully",
@@ -215,7 +204,7 @@
     },
     "globalConfiguration": {
       "configurationStatus": {
-        "ERROR_CODE_CANNOT_DOWNLOAD_CONF": "Unable to download global configuration. Check network connection.",
+        "ERROR_CODE_CANNOT_DOWNLOAD_CONF": "Unable to download global configuration. Check the network connection.",
         "ERROR_CODE_EXPIRED_CONF": "The downloaded global configuration has expired.",
         "ERROR_CODE_INTERNAL": "Internal error occurred.",
         "ERROR_CODE_INVALID_SIGNATURE_VALUE": "Invalid signature value.",
@@ -309,12 +298,33 @@
       "timestampingStatus": {
         "ERROR_CODE_INTERNAL": "Internal error occurred",
         "ERROR_CODE_MALFORMED_TIMESTAMP_SERVER_URL": "Malformed timestamp server URL. Check the URL.",
-        "ERROR_CODE_TIMESTAMP_REQUEST_TIMED_OUT": "Connection timed out. Check the network connection to global configuration provider.",
+        "ERROR_CODE_TIMESTAMP_REQUEST_TIMED_OUT": "Connection timed out. Check the network connection.",
         "ERROR_CODE_TIMESTAMP_UNINITIALIZED": "Connection ok, no timestamp request made yet",
         "SUCCESS": "Everything ok",
         "UNKNOWN": "Unknown"
       },
       "title": "Timestamping"
+    },
+    "traffic": {
+      "period": "Period",
+      "periodInfo": "Select start and end",
+      "date": "Date",
+      "time": "Time",
+      "party": "Party",
+      "partyInfo": "Service, subsystem, member",
+      "client": "Client",
+      "service": "Service",
+      "exchangeRole": "Exchange role",
+      "exchangeRoleInfo": "Producer or Consumer",
+      "producer": "Producer",
+      "status": "Status",
+      "statusInfo": "Message exchange status",
+      "success": "Success",
+      "failure": "Failure",
+      "successfulRequests": "Successful requests",
+      "failedRequests": "Failed requests",
+      "disabledTitle": "Operational Data Monitoring Is Disabled",
+      "disabledMessage": "Operational data monitoring is disabled for this Security Server. To enable it, please install the operational data monitoring add-on (xroad-addon-opmonitoring)."
     }
   },
   "endpoints": {
@@ -959,6 +969,10 @@
     "settings": {
       "backupAndRestore": "Backup And Restore",
       "systemParameters": "System Parameters"
+    },
+    "diagnostics": {
+      "overview": "Overview",
+      "traffic": "Traffic"
     }
   },
   "token": {

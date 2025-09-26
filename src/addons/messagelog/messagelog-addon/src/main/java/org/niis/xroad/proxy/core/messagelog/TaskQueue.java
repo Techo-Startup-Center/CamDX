@@ -85,7 +85,7 @@ public class TaskQueue {
         }
     }
 
-    protected void saveTimestampRecord(TimestampSucceeded message) throws Exception {
+    protected void saveTimestampRecord(TimestampSucceeded message)  {
         LogManager.saveTimestampRecord(message);
     }
 
@@ -163,10 +163,10 @@ public class TaskQueue {
 
         final Timestamper.TimestampResult timestampResult = timestamper
                 .handleTimestampTask(createTimestampTask(timestampTasks));
-        if (timestampResult instanceof TimestampSucceeded) {
-            handleTimestampSucceeded((TimestampSucceeded) timestampResult);
-        } else if (timestampResult instanceof TimestampFailed) {
-            handleTimestampFailed((TimestampFailed) timestampResult);
+        if (timestampResult instanceof TimestampSucceeded timestampSucceeded) {
+            handleTimestampSucceeded(timestampSucceeded);
+        } else if (timestampResult instanceof TimestampFailed timestampFailed) {
+            handleTimestampFailed(timestampFailed);
         }
     }
 

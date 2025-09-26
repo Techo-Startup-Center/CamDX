@@ -61,6 +61,8 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
+import org.niis.xroad.common.core.exception.ErrorCode;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 
 import javax.security.auth.x500.X500Principal;
 
@@ -78,6 +80,7 @@ import java.math.BigInteger;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -85,7 +88,6 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateExpiredException;
-import java.security.cert.CertificateFactory;
 import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
@@ -100,6 +102,7 @@ import java.util.Optional;
 
 import static ee.ria.xroad.common.ErrorCodes.X_INTERNAL_ERROR;
 import static ee.ria.xroad.common.crypto.identifier.SignAlgorithm.SHA256_WITH_RSA;
+import static ee.ria.xroad.common.util.CryptoUtils.CERT_FACTORY;
 import static ee.ria.xroad.common.util.CryptoUtils.calculateCertHexHash;
 import static ee.ria.xroad.common.util.CryptoUtils.calculateCertSha1HexHash;
 import static ee.ria.xroad.common.util.CryptoUtils.toDERObject;
@@ -269,7 +272,9 @@ public final class CertUtils {
         boolean[] keyUsage = cert.getKeyUsage();
 
         if (keyUsage == null) {
-            throw new RuntimeException("Certificate does not contain keyUsage extension");
+            throw XrdRuntimeException.systemException(ErrorCode.INTERNAL_ERROR)
+                    .details("Certificate does not contain keyUsage extension")
+                    .build();
         }
 
         return keyUsage[1]; // nonRepudiation
@@ -366,7 +371,7 @@ public final class CertUtils {
      */
     @Deprecated
     public static String[] getSha1Hashes(List<X509Certificate> certs)
-            throws CertificateEncodingException, IOException, OperatorCreationException {
+            throws CertificateEncodingException, IOException {
         String[] certHashes = new String[certs.size()];
 
         for (int i = 0; i < certs.size(); i++) {
@@ -384,7 +389,7 @@ public final class CertUtils {
      * @throws IOException                  if an I/O error occurred
      */
     public static String[] getHashes(List<X509Certificate> certs)
-            throws CertificateEncodingException, IOException, OperatorCreationException {
+            throws CertificateEncodingException, IOException {
         String[] certHashes = new String[certs.size()];
 
         for (int i = 0; i < certs.size(); i++) {
@@ -415,7 +420,7 @@ public final class CertUtils {
      * @return byte content of the certificate request
      */
     public static byte[] generateCertRequest(PrivateKey privateKey, PublicKey publicKey, String principal)
-            throws NoSuchAlgorithmException, OperatorCreationException, IOException {
+            throws OperatorCreationException, IOException {
         X500Principal subject = new X500Principal(principal);
 
         ContentSigner signGen = new JcaContentSignerBuilder(SHA256_WITH_RSA.name()).build(privateKey);
@@ -479,15 +484,17 @@ public final class CertUtils {
      *
      * @param certBytes certificates byte array
      * @return X509Certificate
-     * @throws CertificateException when certificate is invalid
-     * @throws IOException          when I/O error occurs
+     * @throws XrdRuntimeException when certificate is invalid
      */
-    public static X509Certificate[] readCertificateChain(byte[] certBytes) throws CertificateException, IOException {
-        CertificateFactory fact = CertificateFactory.getInstance("X.509");
+    public static X509Certificate[] readCertificateChain(byte[] certBytes) {
         try (InputStream is = new ByteArrayInputStream(certBytes)) {
-            return fact.generateCertificates(is).stream()
+            return CERT_FACTORY.generateCertificates(is).stream()
                     .map(X509Certificate.class::cast)
                     .toArray(X509Certificate[]::new);
+        } catch (CertificateException | IOException e) {
+            throw XrdRuntimeException.systemException(ErrorCode.INVALID_CERTIFICATE)
+                    .cause(e)
+                    .build();
         }
     }
 
@@ -499,7 +506,8 @@ public final class CertUtils {
      * @param filenameP12 output filename of the .p12 keystore
      * @throws Exception when error occurs
      */
-    public static void createPkcs12(String filenameKey, byte[] certBytes, String filenameP12) throws Exception {
+    public static void createPkcs12(String filenameKey, byte[] certBytes, String filenameP12)
+            throws NoSuchAlgorithmException, InvalidKeySpecException, IOException, KeyStoreException, CertificateException {
         KeyPair keyPair = readKeyPairFromPemFile(filenameKey);
         PrivateKey privateKey = keyPair.getPrivate();
 

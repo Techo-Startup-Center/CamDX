@@ -102,10 +102,9 @@ public class ConfigurationParser {
      * @param contentIdentifiersToBeHandled array of content identifiers that are handled.
      *                                      If null, all content is handled.
      * @return list of downloaded files
-     * @throws Exception if an error occurs
      */
     public synchronized Configuration parse(ConfigurationLocation location, String... contentIdentifiersToBeHandled)
-            throws Exception {
+            throws IOException, MimeException {
         log.trace("parse");
 
         configuration = new Configuration(location);
@@ -124,7 +123,7 @@ public class ConfigurationParser {
         return configuration;
     }
 
-    protected InputStream getInputStream() throws Exception {
+    protected InputStream getInputStream() {
         return getConfigurationInputStream(configuration.getLocation());
     }
 
@@ -162,12 +161,12 @@ public class ConfigurationParser {
         }
 
         @Override
-        public void startHeader() throws MimeException {
+        public void startHeader() {
             headers = new HashMap<>();
         }
 
         @Override
-        public void field(Field field) throws MimeException {
+        public void field(Field field) {
             headers.put(field.getName().toLowerCase(), field.getBody());
         }
 

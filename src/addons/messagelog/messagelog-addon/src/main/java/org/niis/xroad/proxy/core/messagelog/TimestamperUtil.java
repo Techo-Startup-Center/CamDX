@@ -27,6 +27,7 @@ package org.niis.xroad.proxy.core.messagelog;
 
 import ee.ria.xroad.common.messagelog.MessageLogProperties;
 
+import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.asn1.ASN1InputStream;
 import org.bouncycastle.asn1.cmp.PKIFreeText;
@@ -34,10 +35,14 @@ import org.bouncycastle.asn1.cmp.PKIStatus;
 import org.bouncycastle.asn1.tsp.TimeStampResp;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaCertStore;
+import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.tsp.TSPException;
 import org.bouncycastle.tsp.TimeStampRequest;
 import org.bouncycastle.tsp.TimeStampResponse;
 import org.bouncycastle.tsp.TimeStampToken;
+import org.niis.xroad.common.core.exception.ErrorCode;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -45,19 +50,20 @@ import java.io.OutputStream;
 import java.math.BigInteger;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
+@UtilityClass
 final class TimestamperUtil {
 
-    private TimestamperUtil() {
-    }
 
     @SuppressWarnings("unchecked")
     static TimeStampToken addSignerCertificate(TimeStampResponse tsResponse,
-                                               X509Certificate signerCertificate) throws Exception {
+                                               X509Certificate signerCertificate)
+            throws CertificateEncodingException, IOException, CMSException, TSPException {
         CMSSignedData cms = tsResponse.getTimeStampToken().toCMSSignedData();
 
         List<X509CertificateHolder> collection = new ArrayList<>();
@@ -68,7 +74,7 @@ final class TimestamperUtil {
                 new JcaCertStore(collection), cms.getAttributeCertificates(), cms.getCRLs()));
     }
 
-    static InputStream makeTsRequest(TimeStampRequest req, String tspUrl) throws Exception {
+    static InputStream makeTsRequest(TimeStampRequest req, String tspUrl) throws IOException {
         byte[] request = req.getEncoded();
 
         URL url = new URL(tspUrl);
@@ -88,8 +94,9 @@ final class TimestamperUtil {
 
         if (con.getResponseCode() != HttpURLConnection.HTTP_OK) {
             con.disconnect();
-            throw new RuntimeException("Received HTTP error: " + con.getResponseCode() + " - "
-                    + con.getResponseMessage());
+            throw XrdRuntimeException.systemException(ErrorCode.INTERNAL_ERROR)
+                    .details("Received HTTP error: " + con.getResponseCode() + " - " + con.getResponseMessage())
+                    .build();
         } else if (con.getInputStream() == null) {
             con.disconnect();
             throw new IOException("Could not get response from TSP");
@@ -98,11 +105,11 @@ final class TimestamperUtil {
         return con.getInputStream();
     }
 
-    static TimeStampResponse getTimestampResponse(InputStream in) throws Exception {
+    static TimeStampResponse getTimestampResponse(InputStream in) throws IOException, TSPException {
         TimeStampResp response = TimeStampResp.getInstance(new ASN1InputStream(in).readObject());
 
         if (response == null) {
-            throw new RuntimeException("Could not read time-stamp response");
+            throw XrdRuntimeException.systemInternalError("Could not read time-stamp response");
         }
 
         BigInteger status = response.getStatus().getStatus();
@@ -126,7 +133,7 @@ final class TimestamperUtil {
             log.error("getTimestampDer() - TimeStampResp.status is not "
                     + "\"granted\" neither \"grantedWithMods\": {}, {}", status, sb);
 
-            throw new RuntimeException("TimeStampResp.status: " + status + ", .statusString: " + sb);
+            throw XrdRuntimeException.systemInternalError("TimeStampResp.status: " + status + ", .statusString: " + sb);
         }
 
         return new TimeStampResponse(response);
