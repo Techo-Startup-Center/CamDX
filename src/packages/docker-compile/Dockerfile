@@ -31,8 +31,10 @@ USER builder
 WORKDIR /mnt
 ENV GRADLE_USER_HOME=/mnt/gradle-cache
 
-# Ping Google DNS and Google domain
-RUN echo "Checking network connectivity..." \
+# --- Add network connectivity check here ---
+USER root
+RUN apt-get update && apt-get install -y iputils-ping curl \
+    && echo "Checking network connectivity..." \
     && ping -c 2 8.8.8.8 \
     && ping -c 2 google.com \
     && curl -I https://services.gradle.org
