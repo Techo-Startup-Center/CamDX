@@ -5,6 +5,7 @@ ENV LANGUAGE en_US:en
 ENV LC_ALL en_US.UTF-8
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV GRADLE_DOWNLOAD_TIMEOUT=600000
 
 RUN apt-get -qq update \
   && apt-get -qq upgrade \
