@@ -1,7 +1,7 @@
 #!/bin/bash
 source compile_env.sh
 
-RELEASE="SNAPSHOT"
+RELEASE="RELEASE"
 
 for i in "$@"; do
 case "$i" in
@@ -20,7 +20,8 @@ case "$i" in
 esac
 done
 
-ARGUMENTS=("-PxroadBuildType=$RELEASE" --stacktrace build )
+#ARGUMENTS=("-PxroadBuildType=$RELEASE" --stacktrace build )
+ARGUMENTS=("-PxroadBuildType=RELEASE" --stacktrace build -x test -x intTest )
 
 if [[ -n "$SKIP_TESTS" ]]; then
     ARGUMENTS+=(-xtest -xintTest)
