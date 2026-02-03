@@ -5,7 +5,7 @@
     "addServiceClientsTitle": "Lisa ligipääs",
     "addSubjectsSuccess": "Ligipääs edukalt antud",
     "id": "ID",
-    "memberName": "Liikme nimi / Rühma kirjeldus",
+    "subsystemName": "Alamsüsteemi nimi / Rühma kirjeldus",
     "removeAllText": "Kas olete kindel, et soovite kõikidelt klientidelt pääsuõigused eemaldada?",
     "removeAllTitle": "Eemalda kõik pääsuõigused?",
     "removeSuccess": "Pääsuõigused edukalt eemaldatud",
@@ -172,12 +172,14 @@
     "invalidEndpoint": "Otspunkt sisaldab lubamatuid märke",
     "invalidUrl": "URL on kehtetu",
     "invalidXrdIdentifier": "Identifikaatori väärtus sisaldab lubamatuid märke",
-    "requiredIf": "Väli {fieldName} on nõutav"
+    "requiredIf": "Väli {fieldName} on nõutav",
+    "description": "Kasutage ainult kehtivaid kirjelduse märke"
   },
   "diagnostics": {
     "addOnStatus": {
       "messageLogDisabled": "Konfiguratsiooniga blokeeritud"
     },
+    "costType": "Hinna tüüp",
     "downloadReport": "Salvesta Diagnostika Raport",
     "encryption": {
       "backup": {
@@ -273,7 +275,7 @@
       "ocspStatus": {
         "ERROR_CODE_OCSP_CONNECTION_ERROR": "OCSP vastajaga ei õnnestu ühendust luua",
         "ERROR_CODE_OCSP_FAILED": "OCSP vastajalt ei õnnestu vastust saada",
-        "ERROR_CODE_OCSP_RESPONSE_INVALID": "OCSP vastus vigane/kehtetu ",
+        "ERROR_CODE_OCSP_RESPONSE_INVALID": "OCSP vastus vigane/kehtetu",
         "ERROR_CODE_OCSP_RESPONSE_UNVERIFIED": "OCSP vastust ei õnnestu kontrollida",
         "ERROR_CODE_OCSP_UNINITIALIZED": "OCSP olekupäringut pole veel saadetud",
         "SUCCESS": "Kõik on korras",
@@ -325,6 +327,30 @@
       "failedRequests": "Ebaõnnestunud päringud",
       "disabledTitle": "Operatiivandmete kogumine ei ole lubatud",
       "disabledMessage": "Operatiivandmete kogumine ei ole lubatud selle turvaserveri jaoks. Selle lubamiseks paigaldage operatiivandmete jälgimise lisandmoodul (xroad-addon-opmonitoring)."
+    },
+    "connection": {
+      "ok": "Kõik on korras",
+      "test": "Test",
+      "centralServer": {
+        "authCertRequest": "Autentimise sertifikaadi registreerimise teenus",
+        "globalConf": "Globaalse konfiguratsiooni allalaadimine",
+        "globalConfHttp": "http",
+        "globalConfHttps": "https",
+        "title": "Keskserver"
+      },
+      "management": {
+        "title": "Haldusteenuse pakkuja"
+      },
+      "securityServer": {
+        "client": "Klient",
+        "sourceClient": "Lähteklient",
+        "rest": "REST",
+        "securityServer":  "Turvaserver",
+        "soap": "SOAP",
+        "title": "Teine turvaserver",
+        "target": "Teine klient",
+        "targetClient": "Klient"
+      }
     }
   },
   "endpoints": {
@@ -349,6 +375,8 @@
       "account_creation_failure": "Konto loomine ACME serveris ebaõnnestus. Kui välise konto sidumine on nõutav, siis veenduge, et acme.yml failis on konfigureeritud õiged identsustõendid",
       "account_key_pair_error": "Võtmepaari hankimine ACME serveri kontole ebaõnnestus",
       "account_keystore_password_missing": "ACME konto võtmehoidla parool puudub acme.yml konfiguratsioonifailis",
+      "acme_yaml_missing": "ACME konfiguratsioonifail acme.yml puudub",
+      "acme_yaml_account_keystore_password_update_error": "ACME konto võtmehoidla parooli uuendamine acme.yml konfiguratsioonifailis ebaõnnestus",
       "authorization_failure": "Volitamine ebaõnnestus. Tavaliselt seotud pretensiooni valideerimise tõrkega, mis on nõutav domeeni omandi tõendamiseks",
       "authorization_wait_failure": "Volitamise lõpule viimise ootamine ebaõnnestus",
       "certificate_failure": "Sertifikaadi hankimine ACME serverilt ebaõnnestus",
@@ -430,18 +458,20 @@
     "invalid_init_params": "Kehtetud lähtestamisparameetrid",
     "invalid_instance_identifier": "Kehtetu juhtumi identifikaator",
     "invalid_member_class": "Kehtetu liikmeklass",
+    "invalid_pem_csr": "Kehtetu PEM CSR",
     "invalid_service_client_id": "Kehtetu teenuse kliendi ID",
     "invalid_service_url": "Kehtetu teenuse URL",
     "invalid_wsdl": "Kehtetu WSDL",
     "invalid_wsdl_service_identifier": "Kehtetu WSDL teenuse identifikaator",
+    "io_error": "I/O viga",
     "key_and_cert_generation_failed": "Võtme ja sertifikaadi loomine ebaõnnestus",
     "key_not_found": "Võtit ei leitud",
     "local_group_code_already_exists": "Lokaalse rühma kood on juba olemas",
     "local_group_member_already_exists": "Lokaalse rühma liige on juba olemas",
     "local_group_member_not_found": "Lokaalse rühma liiget ei leitud",
     "local_group_not_found": "Lokaalset rühma ei leitud",
-    "malformed_anchor": "Vale vorminguga ankur",
     "maintenance_mode_change_request_already_submitted": "Hooldusrežiimi muudatus on juba ootel",
+    "malformed_anchor": "Vale vorminguga ankur",
     "malformed_url": "Vale vorminguga URL",
     "management_request_sending_failed": "Halduspäringu saatmine ebaõnnestus",
     "member_already_owner": "Liige on juba omanik",
@@ -450,6 +480,12 @@
     "member_code_exists": "Liikmekood on olemas",
     "member_code_not_provided": "Liikmekood puudub",
     "missing_parameter": "Parameeter puudub",
+    "network_error": "Võrguühenduse viga",
+    "http_error": "HTTP viga",
+    "ocsp_connection_error": "OCSP vastajaga ei õnnestu ühendust luua",
+    "ocsp_failed": "OCSP vastajalt ei õnnestu vastust saada",
+    "ocsp_response_parsing_failure": "OCSP vastus vigane/kehtetu",
+    "ocsp_response_verification_failure": "OCSP vastust ei õnnestu kontrollida",
     "openapi_parsing_error": "OpenApi3 kirjelduse analüüs ebaõnnestus",
     "orphans_not_found": "Antud kliendile kuuluvaid orbvõtmeid, sertifikaate ja/või CSR-e ei leitud",
     "pin_code_exists": "PIN-kood on olemas",
@@ -784,7 +820,7 @@
     "enableSuccess": "Teenuse kirjeldus aktiveeritud",
     "idGroupCode": "ID / Grupi kood",
     "lastRefreshed": "Viimati värskendatud:",
-    "memberNameGroupDesc": "Liikme nimi / Grupi kirjeldus",
+    "subsystemNameGroupDesc": "Alamsüsteemi nimi / Grupi kirjeldus",
     "noMatches": "Sobivad kirjed puuduvad",
     "openApi3Added": "OpenApi teenus lisatud",
     "openapiDetails": "OpenAPI teenuse detailid",
@@ -865,6 +901,7 @@
           "acmeIpAddresses": "ACME serveri IP",
           "distinguishedName": "Eristusnimi",
           "expires": "Aegub",
+          "ocspCostType": "OCSP hinna tüüp",
           "ocspResponse": "OCSP vastus"
         },
         "notAvailable": "Ei kohaldata",
@@ -903,6 +940,11 @@
       },
       "title": "Konfiguratsiooniankur"
     },
+    "costType": {
+      "FREE": "Tasuta",
+      "PAID": "Tasuline",
+      "UNDEFINED": "Määramata"
+    },
     "securityServer": {
       "addressChangeInProgress": "MUUTUS ON POOLELI",
       "editDialog": {
@@ -911,6 +953,24 @@
       "securityServer": "Turvaserver",
       "serverAddress": "Serveri aadress",
       "updateSubmitted": "Turvaserveri aadressi muutus edukalt esitatud"
+    },
+    "servicePrioritizationStrategy": {
+      "timestamping": {
+        "label": "Ajatemplite eelistamise strateegia: ",
+        "ONLY_FREE": "kasuta ainult tasuta ajatempliteenuseid",
+        "ONLY_PAID": "kasuta ainult tasulisi ajatempliteenuseid",
+        "FREE_FIRST": "kasuta esmalt tasuta ajatempliteenuseid, kui need ebaõnnestuvad või pole saadaval, kasuta tasulisi",
+        "PAID_FIRST": "kasuta esmalt tasulisi ajatempliteenuseid, kui need ebaõnnestuvad või pole saadaval, kasuta tasuta",
+        "NONE": "kasuta kõiki ajatempliteenuseid ilma eelistuseta"
+      },
+      "ocsp": {
+        "label": "OCSP eelistamise strateegia: ",
+        "ONLY_FREE": "kasuta ainult tasuta OCSP teenuseid",
+        "ONLY_PAID": "kasuta ainult tasulisi OCSP teenuseid",
+        "FREE_FIRST": "kasuta esmalt tasuta OCSP teenuseid, kui need ebaõnnestuvad või pole saadaval, kasuta tasulisi",
+        "PAID_FIRST": "kasuta esmalt tasulisi OCSP teenuseid, kui need ebaõnnestuvad või pole saadaval, kasuta tasuta",
+        "NONE": "kasuta kõiki OCSP teenuseid ilma eelistuseta"
+      }
     },
     "timestampingServices": {
       "action": {
@@ -936,7 +996,8 @@
         },
         "header": {
           "serviceURL": "Teenuse URL",
-          "timestampingService": "Ajatempli teenus"
+          "timestampingService": "Ajatempli teenus",
+          "costType": "Hinna tüüp"
         }
       },
       "title": "Ajatempli teenused"
@@ -972,7 +1033,8 @@
     },
     "diagnostics": {
       "overview": "Ülevaade",
-      "traffic": "Päringute statistika"
+      "traffic": "Päringute statistika",
+      "connectionTesting": "Ühenduste testimine"
     }
   },
   "token": {

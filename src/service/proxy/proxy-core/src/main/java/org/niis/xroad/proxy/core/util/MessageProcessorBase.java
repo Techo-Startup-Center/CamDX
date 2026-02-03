@@ -172,7 +172,8 @@ public abstract class MessageProcessorBase {
     }
 
     private String getNormalizedServicePath(String servicePath) {
-        return Optional.of(UriUtils.uriPathPercentDecode(URI.create(servicePath).normalize().getRawPath(), true))
+        return Optional.ofNullable(servicePath)
+                .map(UriUtils::decodeAndNormalize)
                 .orElse(servicePath);
     }
 
@@ -193,9 +194,10 @@ public abstract class MessageProcessorBase {
      * In addition, this implementation allows missing (null) header.
      *
      * @return the argument as-is if it is valid
-     * @throws CodedException if the the argument is invalid
+     * @throws CodedException if the argument is invalid
      * @see <a href="https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383528">SOAP 1.1</a>
      */
+    @SuppressWarnings("java:S3516")
     protected static String validateSoapActionHeader(String soapAction) {
         if (soapAction == null || soapAction.isEmpty() || "\"\"".equals(soapAction)) {
             //allow missing, empty and "" SoapAction

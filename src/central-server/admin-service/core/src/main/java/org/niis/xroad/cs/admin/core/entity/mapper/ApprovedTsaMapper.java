@@ -31,6 +31,7 @@ import ee.ria.xroad.common.util.CertUtils;
 
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
+import org.niis.xroad.common.CostType;
 import org.niis.xroad.common.exception.BadRequestException;
 import org.niis.xroad.cs.admin.api.converter.GenericUniDirectionalMapper;
 import org.niis.xroad.cs.admin.api.domain.ApprovedTsa;
@@ -48,15 +49,15 @@ public interface ApprovedTsaMapper extends GenericUniDirectionalMapper<ApprovedT
     @Override
     @Mapping(target = "certificate", source = "cert")
     @Mapping(target = "timestampingInterval", constant = "60") // TODO stub value. Will be implemented in separate story
-    @Mapping(target = "cost", constant = "UNDEFINED")
-        // TODO stub value. Will be implemented in separate story
+    @Mapping(target = "costType", defaultValue = "UNDEFINED")
     ApprovedTsa toTarget(ApprovedTsaEntity approvedTsaEntity);
 
-    default ApprovedTsaEntity toEntity(String url, byte[] certificate) {
+    default ApprovedTsaEntity toEntity(String url, byte[] certificate, CostType costType) {
         try {
             final X509Certificate cert = CertUtils.readCertificateChain(certificate)[0];
             final var entity = new ApprovedTsaEntity();
             entity.setUrl(url);
+            entity.setCostType(costType.name());
             entity.setCert(certificate);
             entity.setValidFrom(cert.getNotBefore().toInstant());
             entity.setValidTo(cert.getNotAfter().toInstant());

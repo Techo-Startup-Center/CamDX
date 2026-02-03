@@ -32,6 +32,7 @@ import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.GlobalGroupId;
 import ee.ria.xroad.common.identifier.SecurityServerId;
 
+import org.niis.xroad.common.CostType;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.globalconf.cert.CertChain;
 import org.niis.xroad.globalconf.extension.GlobalConfExtensions;
@@ -46,6 +47,7 @@ import java.security.cert.X509Certificate;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -70,13 +72,23 @@ public class EmptyGlobalConf implements GlobalConfProvider {
     private final GlobalConfExtensions globalConfExtensions = new GlobalConfExtensions(source, new GlobalConfExtensionFactoryImpl());
 
     @Override
-    public List<String> getOcspResponderAddresses(X509Certificate org) {
+    public List<String> getOrderedOcspResponderAddresses(X509Certificate org) {
         return Collections.emptyList();
     }
 
     @Override
     public List<String> getOcspResponderAddressesForCaCertificate(X509Certificate caCert) {
         return Collections.emptyList();
+    }
+
+    @Override
+    public Map<String, CostType> getOcspResponderAddressesAndCostTypes(String instanceIdentifier, X509Certificate caCert) {
+        return Collections.emptyMap();
+    }
+
+    @Override
+    public CostType getOcspResponderCostType(String instanceIdentifier, String ocspUrl) {
+        return CostType.UNDEFINED;
     }
 
     @Override
@@ -170,6 +182,21 @@ public class EmptyGlobalConf implements GlobalConfProvider {
     @Override
     public X509Certificate getCentralServerSslCertificate() {
         return null;
+    }
+
+    @Override
+    public Set<String> getSourceAddresses(String instanceIdentifier) {
+        return Set.of();
+    }
+
+    @Override
+    public Set<String> getAllowedFederationInstances() {
+        return Set.of();
+    }
+
+    @Override
+    public String getConfigurationDirectoryPath(String instanceIdentifier) {
+        return "";
     }
 
     @Override

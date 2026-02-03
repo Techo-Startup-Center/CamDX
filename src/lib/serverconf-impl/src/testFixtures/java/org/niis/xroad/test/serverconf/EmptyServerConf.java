@@ -36,6 +36,7 @@ import ee.ria.xroad.common.metadata.RestServiceDetailsListType;
 import ee.ria.xroad.common.metadata.RestServiceType;
 import ee.ria.xroad.common.metadata.XRoadRestServiceDetailsType;
 
+import org.niis.xroad.common.CostType;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.ServerConfProvider;
 import org.niis.xroad.serverconf.model.Client;
@@ -139,8 +140,18 @@ public class EmptyServerConf implements ServerConfProvider {
     }
 
     @Override
-    public List<String> getTspUrl() {
+    public List<String> getTspUrls() {
         return emptyList();
+    }
+
+    @Override
+    public List<String> getOrderedTspUrls() {
+        return emptyList();
+    }
+
+    @Override
+    public CostType getTspCostType(String tspUrl) {
+        return null;
     }
 
     @Override
