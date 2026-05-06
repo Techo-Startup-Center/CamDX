@@ -1,0 +1,62 @@
+quarkus:
+  application:
+    name: ds-issuer-service
+  config:
+    locations:
+      - xroad-common.yaml
+      - xroad-logging.yaml
+  log:
+    level: INFO
+    category:
+      "EDC-MONITOR":
+        level: DEBUG
+
+"%native":
+  quarkus:
+    config:
+      locations:
+        - xroad-common.yaml
+        - xroad-logging.yaml
+        - /etc/xroad/conf.d/local-tls.yaml
+        - /etc/xroad/conf.d/local.yaml
+        - /etc/xroad/db.properties
+    log:
+      console:
+        enabled: false
+      file:
+        enabled: true
+        path: /var/log/xroad/ds-issuer-service.log
+
+web:
+  http:
+    port: 6181
+    path: /api
+    identity:
+      port: 6182
+      path: /api/identity
+    did:
+      port: 6183
+      path: /
+    sts:
+      port: 6184
+      path: /api/sts
+    issuance:
+      port: 6185
+      path: /api/issuance
+    issueradmin:
+      port: 6186
+      path: /api/admin
+    statuslist:
+      port: 6187
+      path: /statuslist
+
+edc:
+  hostname: ${HOSTNAME}
+  datasource:
+    default:
+      url: ${xroad.db.ds-issuer-service.hibernate.connection.url}
+      user: ${xroad.db.ds-issuer-service.hibernate.connection.username}
+      password: ${xroad.db.ds-issuer-service.hibernate.connection.password}
+  sql:
+    schema:
+      autocreate: true

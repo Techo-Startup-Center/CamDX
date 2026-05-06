@@ -25,9 +25,9 @@
  */
 package org.niis.xroad.serverconf.impl;
 
-import ee.ria.xroad.common.CodedException;
-import ee.ria.xroad.common.SystemProperties;
+import ee.ria.xroad.common.ServicePrioritizationStrategy;
 import ee.ria.xroad.common.conf.InternalSSLKey;
+import ee.ria.xroad.common.db.DatabaseCtx;
 import ee.ria.xroad.common.db.TransactionCallback;
 import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.GlobalGroupId;
@@ -49,35 +49,36 @@ import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.hibernate.Session;
 import org.hibernate.SharedSessionContract;
 import org.niis.xroad.common.CostType;
 import org.niis.xroad.common.CostTypePrioritizer;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
+import org.niis.xroad.common.identifiers.jpa.dao.impl.IdentifierDAOImpl;
+import org.niis.xroad.common.identifiers.jpa.entity.ClientIdEntity;
+import org.niis.xroad.common.identifiers.jpa.entity.XRoadIdEntity;
+import org.niis.xroad.common.identifiers.jpa.mapper.XRoadIdMapper;
+import org.niis.xroad.common.vault.VaultClient;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.ServerConfProvider;
 import org.niis.xroad.serverconf.impl.dao.CertificateDAOImpl;
 import org.niis.xroad.serverconf.impl.dao.ClientDAOImpl;
-import org.niis.xroad.serverconf.impl.dao.IdentifierDAOImpl;
 import org.niis.xroad.serverconf.impl.dao.ServerConfDAOImpl;
 import org.niis.xroad.serverconf.impl.dao.ServiceDAOImpl;
 import org.niis.xroad.serverconf.impl.dao.ServiceDescriptionDAOImpl;
 import org.niis.xroad.serverconf.impl.entity.AccessRightEntity;
 import org.niis.xroad.serverconf.impl.entity.CertificateEntity;
 import org.niis.xroad.serverconf.impl.entity.ClientEntity;
-import org.niis.xroad.serverconf.impl.entity.ClientIdEntity;
 import org.niis.xroad.serverconf.impl.entity.EndpointEntity;
-import org.niis.xroad.serverconf.impl.entity.XRoadIdEntity;
 import org.niis.xroad.serverconf.impl.mapper.CertificateMapper;
 import org.niis.xroad.serverconf.impl.mapper.ClientMapper;
 import org.niis.xroad.serverconf.impl.mapper.EndpointMapper;
 import org.niis.xroad.serverconf.impl.mapper.ServerConfMapper;
 import org.niis.xroad.serverconf.impl.mapper.ServiceDescriptionMapper;
 import org.niis.xroad.serverconf.impl.mapper.ServiceMapper;
-import org.niis.xroad.serverconf.impl.mapper.XRoadIdMapper;
 import org.niis.xroad.serverconf.model.Certificate;
 import org.niis.xroad.serverconf.model.Client;
 import org.niis.xroad.serverconf.model.DescriptionType;
@@ -93,15 +94,15 @@ import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.security.spec.InvalidKeySpecException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-import static ee.ria.xroad.common.ErrorCodes.X_MALFORMED_SERVERCONF;
-import static ee.ria.xroad.common.ErrorCodes.X_UNKNOWN_SERVICE;
 import static ee.ria.xroad.common.ErrorCodes.translateException;
-import static org.niis.xroad.serverconf.impl.ServerConfDatabaseCtx.doInTransaction;
+import static org.niis.xroad.common.core.exception.ErrorCode.MALFORMED_SERVERCONF;
+import static org.niis.xroad.common.core.exception.ErrorCode.UNKNOWN_SERVICE;
 
 /**
  * Server conf implementation.
@@ -113,7 +114,10 @@ public class ServerConfImpl implements ServerConfProvider {
     // default service connection timeout in seconds
     protected static final int DEFAULT_SERVICE_TIMEOUT = 30;
 
+    protected final DatabaseCtx serverConfDatabaseCtx;
     protected final GlobalConfProvider globalConfProvider;
+
+    private final VaultClient vaultClient;
 
     private final ServiceDAOImpl serviceDao = new ServiceDAOImpl();
     private final IdentifierDAOImpl identifierDao = new IdentifierDAOImpl();
@@ -128,7 +132,7 @@ public class ServerConfImpl implements ServerConfProvider {
             ServerConf serverConf = getConf(session);
             Client owner = serverConf.getOwner();
             if (owner == null) {
-                throw new CodedException(X_MALFORMED_SERVERCONF, "Owner is not set");
+                throw XrdRuntimeException.systemException(MALFORMED_SERVERCONF, "Owner is not set");
             }
             return SecurityServerId.Conf.create(owner.getIdentifier(), serverConf.getServerCode());
         });
@@ -223,21 +227,18 @@ public class ServerConfImpl implements ServerConfProvider {
 
     @Override
     public List<ServiceId.Conf> getAllServices(ClientId serviceProviderId) {
-        return tx(session -> XRoadIdMapper.get().toServices(serviceDao.getServices(session, serviceProviderId)));
+        return tx(session -> serviceDao.getServices(session, serviceProviderId));
     }
 
     @Override
     public List<ServiceId.Conf> getServicesByDescriptionType(ClientId serviceProviderId, DescriptionType descriptionType) {
-        return tx(session -> XRoadIdMapper.get().toServices(
-                serviceDao.getServicesByDescriptionType(session, serviceProviderId, descriptionType)
-        ));
+        return tx(session -> serviceDao.getServicesByDescriptionType(session, serviceProviderId, descriptionType));
     }
 
     @Override
     public List<ServiceId.Conf> getAllowedServices(ClientId serviceProviderId, ClientId clientId) {
         return tx(session -> {
-            List<ServiceId.Conf> allServices =
-                    XRoadIdMapper.get().toServices(serviceDao.getServices(session, serviceProviderId));
+            List<ServiceId.Conf> allServices = serviceDao.getServices(session, serviceProviderId);
             return allServices.stream()
                     .filter(s -> !getAclEndpoints(session, clientId, s).isEmpty())
                     .collect(Collectors.toList());
@@ -248,10 +249,7 @@ public class ServerConfImpl implements ServerConfProvider {
     public List<ServiceId.Conf> getAllowedServicesByDescriptionType(ClientId serviceProviderId, ClientId clientId,
                                                                     DescriptionType descriptionType) {
         return tx(session -> {
-            List<ServiceId.Conf> allServices =
-                    XRoadIdMapper.get().toServices(
-                            serviceDao.getServicesByDescriptionType(session, serviceProviderId, descriptionType)
-                    );
+            List<ServiceId.Conf> allServices = serviceDao.getServicesByDescriptionType(session, serviceProviderId, descriptionType);
             return allServices.stream()
                     .filter(s -> !getAclEndpoints(session, clientId, s).isEmpty())
                     .collect(Collectors.toList());
@@ -263,12 +261,24 @@ public class ServerConfImpl implements ServerConfProvider {
         return tx(session -> {
             Service service = getService(session, serviceId);
             if (service != null) {
-                return ObjectUtils.defaultIfNull(
+                return Objects.requireNonNullElse(
                         service.getSslAuthentication(), true);
             }
 
-            throw new CodedException(X_UNKNOWN_SERVICE,
+            throw XrdRuntimeException.systemException(UNKNOWN_SERVICE,
                     "Service '%s' not found", serviceId);
+        });
+    }
+
+    @Override
+    public boolean isSubjectInLocalGroup(ClientId clientId, LocalGroupId localGroupId) {
+        return tx(session -> {
+            ClientEntity clientEntity = clientDao.getClient(session, clientId);
+            if (clientEntity == null) {
+                return false;
+            }
+            return clientEntity.getLocalGroups().stream()
+                    .anyMatch(g -> Objects.equals(localGroupId.getGroupCode(), g.getGroupCode()));
         });
     }
 
@@ -342,8 +352,9 @@ public class ServerConfImpl implements ServerConfProvider {
 
     @Override
     public InternalSSLKey getSSLKey()
-            throws UnrecoverableKeyException, CertificateException, KeyStoreException, IOException, NoSuchAlgorithmException {
-        return InternalSSLKey.load();
+            throws UnrecoverableKeyException, CertificateException, KeyStoreException, IOException, NoSuchAlgorithmException,
+            InvalidKeySpecException {
+        return vaultClient.getInternalTlsCredentials();
     }
 
     @Override
@@ -365,12 +376,10 @@ public class ServerConfImpl implements ServerConfProvider {
     }
 
     @Override
-    public List<String> getOrderedTspUrls() {
+    public List<String> getOrderedTspUrls(ServicePrioritizationStrategy prioritizationStrategy) {
         return tx(session -> {
             CostTypePrioritizer<TimestampingService> sorter =
                     new CostTypePrioritizer<>(getConf(session).getTimestampingServices());
-            SystemProperties.ServicePrioritizationStrategy prioritizationStrategy =
-                    SystemProperties.getTimestampingPrioritizationStrategy();
             log.debug("Timestamping urls will be sorted based on prioritization strategy: {}", prioritizationStrategy);
             return sorter.prioritize(prioritizationStrategy);
         });
@@ -421,7 +430,7 @@ public class ServerConfImpl implements ServerConfProvider {
     @Override
     public boolean isAvailable() {
         try {
-            return doInTransaction(SharedSessionContract::isConnected);
+            return serverConfDatabaseCtx.doInTransaction(SharedSessionContract::isConnected);
         } catch (Exception e) {
             log.warn("Unable to check Serverconf availability", e);
             return false;
@@ -501,7 +510,7 @@ public class ServerConfImpl implements ServerConfProvider {
         if (serviceOwner == null) {
             // should not normally happen, but possible if service and acl caches are in inconsistent state
             // (see CachingServerConfImpl))
-            throw new CodedException(X_UNKNOWN_SERVICE, "Service '%s' owner not found", serviceId);
+            throw XrdRuntimeException.systemException(UNKNOWN_SERVICE, "Service '%s' owner not found", serviceId);
         }
 
         final ClientIdEntity localClientId = identifierDao.findClientId(session, clientId);
@@ -558,7 +567,7 @@ public class ServerConfImpl implements ServerConfProvider {
      */
     protected <T> T tx(TransactionCallback<T> t) {
         try {
-            return doInTransaction(t);
+            return serverConfDatabaseCtx.doInTransaction(t);
         } catch (Exception e) {
             throw translateException(e);
         }

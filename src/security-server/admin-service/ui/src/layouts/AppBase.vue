@@ -1,5 +1,6 @@
 <!--
    The MIT License
+
    Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
    Copyright (c) 2018 Estonian Information System Authority (RIA),
    Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
@@ -25,35 +26,32 @@
  -->
 
 <template>
-  <xrd-app-base>
-    <template #top>
-      <router-view name="top" />
-    </template>
-    <template #subTabs>
-      <router-view name="subTabs" />
-    </template>
-    <template #alerts>
-      <router-view name="alerts" />
-    </template>
-    <router-view />
-  </xrd-app-base>
+  <AppToolbar />
+  <router-view name="navigation" />
+
+  <v-main class="bg-surface pr-10 pb-8">
+    <AlertsContainer />
+    <div class="mb-6 pa-0 mr-auto">
+      <router-view />
+    </div>
+    <router-view name="footer" />
+  </v-main>
 </template>
 
 <script lang="ts" setup>
 import { useAlerts } from '@/store/modules/alerts';
 import { useUser } from '@/store/modules/user';
-import { XrdAppBase } from '@niis/shared-ui';
 
+import AlertsContainer from '@/components/ui/AlertsContainer.vue';
+import AppToolbar from '@/layouts/AppToolbar.vue';
+import { POLL_SESSION_TIMEOUT, useAppState } from "@niis/shared-ui";
+
+const { isSessionAlive } = useAppState();
 const userStore = useUser();
 const { checkAlertStatus } = useAlerts();
 
 // Set interval to poll backend for session
-const sessionPollInterval = window.setInterval(
-  () => pollSessionStatus(),
-  30000,
-);
-// Poll immediately to get initial alerts state
-checkAlertStatus();
+pollSessionStatus();
 
 async function pollSessionStatus() {
   return userStore
@@ -63,8 +61,8 @@ async function pollSessionStatus() {
       checkAlertStatus();
     })
     .finally(() => {
-      if (!userStore.sessionAlive) {
-        clearInterval(sessionPollInterval);
+      if (isSessionAlive()) {
+        window.setTimeout(pollSessionStatus, POLL_SESSION_TIMEOUT)
       }
     });
 }

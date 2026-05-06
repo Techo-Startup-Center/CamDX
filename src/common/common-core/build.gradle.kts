@@ -10,8 +10,7 @@ plugins {
 dependencies {
   api(platform(libs.jackson.bom))
 
-  api("com.fasterxml.jackson.core:jackson-databind")
-  api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
+  api("tools.jackson.core:jackson-databind")
 
   api(libs.jclOverSlf4j)
   api(libs.apache.xmlsec)
@@ -34,6 +33,7 @@ dependencies {
   api(libs.opentelemetry.instrumentation.annotations)
 
   testImplementation(project(":common:common-test"))
+  testImplementation(libs.logback.classic)
 }
 
 fun gitCommitHash(): String? {
@@ -65,7 +65,7 @@ fun gitCommitDate(): String? {
 }
 
 tasks.processResources {
-  filesMatching("**/version.properties") {
+  filesMatching("**/xroad-version.properties") {
     filter(
       mapOf(
         "tokens" to mapOf(

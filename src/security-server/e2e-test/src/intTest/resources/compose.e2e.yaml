@@ -1,0 +1,7 @@
+services:
+  proxy:
+    environment:
+      - XROAD_PROXY_MESSAGE_LOG_TIMESTAMPER_TIMESTAMP_IMMEDIATELY=true
+  db-messagelog:
+    ports:
+      - "0:5432"

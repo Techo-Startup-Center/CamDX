@@ -32,7 +32,7 @@ import org.eclipse.jetty.server.handler.ErrorHandler;
 import org.niis.xroad.common.api.throttle.IpThrottlingFilter;
 import org.niis.xroad.cs.management.core.configuration.ManagementServiceProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory;
+import org.springframework.boot.jetty.servlet.JettyServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -64,7 +64,7 @@ class WebServerCustomizer implements WebServerFactoryCustomizer<JettyServletWebS
         var filter = new IpThrottlingFilter(properties);
         var bean = new FilterRegistrationBean<>(filter);
         bean.setOrder(Ordered.HIGHEST_PRECEDENCE + 1);
-        bean.addUrlPatterns("/managementservice/*");
+        bean.addUrlPatterns("/*");
         return bean;
     }
 }

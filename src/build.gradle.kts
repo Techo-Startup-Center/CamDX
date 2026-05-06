@@ -1,5 +1,6 @@
 plugins {
   alias(libs.plugins.sonarqube)
+  alias(libs.plugins.owaspDependencyCheck)
   id("jacoco-report-aggregation")
   id("java")
 }
@@ -18,7 +19,7 @@ sonarqube {
     property("sonar.exclusions", "**/build/generated-sources/**")
     property(
       "sonar.coverage.jacoco.xmlReportPaths",
-      "${rootProject.layout.buildDirectory.get().asFile}/reports/jacoco/testCodeCoverageReport/testCodeCoverageReport.xml"
+      "${rootProject.layout.buildDirectory.get().asFile}/reports/jacoco/jacocoAggregatedReport/jacocoAggregatedReport.xml"
     )
 
     property("sonar.issue.ignore.multicriteria", "e1")
@@ -36,6 +37,20 @@ dependencies {
   subprojects {
     pluginManager.withPlugin("java") {
       jacocoAggregation(project)
+    }
+  }
+}
+
+allprojects {
+
+  configurations.all {
+    resolutionStrategy {
+      eachDependency {
+        if (requested.group == "jakarta.xml.bind" && requested.name == "jakarta.xml.bind-api") {
+          useVersion("4.0.2")
+          because("newer version will fail decoding base64 strings with white space. https://github.com/jakartaee/jaxb-api/issues/325")
+        }
+      }
     }
   }
 }
@@ -93,6 +108,26 @@ tasks.named("assemble") {
 }
 
 tasks.named("sonar") {
-  dependsOn("testCodeCoverageReport")
+  dependsOn(tasks.named("jacocoAggregatedReport"))
   onlyIf { System.getenv("SONAR_TOKEN") != null }
+}
+
+dependencyCheck {
+  formats = listOf("HTML", "JSON")
+  failBuildOnCVSS = 11f // Never fail the build (max CVSS is 10.0) — report only
+  suppressionFile = "config/owasp/suppressions.xml"
+  autoUpdate = (project.findProperty("nvdAutoUpdate")?.toString() ?: "true").toBoolean()
+
+  nvd.apiKey = System.getenv("NVD_API_KEY") ?: ""
+
+  analyzers.ossIndex.enabled = false
+  analyzers.nodeAudit.enabled = false
+  analyzers.nodeAudit.pnpmEnabled = false
+  analyzers.assemblyEnabled = false
+}
+
+tasks.register("dependencyAuditBackend") {
+  description = "Runs OWASP dependency-check on backend dependencies."
+  group = "verification"
+  dependsOn("dependencyCheckAnalyze")
 }

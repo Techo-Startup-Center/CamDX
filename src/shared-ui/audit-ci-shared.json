@@ -2,6 +2,6 @@
   "high": true,
   "skip-dev": false,
   "package-manager": "auto",
-  "allowlist": [
-  ]
+  "output-format": "json",
+  "allowlist": []
 }
