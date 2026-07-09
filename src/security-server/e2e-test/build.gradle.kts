@@ -8,11 +8,14 @@ plugins {
 dependencies {
   intTestImplementation(project(":tool:test-framework-core"))
   intTestImplementation(libs.test.restassured)
-  intTestImplementation(libs.postgresql)
   intTestImplementation(project(":lib:asic-core"))
   intTestImplementation(project(":common:common-test"))
+  intTestImplementation(project(":common:common-message"))
   intTestImplementation(project(":lib:globalconf-impl"))
   intTestImplementation(project(":lib:vault-core"))
+  intTestImplementation(project(":service:op-monitor:op-monitor-core")) {
+    exclude(group = "org.jboss.slf4j", module = "slf4j-jboss-logmanager")
+  }
 }
 
 intTestComposeEnv {
@@ -35,7 +38,6 @@ intTestComposeEnv {
     "CA_IMG" to "testca-dev",
     "MESSAGE_LOG_ARCHIVER_IMG" to "ss-message-log-archiver",
     "DS_CONTROL_PLANE_IMG" to "ds-control-plane",
-    "DS_DATA_PLANE_IMG" to "ds-data-plane",
     "DS_IDENTITY_HUB_IMG" to "ds-identity-hub",
     "DS_ISSUER_SERVICE_IMG" to "ds-issuer-service"
   )

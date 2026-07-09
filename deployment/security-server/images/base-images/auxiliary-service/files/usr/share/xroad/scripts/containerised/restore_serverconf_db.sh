@@ -124,18 +124,7 @@ if [ -n "$KUBERNETES_SERVICE_HOST" ] || [ -f /var/run/secrets/kubernetes.io/serv
               - name: PROP_DB_USER
                 value: "${db_user}"
 EOF
-
-  if [[ "$SERVERCONF_INITIALIZED_WITH_PROXY_UI_SUPERUSER" == "true" ]]; then
-    cat <<EOF
-              - name: PROP_PROXY_UI_SUPERUSER
-                value: "${PROXY_UI_SUPERUSER}"
-              - name: PROP_PROXY_UI_SUPERUSER_PASSWORD
-                valueFrom:
-                  secretKeyRef:
-                    name: serverconf-db-init-secret
-                    key: proxy_ui_superuser_password
-EOF
-  fi) | kubectl apply -f -
+) | kubectl apply -f -
 
   if [ $? -ne 0 ]; then
     abort "Failed to trigger Liquibase migration job."
@@ -148,6 +137,16 @@ EOF
 
   echo "Liquibase migration completed successfully."
 else
-  echo "Unsupported environment for Liquibase migration. Liquibase migration will not be run."
+  echo "Re-applying serverconf grants for non-Kubernetes containerized deployment..."
+  { cat <<EOF
+GRANT USAGE ON SCHEMA "$db_schema" TO "$db_user";
+GRANT SELECT,UPDATE,INSERT,DELETE ON ALL TABLES IN SCHEMA "$db_schema" TO "$db_user";
+GRANT SELECT,USAGE ON ALL SEQUENCES IN SCHEMA "$db_schema" TO "$db_user";
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA "$db_schema" TO "$db_user";
+REVOKE INSERT,UPDATE,DELETE ON databasechangelog, databasechangeloglock FROM "$db_user";
+REVOKE UPDATE,DELETE ON history FROM "$db_user";
+EOF
+  } | psql_adminuser || abort "Restoring database failed. Could not re-apply serverconf grants."
+  echo "Serverconf grants re-applied successfully."
 fi
 

@@ -21,7 +21,7 @@ function builddeb {
 
     pushd "$(pwd)"
     cd "$root/$dist"
-    cp ../generic/* debian/
+    cp -n ../generic/* debian/
     version="$(dpkg-parsechangelog -l../generic/changelog | sed -n -e 's/^Version: //p')"
     compat="$(cat debian/compat)"
     sed -i "s/\${debhelper-version}/$compat/" debian/control
@@ -87,9 +87,6 @@ function prepare {
 DIR="$(cd "$(dirname $0)" && pwd)"
 cd "$DIR"
 
-mkdir -p build/xroad
-cp -a src/xroad/ubuntu build/xroad/
-
 # version was not given, use empty
 if [ -z "$2" ]; then
   readonly PACKAGE_VERSION="$(date --utc --date @`git show -s --format=%ct` +'%Y%m%d%H%M%S')$(git show -s --format=git%h --abbrev=7)"
@@ -98,16 +95,24 @@ else
 fi
 
 case "$1" in
-    jammy)
-        prepare ubuntu22.04
-        builddeb build/xroad/ubuntu jammy ubuntu22.04 "$PACKAGE_VERSION"
-        ;;
     noble)
-        prepare ubuntu24.04
-        builddeb build/xroad/ubuntu noble ubuntu24.04 "$PACKAGE_VERSION"
+        DIST=noble
+        SUFFIX=ubuntu24.04
+        ;;
+    resolute)
+        DIST=resolute
+        SUFFIX=ubuntu26.04
         ;;
     *)
-        echo "Unsupported distribution $dist"
+        echo "Unsupported distribution $1"
         exit 1;
         ;;
 esac
+
+UBUNTU_BUILD="build/xroad/ubuntu-${DIST}"
+mkdir -p build/xroad
+rm -rf "$UBUNTU_BUILD"
+cp -a src/xroad/ubuntu "$UBUNTU_BUILD"
+
+prepare "$SUFFIX"
+builddeb "$UBUNTU_BUILD" "$DIST" "$SUFFIX" "$PACKAGE_VERSION"

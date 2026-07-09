@@ -109,7 +109,7 @@ is_sealed() {
   done
   if [ $attempt -eq $max_attempts ]; then
     echo "[OPENBAO] Failed to check seal status after $max_attempts attempts" >&2
-    exit 1
+    return 2
   fi
   echo "$status" | jq -e '.sealed == true' >/dev/null
 }
@@ -188,11 +188,22 @@ path "xrd-secret/message-log/database-encryption/keys/*" {
 path "xrd-secret/signer/token-pins/*" {
   capabilities = ["read", "list", "create", "update", "delete"]
 }
-path "xrd-secret/ds/*" {
-  capabilities = ["read", "list", "create", "update", "delete"]
-}
 
 path "xrd-secret" {
+  capabilities = ["list"]
+}
+
+# KV v2 paths for EDC-based services (ds-*).
+path "xrd-ds-secret/data/ds/*" {
+  capabilities = ["read", "list", "create", "update"]
+}
+path "xrd-ds-secret/metadata/ds/*" {
+  capabilities = ["read", "list", "delete"]
+}
+path "xrd-ds-secret/delete/ds/*" {
+  capabilities = ["update"]
+}
+path "xrd-ds-secret" {
   capabilities = ["list"]
 }
 path "sys/internal/ui/mounts/*" {
@@ -210,12 +221,31 @@ EOF
   return 0
 }
 
+mount_if_missing() {
+  local addr="$1"
+  local token="$2"
+  local mount="$3"
+  local payload="$4"
+  local label="$5"
+
+  if curl -s -k -H "X-Vault-Token: $token" "$addr/v1/sys/mounts" | \
+       jq -e --arg m "${mount}/" 'has($m)' >/dev/null; then
+    echo "[OPENBAO] Mount ${mount}/ already exists; skipping ${label}"
+    return 0
+  fi
+  bao_api "POST" "$addr" "/v1/sys/mounts/${mount}" \
+    "$payload" "$token" "Enabling ${label} (${mount})"
+}
+
 configure_kv() {
   local addr="${1:-$BAO_ADDR}"
   local token="${2:-$BAO_TOKEN}"
 
-  bao_api "POST" "$addr" "/v1/sys/mounts/xrd-secret" \
-    '{"type": "kv"}' "$token" "Enabling KV secrets engine" || return 1
+  mount_if_missing "$addr" "$token" "xrd-secret" \
+    '{"type": "kv"}' "KV v1 secrets engine" || return 1
+
+  mount_if_missing "$addr" "$token" "xrd-ds-secret" \
+    '{"type": "kv-v2"}' "KV v2 secrets engine" || return 1
 
   echo "[OPENBAO] KV configuration completed"
   return 0
@@ -225,14 +255,28 @@ create_token() {
   local addr="${1:-$BAO_ADDR}"
   local token="${2:-$BAO_TOKEN}"
   local policy="${3:-xroad-policy}"
-  local ttl="${4:-0}" # 0 means use default TTL
+  # ttl="0" creates a periodic token (renewable indefinitely while the client
+  # renews within the period); any other value is a fixed TTL.
+  local ttl="${4:-0}"
   local display_name="${5:-xroad-client}"
   local token_id="${6:-}" # Optional: custom token ID
 
   echo "[OPENBAO] Creating new token with policy: $policy" >&2
 
-  # Build JSON payload with optional id field
-  local payload_json="{\"policies\":[\"$policy\"], \"ttl\":\"${ttl}\", \"display_name\":\"${display_name}\"}"
+  local payload_json
+  if [ "$ttl" = "0" ]; then
+    payload_json=$(jq -n \
+      --arg policy "$policy" \
+      --arg display_name "$display_name" \
+      '{policies:[$policy], period:"768h", renewable:true, display_name:$display_name}')
+  else
+    payload_json=$(jq -n \
+      --arg policy "$policy" \
+      --arg display_name "$display_name" \
+      --arg ttl "$ttl" \
+      '{policies:[$policy], ttl:$ttl, renewable:true, display_name:$display_name}')
+  fi
+
   if [ -n "$token_id" ]; then
     payload_json=$(echo "$payload_json" | jq --arg id "$token_id" '. + {id: $id}')
     echo "[OPENBAO] Using custom token ID: $token_id" >&2

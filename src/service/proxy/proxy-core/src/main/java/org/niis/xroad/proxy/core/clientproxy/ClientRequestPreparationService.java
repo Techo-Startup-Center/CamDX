@@ -37,7 +37,6 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.http.client.protocol.HttpClientContext;
-import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.opmonitor.api.OpMonitoringData;
 import org.niis.xroad.proxy.core.configuration.ProxyProperties;
 import org.niis.xroad.proxy.core.service.ServiceAddressResolver;
@@ -54,6 +53,7 @@ import static ee.ria.xroad.common.util.MimeUtils.HEADER_HASH_ALGO_ID;
 import static ee.ria.xroad.common.util.MimeUtils.HEADER_ORIGINAL_CONTENT_TYPE;
 import static ee.ria.xroad.common.util.MimeUtils.HEADER_ORIGINAL_SOAP_ACTION;
 import static ee.ria.xroad.common.util.MimeUtils.HEADER_PROXY_VERSION;
+import static org.niis.xroad.proxy.core.clientproxy.FastestConnectionSelectingSSLSocketFactory.ID_SELECTED_TARGET;
 import static org.niis.xroad.proxy.core.clientproxy.FastestConnectionSelectingSSLSocketFactory.ID_TARGETS;
 
 /**
@@ -71,6 +71,7 @@ public class ClientRequestPreparationService {
     private final ServiceAddressResolver serviceAddressResolver;
     private final ProxyProperties proxyProperties;
     private final OpMonitoringDataHelper opMonitoringDataHelper;
+    private final UnusableAddressTracker unusableAddressTracker;
 
     @Getter
     private URI dummyServiceAddress;
@@ -85,12 +86,27 @@ public class ClientRequestPreparationService {
         }
     }
 
+    public void recordServiceSecurityServerAddress(ServiceId requestServiceId,
+                                                   SecurityServerId securityServerId,
+                                                   ProxyRequestContext ctx,
+                                                   OpMonitoringData opMonitoringData) {
+        if (opMonitoringData == null) {
+            return;
+        }
+        try {
+            var candidates = serviceAddressResolver.resolve(requestServiceId, securityServerId, ctx);
+            if (!candidates.isEmpty()) {
+                opMonitoringData.setServiceSecurityServerAddress(candidates.getFirst().getHost());
+            }
+        } catch (RuntimeException e) {
+            log.debug("Failed to resolve service security server address for op-monitoring", e);
+        }
+    }
+
     /**
-     * Prepares an {@link HttpSender} for a client proxy request: resolves target addresses,
-     * sets SSL attributes, connection pool user token, timeouts, and common request headers.
-     *
-     * <p>When {@code originalSoapAction} is non-null (SOAP path), the
-     * {@code HEADER_ORIGINAL_SOAP_ACTION} header is also added.
+     * Prepares an {@link HttpSender} for a client proxy request using legacy target resolution:
+     * resolves provider security-server addresses from global configuration, then sets SSL
+     * attributes, connection pool user token, timeouts, and common request headers.
      *
      * @param httpSender         the HTTP sender to configure
      * @param requestServiceId   the service identifier for the outgoing request
@@ -99,19 +115,44 @@ public class ClientRequestPreparationService {
      * @param opMonitoringData   operational monitoring data to update, or null if not collected
      * @param originalSoapAction the original SOAP action header value (SOAP path only), or null for REST
      * @return the resolved array of target URIs
-     * @throws XrdRuntimeException if no addresses can be resolved
      */
     public URI[] prepareRequest(HttpSender httpSender, ServiceId requestServiceId,
                                 SecurityServerId securityServerId, ProxyRequestContext ctx,
                                 OpMonitoringData opMonitoringData,
                                 @Nullable String originalSoapAction) {
+        var tmp = serviceAddressResolver.resolve(requestServiceId, securityServerId, ctx);
+        Collections.shuffle(tmp);
+        return configureSender(httpSender, requestServiceId, tmp.toArray(new URI[0]),
+                ctx, opMonitoringData, originalSoapAction);
+    }
+
+    /**
+     * Prepares an {@link HttpSender} for a client proxy request targeting the DSP-negotiated
+     * data-plane endpoint, then sets SSL attributes, connection pool user token, timeouts, and
+     * common request headers.
+     *
+     * @param httpSender         the HTTP sender to configure
+     * @param requestServiceId   the service identifier for the outgoing request
+     * @param dataPlaneEndpoint  the DSP-negotiated endpoint to send the request to
+     * @param ctx                the per-request proxy context
+     * @param opMonitoringData   operational monitoring data to update, or null if not collected
+     * @param originalSoapAction the original SOAP action header value (SOAP path only), or null for REST
+     * @return the single-element array holding the data-plane endpoint
+     */
+    public URI[] prepareRequest(HttpSender httpSender, ServiceId requestServiceId,
+                                URI dataPlaneEndpoint, ProxyRequestContext ctx,
+                                OpMonitoringData opMonitoringData,
+                                @Nullable String originalSoapAction) {
+        return configureSender(httpSender, requestServiceId, new URI[]{dataPlaneEndpoint},
+                ctx, opMonitoringData, originalSoapAction);
+    }
+
+    private URI[] configureSender(HttpSender httpSender, ServiceId requestServiceId, URI[] addresses,
+                                  ProxyRequestContext ctx, OpMonitoringData opMonitoringData,
+                                  @Nullable String originalSoapAction) {
         if (proxyProperties.sslEnabled()) {
             httpSender.setAttribute(AuthTrustVerifier.ID_PROVIDERNAME, requestServiceId);
         }
-
-        var tmp = serviceAddressResolver.resolve(requestServiceId, securityServerId, ctx);
-        Collections.shuffle(tmp);
-        URI[] addresses = tmp.toArray(new URI[0]);
 
         opMonitoringDataHelper.updateOpMonitoringServiceSecurityServerAddress(addresses, httpSender, opMonitoringData);
 
@@ -133,5 +174,58 @@ public class ClientRequestPreparationService {
         }
 
         return addresses;
+    }
+
+    /**
+     * Marks the selected target address as unusable if the given exception was caused by a TLS
+     * handshake failure. Covers handshake failures that surface only during request execution
+     * (e.g. a TLS 1.3 server proxy rejecting the client certificate after the handshake completed).
+     *
+     * <p>Marking is skipped when only one address was resolved: the failure cooldown exists to
+     * steer selection and retry towards alternative security servers, and with a single address
+     * it would instead fail fast all traffic to the provider for the cooldown period, turning a
+     * transient handshake failure into a self-inflicted outage.
+     *
+     * @param httpSender the HTTP sender whose request failed
+     * @param exception  the failure to inspect for a TLS handshake error
+     */
+    public void markAddressUnusableIfHandshakeFailure(HttpSender httpSender, Throwable exception) {
+        if (UnusableAddressTracker.isHandshakeFailure(exception)
+                && httpSender.getAttribute(ID_TARGETS) instanceof URI[] targets
+                && targets.length > 1
+                && httpSender.getAttribute(ID_SELECTED_TARGET) instanceof URI selectedTarget) {
+            unusableAddressTracker.markUnusable(selectedTarget);
+        }
+    }
+
+    /**
+     * Tells whether any of the given target addresses is currently usable, i.e. not within the
+     * TLS handshake failure cooldown period.
+     *
+     * @param addresses candidate target addresses
+     * @return true if at least one address is usable
+     */
+    public boolean hasUsableAddresses(URI[] addresses) {
+        return unusableAddressTracker.filterUsable(addresses).length > 0;
+    }
+
+    /**
+     * Tells whether a failed send attempt may be retried towards another security server: only
+     * TLS handshake failures qualify, the attempt count is capped at the number of resolved
+     * addresses (so each available security server is tried at most once even when failure
+     * cooldown tracking is disabled), and at least one address must remain outside the failure
+     * cooldown. Anything else propagates to the caller unchanged.
+     *
+     * @param exception the failure to inspect
+     * @param targets   the resolved target addresses of the failed attempt (the ID_TARGETS
+     *                  attribute of the failed sender), or null if address resolution never ran
+     * @param attempt   the number of the failed attempt, starting from 1
+     * @return true if a retry attempt may be made
+     */
+    public boolean shouldRetry(Throwable exception, Object targets, int attempt) {
+        return UnusableAddressTracker.isHandshakeFailure(exception)
+                && targets instanceof URI[] addresses
+                && attempt < addresses.length
+                && hasUsableAddresses(addresses);
     }
 }

@@ -27,8 +27,11 @@ package org.niis.xroad.confclient.common.service;
 
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
+import org.niis.xroad.common.core.exception.ErrorCode;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.confclient.common.domain.ConfigurationFile;
 import org.niis.xroad.globalconf.model.ConfigurationConstants;
+import org.niis.xroad.globalconf.model.ConfigurationDirectory;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -50,19 +53,70 @@ public class FileNameProviderImpl implements FileNameProvider {
         String fileName = switch (file.getContentIdentifier()) {
             case ConfigurationConstants.CONTENT_ID_PRIVATE_PARAMETERS -> FILE_NAME_PRIVATE_PARAMETERS;
             case ConfigurationConstants.CONTENT_ID_SHARED_PARAMETERS -> FILE_NAME_SHARED_PARAMETERS;
-            default -> Paths.get(
-                    !StringUtils.isBlank(file.getContentFileName())
-                            ? file.getContentFileName()
-                            : file.getContentLocation()).getFileName().toString();
+            default -> resolveContentFileName(file);
         };
 
-        return Paths.get(globalConfigurationDirectory,
-                escapeInstanceIdentifier(file.getInstanceIdentifier()),
-                fileName);
+        Path instanceDirectory = resolveInstanceDirectory(file.getInstanceIdentifier(), file);
+        return resolveWithinInstanceDirectory(instanceDirectory, fileName);
     }
 
     @Override
     public Path getConfigurationDirectory(String instanceIdentifier) {
-        return Paths.get(globalConfigurationDirectory, escapeInstanceIdentifier(instanceIdentifier));
+        return resolveInstanceDirectory(instanceIdentifier, null);
+    }
+
+    /**
+     * Resolves the instance subdirectory, rejecting any instance identifier that is blank or
+     * escapes/collapses onto the global configuration root (e.g. {@code null}, {@code ""}, {@code "."}).
+     */
+    private Path resolveInstanceDirectory(String instanceIdentifier, ConfigurationFile file) {
+        String escapedInstance = StringUtils.isBlank(instanceIdentifier)
+                ? ""
+                : escapeInstanceIdentifier(instanceIdentifier);
+        Path root = Paths.get(globalConfigurationDirectory).normalize();
+        Path resolved = StringUtils.isBlank(escapedInstance)
+                ? root
+                : Paths.get(globalConfigurationDirectory, escapedInstance).normalize();
+        if (resolved.equals(root) || !resolved.startsWith(root)) {
+            throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_PART_BLANK_INSTANCE_IDENTIFIER)
+                    .details((file != null
+                            ? "Configuration part %s has a blank or invalid instance identifier".formatted(file)
+                            : "Cannot resolve configuration directory for instance identifier '%s'".formatted(instanceIdentifier)))
+                    .metadataItems(file != null ? file.getContentLocation() : instanceIdentifier)
+                    .build();
+        }
+        return resolved;
+    }
+
+    private String resolveContentFileName(ConfigurationFile file) {
+        String source = !StringUtils.isBlank(file.getContentFileName())
+                ? file.getContentFileName()
+                : file.getContentLocation();
+        Path name = Paths.get(source).getFileName();
+        String fileName = name != null ? name.toString() : "";
+        if (StringUtils.isBlank(fileName) || ".".equals(fileName) || "..".equals(fileName)) {
+            throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_HEADER_FIELD_WRONG_VALUE)
+                    .details("Configuration part %s declares an invalid file name derived from %s".formatted(file, source))
+                    .metadataItems(file.getContentLocation())
+                    .build();
+        }
+        if (ConfigurationDirectory.isReservedFileName(fileName)) {
+            throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_PART_RESERVED_FILE_NAME)
+                    .details("Configuration part %s resolves to reserved file name %s".formatted(file, fileName))
+                    .metadataItems(file.getContentLocation())
+                    .build();
+        }
+        return fileName;
+    }
+
+    private Path resolveWithinInstanceDirectory(Path instanceDirectory, String fileName) {
+        Path resolved = instanceDirectory.resolve(fileName).normalize();
+        if (!resolved.startsWith(instanceDirectory) || resolved.equals(instanceDirectory)) {
+            throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_PART_INVALID_INSTANCE_IDENTIFIER)
+                    .details("Resolved configuration path %s escapes instance directory %s"
+                            .formatted(resolved, instanceDirectory))
+                    .build();
+        }
+        return resolved;
     }
 }

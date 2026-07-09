@@ -215,6 +215,7 @@ Update package repository metadata:
 ```bash
 sudo apt update
 ```
+
 ### 2.6 Security Server Installation
 
 Issue the following command to install the Security Server packages:

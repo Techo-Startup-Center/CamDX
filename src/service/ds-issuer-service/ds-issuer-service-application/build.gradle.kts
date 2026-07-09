@@ -17,5 +17,11 @@ dependencies {
 
   runtimeOnly(libs.edc.core.sql.bootstrapper)
 
+  runtimeOnly(libs.edc.vault.hashicorp)
+
+  runtimeOnly(project(":lib:rpc-quarkus"))
+  implementation(project(":lib:globalconf-core"))
+
   runtimeOnly(project(":service:ds-identity-hub:ds-identity-hub-customization"))
+  runtimeOnly(project(":service:ds-issuer-service:ds-issuer-service-customization"))
 }

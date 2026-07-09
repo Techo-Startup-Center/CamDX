@@ -18,6 +18,12 @@
       - locales
       - aptitude
       - software-properties-common
+      - postgresql-common
+
+- name: Configure PostgreSQL PGDG apt repository
+  command: /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+  args:
+    creates: /etc/apt/sources.list.d/pgdg.list
 
 - name: Disable automatic upgrades
   copy:

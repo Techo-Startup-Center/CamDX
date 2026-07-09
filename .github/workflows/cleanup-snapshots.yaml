@@ -53,7 +53,6 @@ jobs:
           - x-road/ss-proxy-ui-api
           # Data space service images
           - x-road/ds-control-plane
-          - x-road/ds-data-plane
           - x-road/ds-identity-hub
           # Database initialization images
           - x-road/ss-db-init
@@ -67,13 +66,13 @@ jobs:
           - x-road/central-server-dev
           # Package builder images
     # TODO: these require different behaviour as they're rarely updated.
-    #          - x-road/package-builder-deb-jammy
     #          - x-road/package-builder-deb-noble
+    #          - x-road/package-builder-deb-resolute
     #          - x-road/package-builder-rpm-el8
     #          - x-road/package-builder-rpm-el9
     steps:
       - name: Cleanup old snapshot images (${{ matrix.package }})
-        uses: dataaxiom/ghcr-cleanup-action@cd0cdb900b5dbf3a6f2cc869f0dbb0b8211f50c4 # v1
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1
         with:
           package: ${{ matrix.package }}
           owner: ${{ github.repository_owner }}

@@ -51,7 +51,6 @@ dependencies {
   implementation(libs.springBoot.starterCache)
   implementation(libs.springBoot.starterMail)
   implementation(libs.springBoot.starterValidation)
-  implementation("io.micrometer:micrometer-tracing-bridge-brave")
   implementation(libs.acme4j)
   implementation(libs.libpam4j)
   implementation(libs.apache.commonsCompress)
@@ -79,6 +78,7 @@ dependencies {
   testImplementation(libs.jsonUnit.assertj)
   testImplementation("org.springframework.cloud:spring-cloud-contract-wiremock")
   testImplementation(testFixtures(project(":common:common-api-throttling")))
+  testImplementation(libs.systemStubs)
   testRuntimeOnly(libs.junit.vintageEngine)
 }
 

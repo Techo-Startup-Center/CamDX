@@ -45,10 +45,12 @@ dependencies {
 
   implementation(libs.springBoot.starterJetty)
   implementation(libs.springBoot.starterSecurity)
+  implementation(project(":common:common-db"))
   implementation(project(":lib:properties-spring"))
   implementation(libs.jakarta.validationApi)
   implementation(libs.bucket4j.core)
   implementation(libs.logback.classic)
+  implementation(libs.resilience4j.retry)
 
   testImplementation(project(":common:common-test"))
   testImplementation(testFixtures(project(":common:common-management-request")))

@@ -14,9 +14,14 @@ argument_specs:
       serverconf_init_image: {type: str, required: false}
       jvm_metrics_enabled: {type: bool, default: false}
       openbao_tls_secret_name: {type: str, default: openbao-server-tls}
-      proxy_ui_superuser: {type: str, default: xrd}
-      proxy_ui_superuser_password: {type: str, required: true}
       configuration_client_update_interval: {type: str, default: "10"}
+      proxy_dsp_enabled: {type: bool, default: true}
+      ss2_advertised_host: {type: str, required: false}
+      trusted_issuer_host: {type: str, default: xrd-cs}
+      xrd_ca_external_host: {type: str, default: xrd-ca.lxd}
       serverconf_db: {type: dict, required: true}
       messagelog_db: {type: dict, required: true}
       opmonitor_db: {type: dict, required: true}
+      ds_control_plane_db: {type: dict, required: true}
+      ds_identity_hub_db: {type: dict, required: true}
+      ds_issuer_service_db: {type: dict, required: true}

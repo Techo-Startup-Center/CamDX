@@ -33,6 +33,7 @@ import io.smallrye.config.WithName;
 import org.niis.xroad.proxy.core.addon.opmonitoring.OpMonitorBufferProperties;
 import org.niis.xroad.proxy.core.addon.opmonitoring.OpMonitorConnectionProperties;
 
+import java.time.Duration;
 import java.util.Optional;
 
 import static org.niis.xroad.common.properties.DefaultTlsProperties.DEFAULT_PROXY_CLIENT_SSL_CIPHER_SUITES_STRING;
@@ -56,30 +57,36 @@ public interface ProxyProperties {
     @WithDefault("true")
     boolean sslEnabled();
 
+    @WithName("dsp-enabled")
+    @WithDefault("true")
+    boolean dspEnabled();
+
     @WithName("health-check-enabled")
     @WithDefault("false")
     boolean healthCheckEnabled();
 
     @WithName("health-check-port")
     @WithDefault("5588")
+    // referenced in application.yaml
     @SuppressWarnings("unused")
-        // referenced in application.yaml
     int healthCheckPort();
 
     @WithName("health-check-interface")
     @WithDefault("0.0.0.0")
+    // referenced in application.yaml
     @SuppressWarnings("unused")
-        // referenced in application.yaml
     String healthCheckInterface();
 
     @WithName("hsm-health-check-enabled")
     @WithDefault("false")
+    // referenced in application.yaml
     @SuppressWarnings("unused")
-        // referenced in application.yaml
     boolean hsmHealthCheckEnabled();
 
     @WithName("memory-usage-threshold")
-    Optional<Long> memoryUsageThreshold();
+    // referenced in application.yaml
+    @SuppressWarnings("unused")
+    Optional<Integer> memoryUsageThreshold();
 
     @WithName("message-sign-digest-name")
     @WithDefault("SHA-512")
@@ -175,6 +182,10 @@ public interface ProxyProperties {
         @WithDefault("3600")
         int clientProxyFastestConnectingSslUriCachePeriod();
 
+        @WithName("fastest-connecting-ssl-uri-unusable-period")
+        @WithDefault("180s")
+        Duration clientProxyFastestConnectingSslUriUnusablePeriod();
+
         @WithName("use-fastest-connecting-ssl-socket-autoclose")
         @WithDefault("true")
         boolean useSslSocketAutoClose();
@@ -190,6 +201,10 @@ public interface ProxyProperties {
         @WithName("pool-enable-connection-reuse")
         @WithDefault("false")
         boolean poolEnableConnectionReuse();
+
+        @WithName("enable-request-retry")
+        @WithDefault("true")
+        boolean enableRequestRetry();
     }
 
     @ConfigMapping(prefix = "xroad.proxy.server")
