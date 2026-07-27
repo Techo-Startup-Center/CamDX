@@ -390,6 +390,7 @@
       "http_challenge_file_creation": "ACME HTTP pretensioonifaili loomine ebaõnnestus",
       "http_challenge_file_deletion": "ACME HTTP pretensioonifaili kustutamine ebaõnnestus",
       "http_challenge_missing": "Praegu toetab X-Road tarkvara ainult HTTP pretensiooni, kuid see puudub ACME serveri võimalikes valikutes",
+      "http_challenge_token_invalid": "ACME server tagastas kehtetu HTTP pretensiooni tunnusmärgi",
       "order_creation_failure": "Uue tellimuse loomine ACME serveris ebaõnnestus",
       "order_finalization_failure": "Tellimuse lõpule viimine ACME serveris ebaõnnestus"
     },
@@ -1317,6 +1318,8 @@
               "script-path": "Tee käsitsi varukoopia skriptile.",
               "restore-script-path": "Tee varukoopia taastamise skriptile.",
               "generate-gpg-keypair-path": "Tee skriptile, mis genereerib GPG võtmepaari varukoopia krüptimiseks.",
+              "create-backup-metadata-path": "Tee skriptile, mis analüüsib üleslaaditud varukoopia tar-sildi ja kirjutab selle \".metadata\" faili.",
+              "backup-format-version-file-path": "Tee failile, mis sisaldab varukoopia praegust vorminguversiooni, mida kasutatakse varukoopia ühilduvuse määramiseks.",
               "gpgkeys-home": "Kaust, mida kasutatakse GNUPGHOME-na varukoopia GPG operatsioonide jaoks.",
               "encryption-enabled": "Kui lubatud, krüpteeritakse varukoopiate arhiivid GPG-ga.",
               "encryption-keyids": "Komaga eraldatud GPG võtmete ID-d, mida kasutatakse varukoopiate arhiivide krüptimiseks."

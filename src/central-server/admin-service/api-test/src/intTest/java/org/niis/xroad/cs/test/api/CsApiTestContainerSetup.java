@@ -38,7 +38,8 @@ import static org.testcontainers.containers.wait.strategy.Wait.forListeningPort;
 import static org.testcontainers.containers.wait.strategy.Wait.forLogMessage;
 
 /**
- * Browserless Central Server test stack: CS admin service (with embedded postgres) + mock-server.
+ * Browserless Central Server test stack: CS admin service (with embedded postgres, openbao, and
+ * co-located DS Issuer Service) + mock-server.
  */
 @Slf4j
 @SuppressWarnings("checkstyle:magicnumber")
@@ -68,5 +69,12 @@ class CsApiTestContainerSetup extends BaseComposeSetup {
                         forLogMessage(".*started on port: 1080.*", 1))
                 .withLogConsumer(CS, createLogConsumer(CS))
                 .withLogConsumer(MOCK_SERVER, createLogConsumer(MOCK_SERVER));
+    }
+
+    @Override
+    protected void onPreStop() {
+        // cs-admin-service logs only to /var/log/xroad (no console appender) - without this copy its
+        // logs are absent from CI failure artifacts
+        copyXRoadLogsFromContainer(CS, "cs");
     }
 }
