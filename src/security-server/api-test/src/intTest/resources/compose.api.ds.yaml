@@ -6,21 +6,43 @@ services:
       - |
         set -euo pipefail
         cd /keystore
-        [ -f ds-https.p12 ] && [ -f cacerts ] && exit 0
-        apk add --no-cache openssl
-        openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-          -keyout ds-https-key.pem -out ds-https-cert.pem \
-          -subj "/CN=xrd-ds" \
-          -addext "subjectAltName=DNS:ds-issuer-service,DNS:ds-identity-hub,DNS:ds-control-plane,DNS:localhost"
-        openssl pkcs12 -export -out ds-https.p12 -inkey ds-https-key.pem -in ds-https-cert.pem \
-          -name ds-https -password pass:changeit
-        cp /opt/java/openjdk/lib/security/cacerts cacerts
-        chmod u+w cacerts
-        keytool -import -trustcacerts -noprompt -alias ds-https -file ds-https-cert.pem \
-          -keystore cacerts -storepass changeit
-        chmod 0644 ds-https.p12 cacerts ds-https-cert.pem
+        if [ -f ds-https.p12 ] && [ -f cacerts ]; then
+          echo "ds-https keystore files already present"
+        else
+          apk add --no-cache openssl
+          openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -keyout ds-https-key.pem -out ds-https-cert.pem \
+            -subj "/CN=xrd-ds" \
+            -addext "subjectAltName=DNS:ds-issuer-service,DNS:ds-identity-hub,DNS:ds-control-plane,DNS:localhost"
+          openssl pkcs12 -export -out ds-https.p12 -inkey ds-https-key.pem -in ds-https-cert.pem \
+            -name ds-https -password pass:changeit
+          cp /opt/java/openjdk/lib/security/cacerts cacerts
+          chmod u+w cacerts
+          keytool -import -trustcacerts -noprompt -alias ds-https -file ds-https-cert.pem \
+            -keystore cacerts -storepass changeit
+          chmod 0644 ds-https.p12 cacerts ds-https-cert.pem ds-https-key.pem
+        fi
+        # Stopgap (XRDDEV-3294 retires this): the owned Jetty module reads the DS TLS
+        # certificate from OpenBao, not from these files — seed the same key/cert
+        # generated above into tls/ds-https so ds-* services don't fail closed.
+        apk add --no-cache curl jq
+        PAYLOAD=$$(jq -n --rawfile cert ds-https-cert.pem --rawfile key ds-https-key.pem \
+          '{certificate: $$cert, privateKey: $$key}')
+        curl -fsS -X POST \
+          -H "X-Vault-Token: ${XROAD_SECRET_STORE_TOKEN}" \
+          -H "Content-Type: application/json" \
+          --data "$$PAYLOAD" \
+          "http://openbao:8200/v1/xrd-secret/tls/ds-https" >/dev/null
+        echo "Wrote ds-https certificate to OpenBao at tls/ds-https"
+    environment:
+      - XROAD_SECRET_STORE_TOKEN=${XROAD_SECRET_STORE_TOKEN}
+    networks:
+      - xrd-ss-network
     volumes:
       - ds-https-keystore:/keystore
+    depends_on:
+      openbao:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -28,22 +50,6 @@ services:
         limits:
           memory: 256M
 
-  db-serverconf-ds-control-plane-config-seed:
-    image: ${POSTGRES_DEV_IMG:-postgres-dev}
-    pull_policy: always
-    entrypoint: [ "sh", "-c" ]
-    command:
-      - |
-        until pg_isready -h db-serverconf -U postgres; do sleep 1; done
-        PGPASSWORD=secret psql -h db-serverconf -U serverconf -d serverconf -c \
-          "INSERT INTO configuration_properties (property_key, property_value, scope, created_at, updated_at)
-           VALUES ('edc.iam.trusted-issuer.issuer.id', 'did:web:ds-issuer-service%3A6183:issuer', 'ds-control-plane', now(), now())
-           ON CONFLICT DO NOTHING;"
-    networks:
-      - xrd-ss-network
-    depends_on:
-      db-serverconf-init:
-        condition: service_completed_successfully
 
   db-ds-control-plane:
     image: ${POSTGRES_DEV_IMG:-postgres-dev}
@@ -76,11 +82,13 @@ services:
       - HOSTNAME=ds-control-plane
       - XROAD_HOST=ds-control-plane
       - XROAD_DSP_PARTICIPANT_CONTEXT_ID=ss0
+      # Interpolated into edc.iam.trusted-issuer.issuer.id by the packaged application.yaml: the EDC
+      # key is hyphenated, so an env var can only reach it through an X-Road key the yaml declares.
+      - XROAD_EDC_IAM_TRUSTED_ISSUER_ISSUER_ID=did:web:ds-issuer-service%3A6183:issuer
       - XROAD_PROXY_DATAPLANE_URL=http://proxy:5590/full/api/v1/dataflows
       - XROAD_SECRET_STORE_HOST=openbao
       - XROAD_SECRET_STORE_TOKEN=${XROAD_SECRET_STORE_TOKEN}
       - XROAD_SECRET_STORE_SCHEME=http
-      - XROAD_COMMON_RPC_CHANNEL_CONFIGURATION_CLIENT_HOST=configuration-client
       - XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_URL=jdbc:postgresql://db-ds-control-plane:5432/ds-control-plane
       - XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_USERNAME=postgres
       - XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_PASSWORD=ds_control_plane_admin_secret
@@ -89,7 +97,6 @@ services:
       - XROAD_DB_SERVERCONF_HIBERNATE_CONNECTION_USERNAME=serverconf
       - XROAD_DB_SERVERCONF_HIBERNATE_CONNECTION_PASSWORD=secret
       - EDC_DSP_CALLBACK_ADDRESS=https://ds-control-plane:8183/api/dsp/%s
-      - DB_CONFIG_SOURCE_ENABLED=true
       - DB_CONFIG_SOURCE_URL=jdbc:postgresql://db-serverconf:5432/serverconf
       - DB_CONFIG_SOURCE_USERNAME=serverconf
       - DB_CONFIG_SOURCE_PASSWORD=secret
@@ -120,8 +127,6 @@ services:
     depends_on:
       db-ds-control-plane:
         condition: service_healthy
-      db-serverconf-ds-control-plane-config-seed:
-        condition: service_completed_successfully
       configuration-client:
         condition: service_healthy
       ds-identity-hub:
@@ -165,7 +170,6 @@ services:
       - XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_URL=jdbc:postgresql://db-ds-identity-hub:5432/ds-identity-hub
       - XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_USERNAME=postgres
       - XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_PASSWORD=ds_identity_hub_admin_secret
-      - XROAD_COMMON_RPC_CHANNEL_SIGNER_HOST=signer
       - EDC_WEB_HTTPS_KEYSTORE_PATH=/etc/xroad/ssl/ds-https.p12
       - EDC_WEB_HTTPS_KEYSTORE_TYPE=PKCS12
       - EDC_WEB_HTTPS_KEYSTORE_PASSWORD=changeit
@@ -222,7 +226,6 @@ services:
       - XROAD_SECRET_STORE_HOST=openbao
       - XROAD_SECRET_STORE_TOKEN=${XROAD_SECRET_STORE_TOKEN}
       - XROAD_SECRET_STORE_SCHEME=http
-      - XROAD_COMMON_RPC_CHANNEL_CONFIGURATION_CLIENT_HOST=configuration-client
       - XROAD_DB_DS_ISSUER_SERVICE_HIBERNATE_CONNECTION_URL=jdbc:postgresql://db-ds-issuer-service:5432/ds-issuer-service
       - XROAD_DB_DS_ISSUER_SERVICE_HIBERNATE_CONNECTION_USERNAME=postgres
       - XROAD_DB_DS_ISSUER_SERVICE_HIBERNATE_CONNECTION_PASSWORD=ds_issuer_service_admin_secret

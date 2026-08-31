@@ -82,29 +82,27 @@ aws ecr get-login-password --region eu-west-1 | \
     ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
 
 (
-  cd core/deployment/security-server/images
+  cd core
   IMAGE_REGISTRY=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com \
-    ./build-images.sh --push --platforms linux/amd64,linux/arm64
+    ./scripts/images/build-security-server.sh --push --platforms linux/amd64,linux/arm64
 )
 ```
 
-`core/deployment/security-server/images/build-images.sh` honours `IMAGE_REGISTRY`; images are tagged and pushed there.
+`scripts/images/build-security-server.sh` honours `IMAGE_REGISTRY`; images are tagged and pushed there.
 
 ## Deploy
 
 ```bash
-./scripts/start-env.sh \
+scripts/env-k8s/start-env.sh \
   --env=eks \
   --skip-images \
-  --skip-forward \
-  --skip-init
+  --skip-forward
 ```
 
 Flags explained:
 
 - `--skip-images` — images already in ECR
 - `--skip-forward` — on EKS, access is via LoadBalancer / Ingress (not port-forward)
-- `--skip-init` — `init-ss2.sh` targets the local LXD stack and is inapplicable on EKS
 
 ## Per-concern EKS deltas
 
@@ -199,7 +197,7 @@ Hit the proxy-ui-api over the NLB hostname shown in `kubectl get svc`.
 ## Teardown
 
 ```bash
-./scripts/delete-env.sh --env=eks --keep-cluster
+scripts/env-k8s/delete-env.sh --env=eks --keep-cluster
 ```
 
 `--keep-cluster` is default-recommended on EKS so the managed cluster, node groups, and addons stay put.

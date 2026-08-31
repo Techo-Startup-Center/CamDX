@@ -22,7 +22,7 @@ xmlUnit = "2.12.0"
 bouncyCastle = "1.84"
 slf4j = "2.0.18"
 protoc = "4.35.1"
-grpc = "1.82.1"
+grpc = "1.83.1"
 swaggerParser = "2.1.45"
 logback = "1.5.37"
 logbackAccess = "2.0.12"
@@ -43,7 +43,7 @@ shadowPlugin = "9.4.3"
 owaspDependencyCheck = "12.2.2"
 edc = "0.18.0"
 nimbus = "10.9.1"
-opentelemetry-javaagent = "2.28.1"
+opentelemetry-javaagent = "2.30.0"
 opentelemetry-sdk-testing = "1.63.0"
 
 [libraries]
@@ -53,6 +53,9 @@ jetty-server = { module = "org.eclipse.jetty:jetty-server", version.ref = "jetty
 jetty-http = { module = "org.eclipse.jetty:jetty-http", version.ref = "jetty" }
 jetty-xml = { module = "org.eclipse.jetty:jetty-xml", version.ref = "jetty" }
 jetty-ee11-servlet = { module = "org.eclipse.jetty.ee11:jetty-ee11-servlet", version.ref = "jetty" }
+# EDC 0.18.0 itself targets the EE10 servlet API; version pinned to the root build's
+# org.eclipse.jetty.ee10:jetty-ee10-servlet resolution override (CVE-2026-2332, CVE-2026-5795).
+jetty-ee10-servlet = { module = "org.eclipse.jetty.ee10:jetty-ee10-servlet", version = "12.1.9" }
 
 jersey-container-servlet = { module = "org.glassfish.jersey.containers:jersey-container-servlet", version.ref = "jersey" }
 jersey-common = { module = "org.glassfish.jersey.core:jersey-common", version.ref = "jersey" }
@@ -188,7 +191,7 @@ apache-tikaCore = { module = "org.apache.tika:tika-core", version = "3.3.1" }
 apache-xmlsec = { module = "org.apache.santuario:xmlsec", version = "4.0.4" }
 apache-httpclient = { module = "org.apache.httpcomponents:httpclient", version = "4.5.14" }
 apache-httpasyncclient = { module = "org.apache.httpcomponents:httpasyncclient", version = "4.1.5" }
-apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version = "5.6.1" }
+apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version = "5.6.3" }
 apache-mime4jCore = { module = "org.apache.james:apache-mime4j-core", version = "0.8.7" }
 
 commons-cli = { module = "commons-cli:commons-cli", version = "1.11.0" }

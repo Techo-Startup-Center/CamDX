@@ -2,6 +2,7 @@ plugins {
   id("xroad.java-conventions")
   id("xroad.java-exec-conventions")
   id("xroad.quarkus-application-conventions")
+  id("xroad.edc-owned-jetty-conventions")
 }
 
 dependencies {
@@ -19,10 +20,17 @@ dependencies {
 
   implementation(project(":lib:bootstrap-edc-quarkus"))
   implementation(project(":lib:properties-quarkus"))
+  implementation(project(":lib:properties-core"))
+  implementation(project(":lib:rpc-core"))
   implementation(project(":lib:serverconf-impl"))
   implementation(project(":lib:vault-quarkus"))
+  implementation(project(":service:configuration-client:configuration-client-rpc-client"))
 
   implementation(libs.bundles.quarkus.containerized)
+
+  testImplementation(libs.smallrye.config.yaml)
+  testImplementation(libs.junit.jupiter.params)
+  testImplementation(libs.assertj.core)
 
   runtimeOnly(libs.edc.core.controlplane) {
     // EDC 0.17 ships two mutually-exclusive state-machine drivers: classic Manager
@@ -46,7 +54,7 @@ dependencies {
   runtimeOnly(libs.edc.core.runtime)
   runtimeOnly(libs.edc.core.token)
   runtimeOnly(libs.edc.core.jersey)
-  runtimeOnly(libs.edc.core.jetty)
+  runtimeOnly(project(":lib:edc-jetty-tls"))
   runtimeOnly(libs.edc.core.policy.monitor)
   runtimeOnly(libs.edc.api.observability)
   runtimeOnly(libs.edc.core.dataplane.selector)

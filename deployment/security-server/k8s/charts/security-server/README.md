@@ -94,10 +94,9 @@ MUST map to a Helm template; every env var, port, probe, and
 | `db-ds-control-plane` | external (cloudnative_pg ansible role) — chart expects bare Service `db-ds-control-plane` and Secret `db-ds-control-plane/password` | — (provisioned outside chart) | 5432 | CNPG-managed | — (no depends_on) | compose lines 19–42 |
 | `db-ds-identity-hub` | external (cloudnative_pg ansible role) — chart expects bare Service `db-ds-identity-hub` and Secret `db-ds-identity-hub/password` | — (provisioned outside chart) | 5432 | CNPG-managed | — (no depends_on) | compose lines 93–114 |
 | `db-ds-issuer-service` | external (cloudnative_pg ansible role) — chart expects bare Service `db-ds-issuer-service` and Secret `db-ds-issuer-service/password` | — (provisioned outside chart) | 5432 | CNPG-managed | — (no depends_on) | compose lines 150–171 |
-| `ds-control-plane` | `services.ds-control-plane` in `values.yaml` + `templates/services/all.yaml` | `HOSTNAME`, `XROAD_SECRET_STORE_HOST`, `XROAD_SECRET_STORE_TOKEN` (secretKeyRef), `XROAD_SECRET_STORE_SCHEME`, `XROAD_COMMON_RPC_CHANNEL_CONFIGURATION_CLIENT_HOST`, `XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_URL`, `XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_USERNAME`, `XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_PASSWORD` (secretKeyRef), `EDC_IAM_DID_WEB_USE_HTTPS`, `DB_CONFIG_SOURCE_ENABLED`, `DB_CONFIG_SOURCE_URL`, `DB_CONFIG_SOURCE_USERNAME`, `DB_CONFIG_SOURCE_PASSWORD` (secretKeyRef) | 8181, 8182, 8183, 8184, 9999 | `httpGet :4099/q/health` (HTTP) — 5s/40/initialDelay=5s | `db-ds-control-plane` → `wait-db`; `configuration-client` → `wait-config-client`; `ds-identity-hub` → `wait-identity-hub`; `db-serverconf-ds-control-plane-config-seed` → `wait-serverconf-seed` | compose lines 44–91 |
+| `ds-control-plane` | `services.ds-control-plane` in `values.yaml` + `templates/services/all.yaml` | `HOSTNAME`, `XROAD_SECRET_STORE_HOST`, `XROAD_SECRET_STORE_TOKEN` (secretKeyRef), `XROAD_SECRET_STORE_SCHEME`, `XROAD_COMMON_RPC_CHANNEL_CONFIGURATION_CLIENT_HOST`, `XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_URL`, `XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_USERNAME`, `XROAD_DB_DS_CONTROL_PLANE_HIBERNATE_CONNECTION_PASSWORD` (secretKeyRef), `EDC_IAM_DID_WEB_USE_HTTPS`, `XROAD_EDC_IAM_TRUSTED_ISSUER_ISSUER_ID`, `DB_CONFIG_SOURCE_URL`, `DB_CONFIG_SOURCE_USERNAME`, `DB_CONFIG_SOURCE_PASSWORD` (secretKeyRef) | 8181, 8182, 8183, 8184, 9999 | `httpGet :4099/q/health` (HTTP) — 5s/40/initialDelay=5s | `db-ds-control-plane` → `wait-db`; `configuration-client` → `wait-config-client`; `ds-identity-hub` → `wait-identity-hub` | compose lines 44–91 |
 | `ds-identity-hub` | `services.ds-identity-hub` in `values.yaml` + `templates/services/all.yaml` | `HOSTNAME`, `EDC_IH_DID_PUBLIC_HOSTNAME`, `XROAD_SECRET_STORE_HOST`, `XROAD_SECRET_STORE_TOKEN` (secretKeyRef), `XROAD_SECRET_STORE_SCHEME`, `XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_URL`, `XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_USERNAME`, `XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_PASSWORD` (secretKeyRef), `EDC_IAM_DID_WEB_USE_HTTPS`, `DEBUG` | 9999, 8182, 10001, 10100 | `httpGet :8181/api/check/health` (HTTP) | `db-ds-identity-hub` → `wait-db` | compose lines 116–148 |
 | `ds-issuer-service` | `services.ds-issuer-service` in `values.yaml` + `templates/services/all.yaml` | `HOSTNAME`, `XROAD_SECRET_STORE_HOST`, `XROAD_SECRET_STORE_TOKEN` (secretKeyRef), `XROAD_SECRET_STORE_SCHEME`, `XROAD_COMMON_RPC_CHANNEL_CONFIGURATION_CLIENT_HOST`, `XROAD_DB_DS_ISSUER_SERVICE_HIBERNATE_CONNECTION_URL`, `XROAD_DB_DS_ISSUER_SERVICE_HIBERNATE_CONNECTION_USERNAME`, `XROAD_DB_DS_ISSUER_SERVICE_HIBERNATE_CONNECTION_PASSWORD` (secretKeyRef), `EDC_IAM_DID_WEB_USE_HTTPS`, `DEBUG` | 8182, 10011, 10012, 10013, 10100, 9999 | `httpGet :8383/api/check/health` (HTTP) | `db-ds-issuer-service` → `wait-db` | compose lines 173–213 |
-| `db-serverconf-ds-control-plane-config-seed` | `templates/dsp/db-serverconf-ds-control-plane-config-seed-job.yaml` | `PGPASSWORD` (secretKeyRef → `db-serverconf/password`) | — (Job, no Service) | — (no probe; `ON CONFLICT DO NOTHING` idempotency) | `db-serverconf-init` → `wait-db-serverconf` (polls `configuration_properties` table; `activeDeadlineSeconds: 300s`) | compose lines 2–17 |
 
 ## 6. Single-release-per-namespace constraint (dsp)
 
@@ -116,36 +115,92 @@ fails on resource-name collision. Release-scoped isolation requires
 separate namespaces. Only the `.Release.Name`-prefixed resources
 (serverconf seed Job) are multi-release-safe by construction.
 
-## 7. Seed Job behaviour
+## 7. ds-control-plane EDC configuration
 
-The chart always renders a Kubernetes `Job` that seeds the
-trusted-issuer configuration property row into the existing
-`db-serverconf` database used by the core Security Server's
-`ds-control-plane` component:
+`ds-control-plane` needs the trusted-issuer participant DID before it
+starts. It travels as an ordinary env var on the service:
 
-- **Name:** `{{ .Release.Name }}-db-serverconf-ds-control-plane-config-seed`
-  (prefixed per chart convention).
-- **SQL:** inserts `configuration_properties('edc.iam.trusted-issuer.issuer.id',
-  'did:web:ds-issuer-service%3A10100:issuer', 'ds-control-plane', …)`
-  into `db-serverconf`, compose-verbatim.
-- **Idempotent:** the SQL uses `ON CONFLICT DO NOTHING` — safe on
-  re-install and `helm upgrade`.
-- **Hook strategy:** runs as a `post-install,post-upgrade` Helm hook
-  with `helm.sh/hook-weight: "10"` and
-  `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded`.
+- **Values:** `services.ds-control-plane.env.XROAD_EDC_IAM_TRUSTED_ISSUER_ISSUER_ID`
+  (default `did:web:ds-issuer-service%3A10100:issuer`, the in-cluster
+  issuer). Hybrid dev envs override it with the dataspace-wide issuer —
+  the ansible overlay sets it from `trusted_issuer_host`.
+- **How it reaches EDC:** the runtime's packaged `application.yaml`
+  declares `edc.iam.trusted-issuer.issuer.id:
+  ${xroad.edc.iam.trusted-issuer.issuer.id}`, and the env var supplies
+  the X-Road key. The EDC key itself cannot be set by an env var: EDC
+  reads it through `QuarkusConfigBridge`, which snapshots
+  `config.getPropertyNames()`, and SmallRye enumerates an env var with
+  dots in place of every underscore — so
+  `EDC_IAM_TRUSTED_ISSUER_ISSUER_ID` enumerates as
+  `edc.iam.trusted.issuer.issuer.id` and never matches the hyphenated
+  key. Declaring the EDC key in the packaged yaml makes it enumerable;
+  the interpolation then resolves the X-Road key by direct lookup, which
+  does handle hyphens.
+- **Unset is a startup error**, on purpose: the interpolation has no
+  fallback, so an unconfigured deployment fails with SmallRye naming
+  both properties rather than registering an empty trusted issuer that
+  silently rejects every credential.
 
-> **Rollback gap.** `helm rollback` does **not** re-fire the seed Job.
-> If a rollback restores a DB snapshot taken before the seed row was
-> inserted, the `ds-control-plane` `wait-serverconf-seed` initContainer
-> will hang until its retry budget is exhausted. Re-seed manually or
-> `helm upgrade` to re-trigger the hook.
+Earlier revisions seeded this value as a `configuration_properties` row
+in `db-serverconf` (a `post-install,post-upgrade` hook Job plus a
+`wait-serverconf-seed` initContainer). That worked only while the
+Quarkus DB→SmallRye config source was registered; it was retired with
+that bridge.
 
-## 8. Chart version discipline
+## 8. OpenBao (secret store) TLS trust
+
+A single top-level knob supplies the CA cert used to trust OpenBao over
+TLS, replacing what used to be hand-wired per workload by the dev-stack
+ansible role:
+
+```yaml
+secretStore:
+  tls:
+    caSecretName: "" # Secret in the release namespace holding the OpenBao CA cert
+    caSecretKey: "tls.crt" # key within that Secret
+```
+
+**Default (`caSecretName: ""`):** no cert Secret is referenced, no volume
+or mount is added, and the render is unchanged — plaintext to OpenBao, or
+trusting a CA the container image already ships, remains the deployer's
+responsibility.
+
+**When set:** every workload whose own env carries
+`XROAD_SECRET_STORE_HOST` — the chart's existing signal that it reaches
+the secret store — gets the CA cert mounted at
+`/etc/xroad/ssl/openbao.crt` plus the trust env matching its runtime:
+
+- `QUARKUS_VAULT_TLS_CA_CERT` for every Quarkus-based service
+  (`configuration-client`, `signer`, `proxy`, `monitor`, `op-monitor`,
+  `auxiliary-service`, `softtoken-signer`, `ds-control-plane`,
+  `ds-identity-hub`, `ds-issuer-service`).
+- `SPRING_CLOUD_VAULT_SSL_TRUST_STORE` / `_TYPE: PEM` for the
+  Spring-based `proxy-ui-api`.
+- The same `QUARKUS_VAULT_TLS_CA_CERT` env and cert mount for the
+  message-log archiver/cleanup `Job` template
+  (`messageLogArchiver` — shares one template for both invocations),
+  which is easy to miss precisely because it is not a
+  long-running Pod: its own env named the CA cert path but nothing ever
+  mounted it there, and messagelog encryption made that access mandatory.
+
+This is implemented as a rule (`templates/services/all.yaml`,
+`templates/message-log-archiver-job-configmap.yaml` each check their own
+config's `env` for `XROAD_SECRET_STORE_HOST`), not a hardcoded list —
+future workloads that set that env var inherit the fan-out automatically.
+The mount/env are additive (`extraVolumes`/`extraVolumeMounts` concat,
+`env` dict merge), so they layer over whatever a workload already carries
+(the `ds-https` keystore mount, the messagelog-encryption config mount)
+rather than replacing it.
+
+## 9. Chart version discipline
 
 The `Chart.yaml` `version` key is bumped only when the chart's public
 contract changes materially:
 
-- **Current version:** `0.3.0` — bumped from `0.2.0` alongside the
-  seed Job + README rewrite.
+- **Current version:** `0.5.0` — bumped from `0.4.0` alongside the
+  `secretStore.tls` OpenBao CA trust knob (default empty, byte-identical
+  render).
+  Previously bumped to `0.4.0` from `0.3.0` alongside the
+  `softtoken-signer` service (off by default, `services.softtoken-signer.replicas: 0`).
 - `appVersion` tracks the X-Road runtime version and is independent of
   the chart version.
