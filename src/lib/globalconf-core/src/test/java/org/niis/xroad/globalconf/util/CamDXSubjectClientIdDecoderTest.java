@@ -69,32 +69,33 @@ public class CamDXSubjectClientIdDecoderTest {
     }
 
     /**
-     * Reproduces the operationally-confirmed current CamDX SIGN certificate subject exactly:
-     * C=KH, O=MOI, CN=CAMDX-000121, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV.
+     * Decodes a Cambodia SIGN certificate subject in the active serialNumber-based encoding,
+     * using synthetic, non-operational values:
+     * C=KH, O=CamDX Test Member, CN=CAMDX-TEST-000001, serialNumber=CAMBODIA/ss.example.invalid/GOV.
      */
     @Test
     public void shouldDecodeClientIdFromObservedCertificate()
             throws GeneralSecurityException, IOException, OperatorCreationException {
         X509Certificate cert = generateSelfSignedCertificate(
-                "C=KH, O=MOI, CN=CAMDX-000121, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV", keyPair);
+                "C=KH, O=CamDX Test Member, CN=CAMDX-TEST-000001, serialNumber=CAMBODIA/ss.example.invalid/GOV", keyPair);
 
         ClientId clientId = CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
 
-        assertEquals(ClientId.Conf.create("CAMBODIA", "GOV", "CAMDX-000121"), clientId);
+        assertEquals(ClientId.Conf.create("CAMBODIA", "GOV", "CAMDX-TEST-000001"), clientId);
     }
 
     @Test(expected = CodedException.class)
     public void shouldFailIfCountryDoesNotMatch() throws GeneralSecurityException, IOException,
             OperatorCreationException {
         X509Certificate cert = generateSelfSignedCertificate(
-                "C=XX, O=MOI, CN=CAMDX-000121, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV", keyPair);
+                "C=XX, O=CamDX Test Member, CN=CAMDX-TEST-000001, serialNumber=CAMBODIA/ss.example.invalid/GOV", keyPair);
         CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
     }
 
     @Test(expected = CodedException.class)
     public void shouldFailIfOrgMissing() throws GeneralSecurityException, IOException, OperatorCreationException {
         X509Certificate cert = generateSelfSignedCertificate(
-                "C=KH, CN=CAMDX-000121, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV", keyPair);
+                "C=KH, CN=CAMDX-TEST-000001, serialNumber=CAMBODIA/ss.example.invalid/GOV", keyPair);
         CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
     }
 
@@ -102,14 +103,14 @@ public class CamDXSubjectClientIdDecoderTest {
     public void shouldFailIfCommonNameMissing() throws GeneralSecurityException, IOException,
             OperatorCreationException {
         X509Certificate cert = generateSelfSignedCertificate(
-                "C=KH, O=MOI, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV", keyPair);
+                "C=KH, O=CamDX Test Member, serialNumber=CAMBODIA/ss.example.invalid/GOV", keyPair);
         CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
     }
 
     @Test(expected = CodedException.class)
     public void shouldFailIfSerialNumberMissing() throws GeneralSecurityException, IOException,
             OperatorCreationException {
-        X509Certificate cert = generateSelfSignedCertificate("C=KH, O=MOI, CN=CAMDX-000121", keyPair);
+        X509Certificate cert = generateSelfSignedCertificate("C=KH, O=CamDX Test Member, CN=CAMDX-TEST-000001", keyPair);
         CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
     }
 
@@ -117,7 +118,7 @@ public class CamDXSubjectClientIdDecoderTest {
     public void shouldFailIfSerialNumberHasTooFewComponents() throws GeneralSecurityException, IOException,
             OperatorCreationException {
         X509Certificate cert = generateSelfSignedCertificate(
-                "C=KH, O=MOI, CN=CAMDX-000121, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh", keyPair);
+                "C=KH, O=CamDX Test Member, CN=CAMDX-TEST-000001, serialNumber=CAMBODIA/ss.example.invalid", keyPair);
         CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
     }
 
@@ -125,7 +126,7 @@ public class CamDXSubjectClientIdDecoderTest {
     public void shouldFailIfSerialNumberHasTooManyComponents() throws GeneralSecurityException, IOException,
             OperatorCreationException {
         X509Certificate cert = generateSelfSignedCertificate(
-                "C=KH, O=MOI, CN=CAMDX-000121, serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV/EXTRA", keyPair);
+                "C=KH, O=CamDX Test Member, CN=CAMDX-TEST-000001, serialNumber=CAMBODIA/ss.example.invalid/GOV/EXTRA", keyPair);
         CamDXSubjectClientIdDecoder.getSubjectClientId(cert);
     }
 

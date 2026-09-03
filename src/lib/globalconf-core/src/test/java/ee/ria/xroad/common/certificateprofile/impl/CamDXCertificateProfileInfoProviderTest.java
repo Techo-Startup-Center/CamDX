@@ -48,8 +48,8 @@ import static org.junit.Assert.assertTrue;
 public class CamDXCertificateProfileInfoProviderTest {
 
     private static final SecurityServerId SERVER_ID =
-            SecurityServerId.Conf.create("CAMBODIA", "GOV", "MOI", "ss-pro.gddtm.gov.kh");
-    private static final ClientId CLIENT_ID = ClientId.Conf.create("CAMBODIA", "GOV", "CAMDX-000121");
+            SecurityServerId.Conf.create("CAMBODIA", "GOV", "CAMDX-TEST-000001", "ss.example.invalid");
+    private static final ClientId CLIENT_ID = ClientId.Conf.create("CAMBODIA", "GOV", "CAMDX-TEST-000001");
 
     @Test
     public void providerReturnsCorrectImplementations() {
@@ -58,14 +58,14 @@ public class CamDXCertificateProfileInfoProviderTest {
         assertTrue(
                 "Must return instance of CamDXAuthCertificateProfileInfo",
                 provider.getAuthCertProfile(
-                        new AuthCertificateProfileInfoParameters(SERVER_ID, "MOI")
+                        new AuthCertificateProfileInfoParameters(SERVER_ID, "CamDX Test Member")
                 ) instanceof CamDXAuthCertificateProfileInfo
         );
 
         assertTrue(
                 "Must return instance of CamDXSignCertificateProfileInfo",
                 provider.getSignCertProfile(
-                        new SignCertificateProfileInfoParameters(SERVER_ID, CLIENT_ID, "MOI")
+                        new SignCertificateProfileInfoParameters(SERVER_ID, CLIENT_ID, "CamDX Test Member")
                 ) instanceof CamDXSignCertificateProfileInfo
         );
     }
@@ -81,10 +81,10 @@ public class CamDXCertificateProfileInfoProviderTest {
                 new EnumLocalizedFieldDescriptionImpl("O", DnFieldLabelLocalizationKey.ORGANIZATION_NAME, "")
                         .setReadOnly(false),
                 new EnumLocalizedFieldDescriptionImpl("serialNumber", DnFieldLabelLocalizationKey.SERIAL_NUMBER,
-                        "CAMBODIA/ss-pro.gddtm.gov.kh/GOV")
+                        "CAMBODIA/ss.example.invalid/GOV")
                         .setReadOnly(true),
                 new EnumLocalizedFieldDescriptionImpl("CN", DnFieldLabelLocalizationKey.MEMBER_CODE,
-                        "CAMDX-000121")
+                        "CAMDX-TEST-000001")
                         .setReadOnly(true)
         };
 
@@ -106,7 +106,7 @@ public class CamDXCertificateProfileInfoProviderTest {
                 new EnumLocalizedFieldDescriptionImpl("O", DnFieldLabelLocalizationKey.ORGANIZATION_NAME, "")
                         .setReadOnly(false),
                 new EnumLocalizedFieldDescriptionImpl("serialNumber", DnFieldLabelLocalizationKey.SERIAL_NUMBER,
-                        "CAMBODIA/ss-pro.gddtm.gov.kh/GOV")
+                        "CAMBODIA/ss.example.invalid/GOV")
                         .setReadOnly(true),
                 new EnumLocalizedFieldDescriptionImpl("CN", DnFieldLabelLocalizationKey.SERVER_DNS_NAME, "")
                         .setReadOnly(false)
@@ -119,32 +119,33 @@ public class CamDXCertificateProfileInfoProviderTest {
     }
 
     /**
-     * Reproduces the operationally-confirmed current CamDX SIGN certificate subject
-     * (C=KH,O=MOI,CN=CAMDX-000121,serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV) end-to-end through
-     * CamDXSignCertificateProfileInfo.getSubjectIdentifier(), which delegates to CamDXSubjectClientIdDecoder.
+     * Reproduces the Cambodia SIGN certificate subject encoding
+     * (C=KH,O=&lt;organization&gt;,CN=&lt;memberCode&gt;,serialNumber=instanceId/serverCode/memberClass) end-to-end
+     * through CamDXSignCertificateProfileInfo.getSubjectIdentifier(), which delegates to
+     * CamDXSubjectClientIdDecoder. Uses synthetic, non-operational values.
      */
     @Test
     public void signProfileGetSubjectIdentifierMatchesObservedCertificate() {
         X509Certificate mockCert = Mockito.mock(X509Certificate.class);
         Mockito.when(mockCert.getSubjectX500Principal()).thenReturn(
-                new X500Principal("C=KH,O=MOI,CN=CAMDX-000121,serialNumber=CAMBODIA/ss-pro.gddtm.gov.kh/GOV")
+                new X500Principal("C=KH,O=CamDX Test Member,CN=CAMDX-TEST-000001,serialNumber=CAMBODIA/ss.example.invalid/GOV")
         );
 
         assertEquals(
-                ClientId.Conf.create("CAMBODIA", "GOV", "CAMDX-000121"),
+                ClientId.Conf.create("CAMBODIA", "GOV", "CAMDX-TEST-000001"),
                 getSignProfile().getSubjectIdentifier(mockCert)
         );
     }
 
     private CamDXSignCertificateProfileInfo getSignProfile() {
         return new CamDXSignCertificateProfileInfo(
-                new SignCertificateProfileInfoParameters(SERVER_ID, CLIENT_ID, "MOI")
+                new SignCertificateProfileInfoParameters(SERVER_ID, CLIENT_ID, "CamDX Test Member")
         );
     }
 
     private CamDXAuthCertificateProfileInfo getAuthProfile() {
         return new CamDXAuthCertificateProfileInfo(
-                new AuthCertificateProfileInfoParameters(SERVER_ID, "MOI")
+                new AuthCertificateProfileInfoParameters(SERVER_ID, "CamDX Test Member")
         );
     }
 }
