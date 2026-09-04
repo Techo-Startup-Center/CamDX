@@ -81,9 +81,22 @@ jobs:
       - name: Build and test source
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ./src
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PxroadBuildType=RELEASE --max-workers=4 --stacktrace build test intTest jacocoTestReport
+      # SonarCloud analysis is decoupled from the mandatory build/test step above so that this
+      # fork's CI does not depend on authorization to the upstream nordic-institute_X-Road
+      # SonarCloud project. It runs only when this repository has its own SONAR_PROJECT_KEY and
+      # SONAR_ORGANIZATION variables configured (Settings > Secrets and variables > Actions >
+      # Variables), plus a SONAR_TOKEN secret; otherwise it is skipped and never blocks the
+      # mandatory build/unit/integration/package pipeline. If those variables ARE configured, a
+      # genuine Sonar failure here remains visible as a failed step.
+      - name: SonarCloud analysis
+        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORGANIZATION != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         working-directory: ./src
-        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PsonarqubeHost=https://sonarcloud.io -PsonarqubeProjectKey=nordic-institute_X-Road -PsonarqubeOrganization=nordic-institute -PxroadBuildType=RELEASE --stacktrace build sonar test intTest jacocoTestReport
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PsonarqubeHost=https://sonarcloud.io -PsonarqubeProjectKey=${{ vars.SONAR_PROJECT_KEY }} -PsonarqubeOrganization=${{ vars.SONAR_ORGANIZATION }} -PxroadBuildType=RELEASE sonar
       - name: Test report
         env:
           NODE_OPTIONS: '--max-old-space-size=6144'
