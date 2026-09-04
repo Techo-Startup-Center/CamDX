@@ -20,7 +20,9 @@ RUN useradd -m ca -U \
 COPY files/home /home
 COPY files/etc /etc
 
-RUN chown -R ca:ca /home/ca/CA \
+RUN chown ca:ca /home/ca \
+  && chown -R ca:ca /home/ca/CA \
+  && chown -R ca:ca /home/ca/TSA \
   && find /home/ca/TSA -type f -exec chmod 0664 {} + \
   && find /home/ca/CA -type f -exec chmod 0740 {} + \
   && mkdir -p /var/log/ \
