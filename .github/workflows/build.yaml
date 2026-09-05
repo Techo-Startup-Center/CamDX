@@ -302,9 +302,19 @@ jobs:
           echo "Pinned Chrome path: ${{ steps.setup-chrome.outputs.chrome-path }}"
           echo "Pinned ChromeDriver version: ${{ steps.setup-chrome.outputs.chromedriver-version }}"
           echo "Pinned ChromeDriver path: ${{ steps.setup-chrome.outputs.chromedriver-path }}"
+      # NOTE: the CS UI test's browser is configured by com.nortal.test:test-automation-selenide's
+      # own SelenideProperties, a Spring @ConfigurationProperties(prefix = "test-automation.selenide")
+      # bean (see application-override.yml's test-automation.selenide.* keys). Its @PostConstruct
+      # SelenideConfiguration.initSelenide() unconditionally copies selenideProperties.browserBinary
+      # into com.codeborne.selenide.Configuration.browserBinary, so a plain "-Dselenide.browserBinary"
+      # system property (bound to nothing here) gets silently overwritten back to null. The property
+      # that actually reaches this bean is "test-automation.selenide.browser-binary" (kebab-case,
+      # matching every other key already used in application-override.yml for this class).
+      # webdriver.chrome.driver is unrelated to this bean (read directly by Selenium's
+      # ChromeDriverService), which is why ChromeDriver 147 was already being detected correctly.
       - name: Run Central Server system tests
         working-directory: ./src
-        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g -Dselenide.browserBinary="${{ steps.setup-chrome.outputs.chrome-path }}" -Dwebdriver.chrome.driver="${{ steps.setup-chrome.outputs.chromedriver-path }}" :central-server:admin-service:ui-system-test:systemTest -PsystemTestCsImageName=localhost:5000/xrd-centralserver:${{ github.sha }}
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g -Dtest-automation.selenide.browser-binary="${{ steps.setup-chrome.outputs.chrome-path }}" -Dwebdriver.chrome.driver="${{ steps.setup-chrome.outputs.chromedriver-path }}" :central-server:admin-service:ui-system-test:systemTest -PsystemTestCsImageName=localhost:5000/xrd-centralserver:${{ github.sha }}
       - name: Test Central Server measurement
         uses: green-coding-solutions/eco-ci-energy-estimation@9fcdc7c7225cc2cbeead14d114a61a461bd37e66 # v5.2
         with:
