@@ -37,6 +37,12 @@ tasks.register<Test>("systemTest") {
   if (project.hasProperty("systemTestCsImageName")) {
     systemTestArgs += "-Dtest-automation.custom.image-name=${project.property("systemTestCsImageName")}"
   }
+  if (project.hasProperty("systemTestBrowserBinary")) {
+    systemTestArgs += "-Dtest-automation.selenide.browser-binary=${project.property("systemTestBrowserBinary")}"
+  }
+  if (project.hasProperty("systemTestChromeDriver")) {
+    systemTestArgs += "-Dwebdriver.chrome.driver=${project.property("systemTestChromeDriver")}"
+  }
 
   jvmArgs(systemTestArgs)
 
