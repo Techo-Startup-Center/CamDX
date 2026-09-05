@@ -81,9 +81,22 @@ jobs:
       - name: Build and test source
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ./src
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PxroadBuildType=RELEASE --max-workers=4 --stacktrace build test intTest jacocoTestReport
+      # SonarCloud analysis is decoupled from the mandatory build/test step above so that this
+      # fork's CI does not depend on authorization to the upstream nordic-institute_X-Road
+      # SonarCloud project. It runs only when this repository has its own SONAR_PROJECT_KEY and
+      # SONAR_ORGANIZATION variables configured (Settings > Secrets and variables > Actions >
+      # Variables), plus a SONAR_TOKEN secret; otherwise it is skipped and never blocks the
+      # mandatory build/unit/integration/package pipeline. If those variables ARE configured, a
+      # genuine Sonar failure here remains visible as a failed step.
+      - name: SonarCloud analysis
+        if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORGANIZATION != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         working-directory: ./src
-        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PsonarqubeHost=https://sonarcloud.io -PsonarqubeProjectKey=nordic-institute_X-Road -PsonarqubeOrganization=nordic-institute -PxroadBuildType=RELEASE --stacktrace build sonar test intTest jacocoTestReport
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PsonarqubeHost=https://sonarcloud.io -PsonarqubeProjectKey=${{ vars.SONAR_PROJECT_KEY }} -PsonarqubeOrganization=${{ vars.SONAR_ORGANIZATION }} -PxroadBuildType=RELEASE sonar
       - name: Test report
         env:
           NODE_OPTIONS: '--max-old-space-size=6144'
@@ -271,9 +284,37 @@ jobs:
           label: 'Set up Central Server tests'
       - name: Check Chromium version
         run: chromium --version || chromium-browser --version || google-chrome --version
+      # Pinned to Chrome/CDP major 147: the resolved intTestRuntimeClasspath for
+      # :central-server:admin-service:ui-system-test (Selenium 4.43.0 via Selenide 7.16.1)
+      # provides org.seleniumhq.selenium:selenium-devtools-v145/v146/v147 only, so the runner's
+      # own (frequently auto-updated) system Chrome can drift ahead of what this Selenium build's
+      # DevTools/CDP implementation actually supports. This step installs a known-compatible Chrome
+      # instead of relying on PATH.
+      - name: Set up compatible Chrome for CS UI tests
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0 (v2)
+        with:
+          chrome-version: '147'
+          install-chromedriver: true
+      - name: Check pinned Chrome/ChromeDriver versions
+        run: |
+          echo "Pinned Chrome version: ${{ steps.setup-chrome.outputs.chrome-version }}"
+          echo "Pinned Chrome path: ${{ steps.setup-chrome.outputs.chrome-path }}"
+          echo "Pinned ChromeDriver version: ${{ steps.setup-chrome.outputs.chromedriver-version }}"
+          echo "Pinned ChromeDriver path: ${{ steps.setup-chrome.outputs.chromedriver-path }}"
+      # NOTE: the systemTest task (ui-system-test/build.gradle.kts) runs in a forked test JVM, so a
+      # "-D..." flag on this ./gradlew invocation only reaches the Gradle build JVM, never the forked
+      # JVM that actually runs the Selenide/Spring test code — it is never forwarded automatically.
+      # systemTestBrowserBinary/systemTestChromeDriver are Gradle project properties (-P) that the
+      # build script explicitly forwards into the forked JVM's jvmArgs as
+      # -Dtest-automation.selenide.browser-binary and -Dwebdriver.chrome.driver respectively, the same
+      # way systemTestCsImageName below is forwarded as -Dtest-automation.custom.image-name.
+      # test-automation.selenide.browser-binary is bound by com.nortal.test:test-automation-selenide's
+      # SelenideProperties, a Spring @ConfigurationProperties(prefix = "test-automation.selenide") bean
+      # whose @PostConstruct initializer copies it into com.codeborne.selenide.Configuration.browserBinary.
       - name: Run Central Server system tests
         working-directory: ./src
-        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g :central-server:admin-service:ui-system-test:systemTest -PsystemTestCsImageName=localhost:5000/xrd-centralserver:${{ github.sha }}
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g :central-server:admin-service:ui-system-test:systemTest -PsystemTestCsImageName=localhost:5000/xrd-centralserver:${{ github.sha }} -PsystemTestBrowserBinary=${{ steps.setup-chrome.outputs.chrome-path }} -PsystemTestChromeDriver=${{ steps.setup-chrome.outputs.chromedriver-path }}
       - name: Test Central Server measurement
         uses: green-coding-solutions/eco-ci-energy-estimation@9fcdc7c7225cc2cbeead14d114a61a461bd37e66 # v5.2
         with:
