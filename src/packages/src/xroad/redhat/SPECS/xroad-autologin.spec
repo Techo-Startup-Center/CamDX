@@ -34,6 +34,8 @@ cp -a %{src}/redhat/%{name}.service %{buildroot}%{_unitdir}
 cp -p %{srcdir}/../../../LICENSE.txt %{buildroot}/usr/share/doc/%{name}/
 cp -p %{srcdir}/../../../3RD-PARTY-NOTICES.txt %{buildroot}/usr/share/doc/%{name}/
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 
