@@ -64,6 +64,8 @@ cp -p %{srcdir}/common/op-monitor/etc/xroad/backup.d/??_xroad-opmonitor %{buildr
 ln -s /usr/share/xroad/jlib/op-monitor-daemon-1.0.jar %{buildroot}/usr/share/xroad/jlib/op-monitor-daemon.jar
 ln -s /usr/share/xroad/scripts/generate-opmonitor-certificate.sh %{buildroot}/usr/bin/generate-opmonitor-certificate
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 

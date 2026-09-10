@@ -50,6 +50,8 @@ cp -p %{srcdir}/../../../../CHANGELOG.md %{buildroot}/usr/share/doc/%{name}/CHAN
 
 ln -s /usr/share/xroad/jlib/proxy-ui-api-1.0.jar %{buildroot}/usr/share/xroad/jlib/proxy-ui-api.jar
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 

@@ -64,6 +64,8 @@ cp -p %{srcdir}/common/base/usr/share/xroad/db/liquibase-core-4.19.0.jar %{build
 cp -p %{srcdir}/common/base/usr/share/xroad/db/liquibase.sh %{buildroot}/usr/share/xroad/db/liquibase.sh
 cp -p %{srcdir}/../../../../CHANGELOG.md %{buildroot}/usr/share/doc/%{name}/CHANGELOG.md
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 

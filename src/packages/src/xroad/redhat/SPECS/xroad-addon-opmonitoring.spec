@@ -31,6 +31,8 @@ cp -p %{srcdir}/../../../LICENSE.txt %{buildroot}/usr/share/doc/xroad-addon-opmo
 cp -p %{srcdir}/../../../3RD-PARTY-NOTICES.txt %{buildroot}/usr/share/doc/xroad-addon-opmonitoring/
 cp -p %{srcdir}/../../../../CHANGELOG.md %{buildroot}/usr/share/doc/xroad-addon-opmonitoring/
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 
