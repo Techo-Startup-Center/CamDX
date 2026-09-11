@@ -56,6 +56,8 @@ cp -p %{srcdir}/common/confclient/etc/xroad/backup.d/??_xroad-confclient %{build
 cp -p %{srcdir}/../../../LICENSE.txt %{buildroot}/usr/share/doc/%{name}/
 cp -p %{srcdir}/../../../3RD-PARTY-NOTICES.txt %{buildroot}/usr/share/doc/%{name}/
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 
