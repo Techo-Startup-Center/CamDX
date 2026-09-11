@@ -71,6 +71,8 @@ cp -p %{srcdir}/../../../libs/pkcs11wrapper/arm64/libpkcs11wrapper.so %{buildroo
 cp -p %{srcdir}/../../../libs/passwordstore/arm64/libpasswordstore.so %{buildroot}/usr/share/xroad/lib/
 %endif
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 

@@ -16,7 +16,10 @@ warn() {
 }
 
 if [[ $1 == "-release" ]] ; then
-  RELEASE=1
+  # Release (NEVR) number, e.g. 1 for 7.8.2-1.el9, 2 for a corrected 7.8.2-2.el9 respin.
+  # Defaults to 1 (unchanged prior behavior); override via XROAD_RPM_RELEASE so a fixed
+  # respin of the same upstream version never collides with a previously published NEVR.
+  RELEASE="${XROAD_RPM_RELEASE:-1}"
   FILES="xroad-*.spec"
   CMD="bb"
 else

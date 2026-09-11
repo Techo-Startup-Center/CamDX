@@ -69,6 +69,8 @@ cp -p %{_sourcedir}/proxy/xroad-proxy %{buildroot}/etc/cron.d/
 ln -s /usr/share/xroad/jlib/proxy-1.0.jar %{buildroot}/usr/share/xroad/jlib/proxy.jar
 ln -s /usr/share/xroad/bin/xroad-add-admin-user.sh %{buildroot}/usr/bin/xroad-add-admin-user
 
+%normalize_perms
+
 %clean
 rm -rf %{buildroot}
 
