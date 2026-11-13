@@ -4,8 +4,9 @@ name: E2E Tests
 # `variant`, so the Actions UI shows a single "e2e" group with one leg per substrate.
 #
 # The suite itself is identical in all lanes -- the same fat jar, the same scenario
-# classes -- and `test-framework.env-mode` selects the substrate. What differs is the
-# setup each substrate needs before the jar can attach, which is expressed as
+# classes -- and `test-framework.env-mode` selects the substrate (sidecar reuses
+# `compose` env-mode with the `ss0-stack=sidecar` switch). What differs is the setup
+# each substrate needs before the jar can attach, which is expressed as
 # variant-guarded steps. Everything from "Setup Java" onward is shared.
 #
 # The caller has no `needs: build-and-package` edge, so every leg starts with the
@@ -13,11 +14,13 @@ name: E2E Tests
 # package-independent prep (variant-guarded, see below) immediately -- this is what
 # overlaps with build-and-package -- then a uniform wait step polls for a readiness
 # marker artifact before downloading anything build-and-package produced. lxd waits
-# on `artifacts-ready` (native packages + e2e-test-jar); compose and k8s wait on
-# `images-ready` (all image pushes), since both deploy run-tagged images that land
-# later in that job. The marker also carries the image registry/tag: without the
-# `needs` edge, `needs.build-and-package.outputs.*` is not available to read them
-# from.
+# on `artifacts-ready` (native packages + e2e-test-jar); compose, k8s and sidecar wait
+# on `images-ready` (all image pushes), since all three deploy run-tagged images that
+# land later in that job -- sidecar additionally needs the tree-built DEBs
+# `artifacts-ready` carries, but those are uploaded earlier in the same linear job, so
+# waiting on the later marker alone is sufficient. The marker also carries the image
+# registry/tag: without the `needs` edge, `needs.build-and-package.outputs.*` is not
+# available to read them from.
 on:
   workflow_call:
     inputs:
@@ -30,7 +33,7 @@ on:
         required: true
         type: string
       variant:
-        description: 'E2E substrate: compose | lxd | k8s'
+        description: 'E2E substrate: compose | lxd | k8s | sidecar'
         required: true
         type: string
       runs_on:
@@ -41,15 +44,28 @@ on:
         description: 'Job timeout for this lane'
         required: true
         type: number
+      acl_mode:
+        description: 'compose only: ACL parity mode of the suite (legacy | dsp | dsp-refusal)'
+        required: false
+        type: string
+        default: 'dsp'
+      acl_report:
+        description: 'compose only: run the parity rows without fail-fast, write the verdicts TSV and summarise it'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   e2e:
     name: ${{ inputs.variant }}
-    # The lxd lane stays on pull_request and manual dispatch only; compose also gates
-    # pushes to develop. Guarding here rather than in the caller keeps the three lanes
-    # in one matrix -- an excluded lane shows as a skipped leg instead of vanishing.
+    # The lxd and sidecar lanes stay on pull_request and manual dispatch only; compose
+    # and k8s also run on pushes to develop. sidecar is new and unproven at CI scale --
+    # kept as narrow as lxd until it has a track record, rather than matching
+    # compose/k8s's broader scope by default. Guarding here rather than in the caller
+    # keeps all lanes in one matrix -- an excluded lane shows as a skipped leg instead
+    # of vanishing.
     if: >
-      inputs.variant != 'lxd'
+      (inputs.variant != 'lxd' && inputs.variant != 'sidecar')
       || github.event_name == 'workflow_dispatch'
       || github.event_name == 'pull_request'
     runs-on: ${{ inputs.runs_on }}
@@ -81,9 +97,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ansible jq
           ansible-galaxy collection install community.general ansible.posix
-          # LXD ships preinstalled via snap on ubuntu-24.04 runners; ensure it is ready.
-          sudo snap install lxd 2>/dev/null || true
-          sudo lxd waitready --timeout 60
+          sudo snap wait system seed.loaded
+          for attempt in 1 2 3 4 5; do
+            sudo snap install lxd && break
+            [ "$attempt" -eq 5 ] && exit 1
+            sleep $((attempt * 30))
+          done
+          sudo /snap/bin/lxd waitready --timeout 60
 
       # lxdbr0 must sit on 10.10.10.1/24 — that is the dnsmasq address the
       # native-lxd-stack networking scripts and *.lxd resolution assume.
@@ -171,24 +191,27 @@ jobs:
 
       - name: Login to GHCR (k8s)
         if: inputs.variant == 'k8s'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ------------------------------------------------------------ compose setup
+      # -------------------------------------------------- compose/sidecar setup
+
+      # sidecar runs the suite in compose env-mode (ss0-stack=sidecar), so it needs the
+      # same registry login and shared network as the compose lane.
 
       - name: Login to GHCR
-        if: inputs.variant == 'compose'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: inputs.variant == 'compose' || inputs.variant == 'sidecar'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create compose network
-        if: inputs.variant == 'compose'
+        if: inputs.variant == 'compose' || inputs.variant == 'sidecar'
         run: docker network create xroad-network
 
       # --------------------------------------------------------- wait for build
@@ -323,6 +346,32 @@ jobs:
             -e '{"xroad_image_pull_secret_namespaces": ["cs", "ss0", "ss1"]}'
           echo "PROVISION_SECS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
 
+      # ----------------------------------------------------- sidecar image build
+
+      # DEB artifact for the sidecar's base dist (Ubuntu 26.04 / resolute) -- the same
+      # tree-built packages the lxd leg consumes above, uploaded well before images-ready
+      # (see the marker header comment), so it is already available once that wait ends.
+      - name: Download resolute (Ubuntu 26.04) packages (sidecar)
+        if: inputs.variant == 'sidecar'
+        uses: ./.github/actions/download-artifact-retry
+        with:
+          name: lxd-packages-ubuntu26.04
+          path: deployment/native-packages/build/ubuntu26.04
+
+      # Builds the sidecar image from the tree-built DEBs via --packages-path. Tagged to
+      # match exactly what the e2e-test jar's generated .env already resolves SIDECAR_IMG
+      # to (build.gradle.kts's intTestComposeEnv resolves every service image, sidecar
+      # included, to $imageRegistry/<name>:$imageTag). No push:
+      # docker compose's default pull policy only fetches an image it cannot find
+      # locally, so a matching local tag is all the harness needs -- SIDECAR_IMG rides
+      # the same generated env as every other service image, with no runtime override.
+      - name: Build sidecar image
+        if: inputs.variant == 'sidecar'
+        working-directory: ./sidecar
+        run: |
+          ./docker-build.sh --target=full --packages-path=../deployment/native-packages/build/ubuntu26.04 \
+            "${{ env.SERVICE_IMAGE_TAG }}" "${{ env.IMAGE_REGISTRY }}/xroad-security-server-sidecar"
+
       # ------------------------------------------------------------------- shared
 
       - name: Download e2e-test JAR
@@ -331,7 +380,7 @@ jobs:
           name: e2e-test-jar
 
       - name: Setup Java
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: 'temurin'
           java-version: '25'
@@ -344,8 +393,16 @@ jobs:
           label: 'e2e-test setup'
 
       - name: Run e2e tests (compose)
-        if: inputs.variant == 'compose'
-        run: java -jar e2e-test-1.0.jar
+        if: inputs.variant == 'compose' && !inputs.acl_report
+        run: java -Dtest-framework.acl-mode=${{ inputs.acl_mode }} -jar e2e-test-1.0.jar
+
+      - name: Run e2e tests (compose, acl ${{ inputs.acl_mode }} report)
+        if: inputs.variant == 'compose' && inputs.acl_report
+        run: |
+          java -Dtest-framework.acl-mode=${{ inputs.acl_mode }} \
+            -Dtest-framework.acl-verdicts-file=test-framework-working-dir/acl-parity-${{ inputs.acl_mode }}-verdicts.tsv \
+            -Dtest-framework.fail-fast.threshold=0 \
+            -jar e2e-test-1.0.jar
 
       # sg lxd: the suite's LXD-mode transports (messagelog SQL, archiver trigger,
       # archive download) shell out to lxc, which needs the lxd group's socket access.
@@ -363,8 +420,12 @@ jobs:
           java -Dtest-framework.env-mode=k8s -jar e2e-test-1.0.jar
           echo "E2E_SECS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
 
+      - name: Run e2e tests (sidecar)
+        if: inputs.variant == 'sidecar'
+        run: java -Dtest-framework.env-mode=compose -Dtest-framework.ss0-stack=sidecar -jar e2e-test-1.0.jar
+
       - name: Log storage
-        if: always() && inputs.variant == 'compose'
+        if: always() && (inputs.variant == 'compose' || inputs.variant == 'sidecar')
         uses: ./.github/actions/log-storage
         with:
           label: 'e2e-test storage'
@@ -377,25 +438,49 @@ jobs:
           task: get-measurement
           label: 'e2e-test'
 
+      - name: ACL parity summary
+        if: ${{ !cancelled() && inputs.acl_report }}
+        env:
+          MODE: ${{ inputs.acl_mode }}
+          VERDICTS: test-framework-working-dir/acl-parity-${{ inputs.acl_mode }}-verdicts.tsv
+        run: |
+          rows=$(tail -n +2 "$VERDICTS" 2>/dev/null | grep -c . || true)
+          if [ "${rows:-0}" -eq 0 ]; then
+            echo "::error title=ACL parity ($MODE)::no verdicts in $VERDICTS: the parity rows never ran"
+            exit 1
+          fi
+          mismatches=$(awk -F'\t' 'NR > 1 && $2 == "MISMATCH"' "$VERDICTS" | wc -l | tr -d ' ')
+          if [ "$mismatches" -gt 0 ]; then
+            echo "::error title=ACL parity ($MODE)::$mismatches of $rows rows mismatch"
+          fi
+          {
+            echo "# ACL parity ($MODE): $mismatches of $rows rows mismatch"
+            echo ""
+            echo "| Row | Expected | Observed |"
+            echo "|-----|----------|----------|"
+            awk -F'\t' 'NR > 1 && $2 == "MISMATCH" { printf "| %s | %s | %s |\n", $1, $3, $4 }' "$VERDICTS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Test report
         env:
           NODE_OPTIONS: '--max-old-space-size=6144'
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3
         if: success() || failure()
         with:
-          name: e2e-test-${{ inputs.variant }}
+          name: e2e-test-${{ inputs.variant }}${{ inputs.acl_report && format('-acl-{0}', inputs.acl_mode) || '' }}
           path: test-framework-working-dir/test-results/TEST-*.xml
           reporter: java-junit
 
       - name: Upload e2e-test report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: e2e-test-${{ inputs.variant }}-report-${{ github.run_number }}
+          name: e2e-test-${{ inputs.variant }}${{ inputs.acl_report && format('-acl-{0}', inputs.acl_mode) || '' }}-report-${{ github.run_number }}
           path: |
             test-framework-working-dir/allure-report/index.html
             test-framework-working-dir/container-logs/
             test-framework-working-dir/test-automation-exec.log
+            test-framework-working-dir/acl-parity-*-verdicts.tsv
           if-no-files-found: warn
 
       # ------------------------------------------------------- k8s diagnostics
@@ -425,7 +510,7 @@ jobs:
 
       - name: Upload k8s logs
         if: always() && inputs.variant == 'k8s'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-k8s-cluster-logs-${{ github.run_number }}
           path: k8s-logs/
@@ -482,7 +567,7 @@ jobs:
 
       - name: Upload container logs
         if: always() && inputs.variant == 'lxd'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lxd-provision-logs-${{ github.run_number }}
           path: lxd-logs/

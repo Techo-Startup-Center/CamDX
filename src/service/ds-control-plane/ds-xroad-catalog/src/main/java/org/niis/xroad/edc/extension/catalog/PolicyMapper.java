@@ -30,9 +30,8 @@ import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.GlobalGroupId;
 import ee.ria.xroad.common.identifier.LocalGroupId;
 import ee.ria.xroad.common.identifier.XRoadId;
+import ee.ria.xroad.common.util.JsonUtils;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Nullable;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.edc.connector.controlplane.policy.spi.PolicyDefinition;
@@ -47,7 +46,9 @@ import org.eclipse.edc.policy.model.Permission;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.policy.model.PolicyType;
 import org.niis.xroad.edc.extension.policy.controlplane.XRoadPolicyNamespace;
+import org.niis.xroad.edc.extension.policy.controlplane.util.LocalGroupConstraintValue;
 import org.niis.xroad.serverconf.model.Endpoint;
+import tools.jackson.core.type.TypeReference;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -66,20 +67,19 @@ class PolicyMapper {
     static final String XROAD_DATAPATH_CONSTRAINT = XRoadPolicyNamespace.XROAD_DATAPATH;
     private static final String ODRL_USE_ACTION = "http://www.w3.org/ns/odrl/2/use";
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    PolicyDefinition toPolicyDefinition(String policyId, XRoadId subjectId,
+    PolicyDefinition toPolicyDefinition(String policyId, ClientId serviceOwner, XRoadId subjectId,
                                         List<Endpoint> endpoints, String participantContextId) {
         if (log.isTraceEnabled()) {
             log.trace("toPolicyDefinition policyId={} subjectId={} endpointCount={}",
                     policyId, subjectId.asEncodedId(), endpoints.size());
         }
         var constraints = new ArrayList<Constraint>();
-        constraints.add(createClientConstraint(subjectId));
+        constraints.add(createClientConstraint(serviceOwner, subjectId));
 
-        var specificEndpoints = endpoints.stream()
-                .filter(ep -> !ep.isBaseEndpoint())
-                .toList();
+        var allEndpointsGranted = endpoints.stream().anyMatch(Endpoint::isBaseEndpoint);
+        var specificEndpoints = allEndpointsGranted
+                ? List.<Endpoint>of()
+                : endpoints;
 
         if (!specificEndpoints.isEmpty()) {
             var pathConstraints = specificEndpoints.stream()
@@ -156,23 +156,21 @@ class PolicyMapper {
                 .build();
     }
 
-    private AtomicConstraint createClientConstraint(XRoadId subjectId) {
-        String constraintKey;
-        if (subjectId instanceof GlobalGroupId) {
-            constraintKey = XROAD_GLOBALGROUP_CONSTRAINT;
-        } else if (subjectId instanceof LocalGroupId) {
-            constraintKey = XROAD_LOCALGROUP_CONSTRAINT;
-        } else {
-            constraintKey = XROAD_CLIENT_ID_CONSTRAINT;
-        }
+    private AtomicConstraint createClientConstraint(ClientId serviceOwner, XRoadId subjectId) {
+        var constraint = switch (subjectId) {
+            case GlobalGroupId globalGroupId -> Map.entry(XROAD_GLOBALGROUP_CONSTRAINT, globalGroupId.asEncodedId());
+            case LocalGroupId localGroupId -> Map.entry(XROAD_LOCALGROUP_CONSTRAINT,
+                    new LocalGroupConstraintValue(serviceOwner, localGroupId.getGroupCode()).encode());
+            default -> Map.entry(XROAD_CLIENT_ID_CONSTRAINT, subjectId.asEncodedId());
+        };
         if (log.isTraceEnabled()) {
-            log.trace("createClientConstraint subjectId={} constraintKey={}", subjectId.asEncodedId(), constraintKey);
+            log.trace("createClientConstraint subjectId={} constraintKey={}", subjectId.asEncodedId(), constraint.getKey());
         }
 
         return AtomicConstraint.Builder.newInstance()
-                .leftExpression(new LiteralExpression(constraintKey))
+                .leftExpression(new LiteralExpression(constraint.getKey()))
                 .operator(Operator.EQ)
-                .rightExpression(new LiteralExpression(subjectId.asEncodedId()))
+                .rightExpression(new LiteralExpression(constraint.getValue()))
                 .build();
     }
 
@@ -207,8 +205,9 @@ class PolicyMapper {
             return List.of();
         }
         try {
-            var entries = objectMapper.readValue(additionalConditionJson,
-                    new TypeReference<List<Map<String, String>>>() { });
+            List<Map<String, String>> entries = JsonUtils.getObjectReader()
+                    .forType(new TypeReference<List<Map<String, String>>>() { })
+                    .readValue(additionalConditionJson);
             log.trace("parseAdditionalConditions method={} path={} serviceId={} parsed={} conditions",
                     method, path, serviceId, entries.size());
             return entries.stream()

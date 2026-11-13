@@ -50,8 +50,10 @@ import org.niis.xroad.securityserver.restapi.cache.SubsystemNameStatus;
 import org.niis.xroad.securityserver.restapi.exceptions.ErrorMessage;
 import org.niis.xroad.securityserver.restapi.repository.AccessRightRepository;
 import org.niis.xroad.securityserver.restapi.repository.ClientRepository;
+import org.niis.xroad.securityserver.restapi.repository.DsParticipantRepository;
 import org.niis.xroad.securityserver.restapi.repository.IdentifierRepository;
 import org.niis.xroad.securityserver.restapi.repository.LocalGroupRepository;
+import org.niis.xroad.securityserver.restapi.scheduling.DataspaceParticipantProvisioningTrigger;
 import org.niis.xroad.securityserver.restapi.util.ClientUtils;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.impl.entity.CertificateEntity;
@@ -128,12 +130,15 @@ public class ClientService {
     private final ServerConfService serverConfService;
     private final IdentifierService identifierService;
     private final IdentifierRepository identifierRepository;
+    private final DsParticipantRepository dsParticipantRepository;
     private final LocalGroupRepository localGroupRepository;
     private final AccessRightRepository accessRightRepository;
     private final ManagementRequestSenderService managementRequestSenderService;
     private final CurrentSecurityServerId currentSecurityServerId;
     private final SubsystemNameStatus subsystemNameStatus;
     private final AuditDataHelper auditDataHelper;
+    private final CatalogInvalidationNotifier catalogInvalidationNotifier;
+    private final DataspaceParticipantProvisioningTrigger dataspaceParticipantProvisioningTrigger;
 
     // request scoped contains all certificates of type sign
     private final CurrentSecurityServerSignCertificates currentSecurityServerSignCertificates;
@@ -808,6 +813,7 @@ public class ClientService {
         if (clientId.isSubsystem() && StringUtils.isNotEmpty(subsystemName)) {
             subsystemNameStatus.set(clientId, globalConfProvider.getSubsystemName(clientId), subsystemName);
         }
+        catalogInvalidationNotifier.invalidateCatalogCaches();
         return client;
     }
 
@@ -858,6 +864,7 @@ public class ClientService {
         }
         removeLocalClient(clientEntity);
         subsystemNameStatus.clear(clientId);
+        catalogInvalidationNotifier.invalidateCatalogCaches();
     }
 
     private void removeLocalClient(ClientEntity clientEntity) {
@@ -866,6 +873,8 @@ public class ClientService {
             throw XrdRuntimeException.systemInternalError("client to be deleted was somehow missing from server conf");
         }
         clientRepository.remove(clientEntity);
+
+        decommissionDataspaceBindingIfLastClient(clientEntity, serverConfEntity);
 
         if (!clientRegisteredOnOtherServers(clientEntity.getIdentifier())) {
             localGroupRepository.deleteGroupMembersByMemberId(clientEntity.getIdentifier());
@@ -877,9 +886,37 @@ public class ClientService {
         }
     }
 
+    /**
+     * Flips the member's dataspace participant binding to decommissioned, in this same transaction,
+     * once the deleted client was the member's last one on this server (own client and all
+     * subsystems counted), and schedules a provisioning run to tear it down after commit. Does
+     * nothing when the member was never bound.
+     */
+    private void decommissionDataspaceBindingIfLastClient(ClientEntity deletedClient, ServerConfEntity serverConfEntity) {
+        ClientId member = deletedClient.getIdentifier().getMemberId();
+        boolean anyClientsRemain = serverConfEntity.getClients().stream()
+                .map(ClientEntity::getIdentifier)
+                .map(ClientId::getMemberId)
+                .anyMatch(member::equals);
+        if (anyClientsRemain) {
+            return;
+        }
+        if (dsParticipantRepository.decommissionMember(member)) {
+            log.info("Data space participant binding for {} marked decommissioned", member);
+            dataspaceParticipantProvisioningTrigger.provisionParticipantAsync();
+        }
+    }
+
+    /**
+     * Whether the given (about-to-be-orphaned) identifier is still needed elsewhere: by a local
+     * group, an access right, or a dataspace participant binding — the last case covers a member's
+     * own identifier the moment its tombstone is written above, since that row's foreign key must
+     * never dangle.
+     */
     private boolean identifierReferenced(ClientIdEntity clientId) {
         return localGroupRepository.countGroupMembersByMemberId(clientId) > 0
-                || accessRightRepository.countBySubjectId(clientId) > 0;
+                || accessRightRepository.countBySubjectId(clientId) > 0
+                || dsParticipantRepository.findByMemberIdentifier(clientId).isPresent();
     }
 
     private boolean clientRegisteredOnOtherServers(ClientId clientId) {

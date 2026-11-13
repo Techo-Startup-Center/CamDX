@@ -28,6 +28,7 @@ package org.niis.xroad.securityserver.restapi.service;
 
 import ee.ria.xroad.common.identifier.ClientId;
 
+import com.apicatalog.did.Did;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +38,7 @@ import org.niis.xroad.common.core.exception.ErrorCode;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.common.identifiers.jpa.ClientIdEntityFactory;
 import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
+import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties;
 import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties.Dataspace;
 import org.niis.xroad.securityserver.restapi.repository.ClientRepository;
@@ -49,11 +51,15 @@ import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningStatus
 import org.niis.xroad.serverconf.impl.entity.ClientEntity;
 import org.niis.xroad.serverconf.impl.entity.DsParticipantEntity;
 import org.niis.xroad.serverconf.impl.entity.ServerConfEntity;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
+import org.niis.xroad.serverconf.model.Client;
 import org.niis.xroad.serverconf.model.ParticipantState;
 import org.niis.xroad.serverconf.model.ParticipantType;
+import org.niis.xroad.serverconf.model.PublicationState;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -65,13 +71,14 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class DataspaceProvisioningStatusServiceTest {
 
-    private static final String PARTICIPANT_ID = "test-participant";
-    private static final String MGMT_PARTICIPANT_ID = PARTICIPANT_ID + "-mgmt";
-    private static final String HOLDER_PID_SLOT0 = PARTICIPANT_ID + "-xroad-membership-credential-request";
-    private static final String MGMT_HOLDER_PID_SLOT0 = MGMT_PARTICIPANT_ID + "-xroad-membership-credential-request";
+    private static final String SYSTEM_PARTICIPANT_ID = ParticipantIdentifierScheme.SYSTEM_SEGMENT;
 
     private static final ClientId OWNER = ClientId.Conf.create("TEST", "GOV", "1234");
     private static final String OWNER_CTX_ID = ParticipantIdentifierScheme.memberCtxId(OWNER);
+    private static final String SYSTEM_HOLDER_PID_SLOT0 =
+            SYSTEM_PARTICIPANT_ID + "-" + OWNER_CTX_ID + ":SS0-xroad-membership-credential-request";
+    private static final String MEMBER_HOLDER_PID_SLOT0 =
+            OWNER_CTX_ID + "-" + OWNER_CTX_ID + ":SS0-xroad-membership-credential-request";
 
     @Mock
     private AdminServiceProperties adminServiceProperties;
@@ -89,83 +96,174 @@ class DataspaceProvisioningStatusServiceTest {
     private ServerConfRepository serverConfRepository;
     @Mock
     private DsParticipantRepository dsParticipantRepository;
+    @Mock
+    private GlobalConfProvider globalConfProvider;
 
     private DataspaceProvisioningService provisioningService;
     private DataspaceProvisioningStatusService statusService;
 
     @BeforeEach
     void setUp() {
-        lenient().when(dataspace.getParticipantId()).thenReturn(PARTICIPANT_ID);
         lenient().when(dataspace.getIdentityHubUrl()).thenReturn("https://ih.example.test");
-        lenient().when(dataspace.getIssuerDid()).thenReturn("did:web:issuer.example.test");
         lenient().when(dataspace.getCredentialDefinitionId()).thenReturn("xroad-membership-credential-definition");
         lenient().when(dataspace.getMaxHolderPidSlots()).thenReturn(20);
-        lenient().when(dataspace.getIdentityHubDidPort()).thenReturn(7183);
+        lenient().when(dataspace.getDidPort()).thenReturn(7183);
+        lenient().when(dataspace.getDspPort()).thenReturn(7181);
         lenient().when(dataspace.getIdentityHubStsPort()).thenReturn(7184);
         lenient().when(dataspace.getIdentityHubCredentialsPort()).thenReturn(7185);
         lenient().when(adminServiceProperties.getDataspace()).thenReturn(dataspace);
 
         var ownerEntity = mock(ClientEntity.class);
         lenient().when(ownerEntity.getIdentifier()).thenReturn(ClientIdEntityFactory.create(OWNER));
+        lenient().when(ownerEntity.getClientStatus()).thenReturn(Client.STATUS_REGISTERED);
         var serverConf = mock(ServerConfEntity.class);
         lenient().when(serverConf.getOwner()).thenReturn(ownerEntity);
+        lenient().when(serverConf.getServerCode()).thenReturn("SS0");
         lenient().when(serverConfRepository.getServerConf()).thenReturn(serverConf);
-        lenient().when(clientRepository.getAllLocalClients()).thenReturn(List.of());
+        lenient().when(clientRepository.getAllLocalClients()).thenReturn(List.of(ownerEntity));
         lenient().when(dsParticipantRepository.findByMemberIdentifier(any())).thenReturn(Optional.empty());
 
-        provisioningService = new DataspaceProvisioningService(adminServiceProperties, identityHubClient, controlPlaneClient,
-                clientRepository, serverConfRepository, dsParticipantRepository);
+        lenient().when(globalConfProvider.getSecurityServerAddress(any())).thenReturn("ss.example.test");
 
-        statusService = new DataspaceProvisioningStatusService(
-                provisioningService, readinessPredicates);
+        var ownSecurityServerResolver = new OwnSecurityServerResolver(
+                new ServerConfRepositoryIdentitySource(serverConfRepository), globalConfProvider);
+        provisioningService = new DataspaceProvisioningService(adminServiceProperties, identityHubClient, controlPlaneClient,
+                clientRepository, ownSecurityServerResolver, dsParticipantRepository, globalConfProvider,
+                new DataspaceDidAuthority(ownSecurityServerResolver, adminServiceProperties));
+
+        statusService = new DataspaceProvisioningStatusService(provisioningService, readinessPredicates,
+                new DataspaceDidAuthority(ownSecurityServerResolver, adminServiceProperties), dsParticipantRepository);
     }
 
     @Test
-    void readStatusAlwaysReportsHostAndManagementContextsBothIssued() {
+    void readStatusReportsServerLevelPublicationOfTheSystemValues() {
+        var systemRow = new DsParticipantEntity();
+        systemRow.setState(ParticipantState.ACTIVE);
+        systemRow.setPublicationState(PublicationState.REJECTED);
+        systemRow.setPublicationReason("conflict-reason");
+        when(dsParticipantRepository.findActiveSystemParticipant()).thenReturn(Optional.of(systemRow));
+        when(readinessPredicates.isDataspaceReady()).thenReturn(true);
+
+        var server = statusService.readStatus().server();
+
+        assertThat(server.dataspaceReady()).isTrue();
+        assertThat(server.dspBaseUrl()).contains("ss.example.test").contains("7181");
+        assertThat(server.publicationState()).isEqualTo(PublicationState.REJECTED);
+        assertThat(server.publicationReason()).isEqualTo("conflict-reason");
+    }
+
+    @Test
+    void readStatusReportsNotSentWhenTheSystemRowHasNoPublicationState() {
+        var systemRow = new DsParticipantEntity();
+        systemRow.setState(ParticipantState.ACTIVE);
+        when(dsParticipantRepository.findActiveSystemParticipant()).thenReturn(Optional.of(systemRow));
+
+        var server = statusService.readStatus().server();
+
+        assertThat(server.publicationState()).isEqualTo(PublicationState.NOT_SENT);
+        assertThat(server.publicationReason()).isNull();
+    }
+
+    @Test
+    void readStatusIgnoresThePublicationOfADecommissionedSystemRow() {
+        when(dsParticipantRepository.findActiveSystemParticipant()).thenReturn(Optional.empty());
+
+        var server = statusService.readStatus().server();
+
+        assertThat(server.publicationState()).isEqualTo(PublicationState.NOT_SENT);
+        assertThat(server.publicationReason()).isNull();
+    }
+
+    @Test
+    void readStatusReportsThePublicationOfAMemberRowAndNoneForTheSystemContext() {
+        var memberRow = new DsParticipantEntity();
+        memberRow.setState(ParticipantState.ACTIVE);
+        memberRow.setPublicationState(PublicationState.REJECTED);
+        memberRow.setPublicationReason("conflict-reason");
+        when(dsParticipantRepository.findByMemberIdentifier(OWNER)).thenReturn(Optional.of(memberRow));
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+
+        var status = statusService.readStatus();
+
+        assertThat(status.memberPublications()).containsOnlyKeys(OWNER_CTX_ID);
+        var publication = status.memberPublications().get(OWNER_CTX_ID);
+        assertThat(publication.publicationState()).isEqualTo(PublicationState.REJECTED);
+        assertThat(publication.publicationReason()).isEqualTo("conflict-reason");
+    }
+
+    @Test
+    void readStatusIgnoresThePublicationOfADecommissionedMemberRow() {
+        var activeRow = new DsParticipantEntity();
+        activeRow.setState(ParticipantState.ACTIVE);
+        var decommissionedRow = new DsParticipantEntity();
+        decommissionedRow.setState(ParticipantState.DECOMMISSIONED);
+        decommissionedRow.setPublicationState(PublicationState.REJECTED);
+        decommissionedRow.setPublicationReason("conflict-reason");
+        var reads = new AtomicInteger();
+        when(dsParticipantRepository.findByMemberIdentifier(OWNER))
+                .thenAnswer(_ -> Optional.of(reads.getAndIncrement() == 0 ? activeRow : decommissionedRow));
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+
+        var publication = statusService.readStatus().memberPublications().get(OWNER_CTX_ID);
+
+        assertThat(publication.publicationState()).isEqualTo(PublicationState.NOT_SENT);
+        assertThat(publication.publicationReason()).isNull();
+    }
+
+    @Test
+    void readStatusReportsNotSentForAMemberWithoutAPublicationStateOrRow() {
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+
+        var publication = statusService.readStatus().memberPublications().get(OWNER_CTX_ID);
+
+        assertThat(publication.publicationState()).isEqualTo(PublicationState.NOT_SENT);
+        assertThat(publication.publicationReason()).isNull();
+    }
+
+    @Test
+    void readStatusReportsSystemAndMemberContextsWithCredentialStatus() {
         when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
-        when(identityHubClient.contextDid(PARTICIPANT_ID)).thenReturn(Optional.of("did:web:host"));
-        when(identityHubClient.contextDid(MGMT_PARTICIPANT_ID)).thenReturn(Optional.of("did:web:host:mgmt"));
-        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ISSUED.name());
-        when(identityHubClient.getCredentialRequestState(MGMT_PARTICIPANT_ID, MGMT_HOLDER_PID_SLOT0))
+        when(identityHubClient.contextDid(SYSTEM_PARTICIPANT_ID)).thenReturn(Optional.of(Did.parse("did:web:host:v1:system")));
+        when(identityHubClient.contextDid(OWNER_CTX_ID)).thenReturn(Optional.of(Did.parse("did:web:host:v1:TEST:GOV:1234")));
+        when(identityHubClient.getCredentialRequestState(SYSTEM_PARTICIPANT_ID, SYSTEM_HOLDER_PID_SLOT0))
                 .thenReturn(CredentialStatus.ISSUED.name());
+        when(identityHubClient.getCredentialRequestState(OWNER_CTX_ID, MEMBER_HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ISSUED.name());
 
         DataspaceStatus status = statusService.readStatus();
 
         assertThat(status.enabled()).isTrue();
-        assertThat(status.participantContexts()).hasSize(3);
-        var host = status.participantContexts().get(0);
-        var mgmt = status.participantContexts().get(1);
-        assertThat(host.participantId()).isEqualTo(PARTICIPANT_ID);
-        assertThat(host.kind()).isEqualTo(ParticipantKind.HOST);
-        assertThat(host.contextCreated()).isTrue();
-        assertThat(host.credentialStatus()).isEqualTo(CredentialStatus.ISSUED);
-        assertThat(mgmt.participantId()).isEqualTo(MGMT_PARTICIPANT_ID);
-        assertThat(mgmt.kind()).isEqualTo(ParticipantKind.MANAGEMENT);
-        assertThat(mgmt.contextCreated()).isTrue();
-        assertThat(mgmt.credentialStatus()).isEqualTo(CredentialStatus.ISSUED);
-        assertThat(status.participantContexts().get(2).kind()).isEqualTo(ParticipantKind.MEMBER);
-        assertThat(status.participantContexts().get(2).participantId()).isEqualTo(OWNER_CTX_ID);
+        assertThat(status.participantContexts()).hasSize(2);
+        var system = status.participantContexts().get(0);
+        var member = status.participantContexts().get(1);
+        assertThat(system.participantId()).isEqualTo(SYSTEM_PARTICIPANT_ID);
+        assertThat(system.kind()).isEqualTo(ParticipantKind.SYSTEM);
+        assertThat(system.contextCreated()).isTrue();
+        assertThat(system.credentialStatus()).isEqualTo(CredentialStatus.ISSUED);
+        assertThat(member.participantId()).isEqualTo(OWNER_CTX_ID);
+        assertThat(member.kind()).isEqualTo(ParticipantKind.MEMBER);
+        assertThat(member.contextCreated()).isTrue();
+        assertThat(member.credentialStatus()).isEqualTo(CredentialStatus.ISSUED);
     }
 
     @Test
-    void readStatusReportsManagementContextEvenWhenHostIssuedAndManagementAbsent() {
+    void readStatusReportsMemberContextEvenWhenSystemIssuedAndMemberAbsent() {
         when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
-        when(identityHubClient.contextDid(PARTICIPANT_ID)).thenReturn(Optional.of("did:web:host"));
-        when(identityHubClient.contextDid(MGMT_PARTICIPANT_ID)).thenReturn(Optional.empty());
+        when(identityHubClient.contextDid(SYSTEM_PARTICIPANT_ID)).thenReturn(Optional.of(Did.parse("did:web:host:v1:system")));
         when(identityHubClient.contextDid(OWNER_CTX_ID)).thenReturn(Optional.empty());
-        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ISSUED.name());
+        when(identityHubClient.getCredentialRequestState(SYSTEM_PARTICIPANT_ID, SYSTEM_HOLDER_PID_SLOT0))
+                .thenReturn(CredentialStatus.ISSUED.name());
 
         DataspaceStatus status = statusService.readStatus();
 
-        assertThat(status.participantContexts()).hasSize(3);
-        var host = status.participantContexts().get(0);
-        var mgmt = status.participantContexts().get(1);
-        assertThat(host.kind()).isEqualTo(ParticipantKind.HOST);
-        assertThat(host.contextCreated()).isTrue();
-        assertThat(host.credentialStatus()).isEqualTo(CredentialStatus.ISSUED);
-        assertThat(mgmt.kind()).isEqualTo(ParticipantKind.MANAGEMENT);
-        assertThat(mgmt.contextCreated()).isFalse();
-        assertThat(mgmt.credentialStatus()).isEqualTo(CredentialStatus.ABSENT);
+        assertThat(status.participantContexts()).hasSize(2);
+        var system = status.participantContexts().get(0);
+        var member = status.participantContexts().get(1);
+        assertThat(system.kind()).isEqualTo(ParticipantKind.SYSTEM);
+        assertThat(system.contextCreated()).isTrue();
+        assertThat(system.credentialStatus()).isEqualTo(CredentialStatus.ISSUED);
+        assertThat(member.kind()).isEqualTo(ParticipantKind.MEMBER);
+        assertThat(member.contextCreated()).isFalse();
+        assertThat(member.credentialStatus()).isEqualTo(CredentialStatus.ABSENT);
     }
 
     @Test
@@ -177,7 +275,7 @@ class DataspaceProvisioningStatusServiceTest {
         DataspaceStatus status = statusService.readStatus();
 
         assertThat(status.enabled()).isTrue();
-        assertThat(status.participantContexts()).hasSize(3);
+        assertThat(status.participantContexts()).hasSize(2);
         assertThat(status.participantContexts())
                 .allSatisfy(ctx -> {
                     assertThat(ctx.contextCreated()).isFalse();
@@ -194,9 +292,26 @@ class DataspaceProvisioningStatusServiceTest {
 
         DataspaceStatus status = statusService.readStatus();
 
+        assertThat(status.participantContexts()).hasSize(1);
+        assertThat(status.participantContexts()).extracting(DataspaceProvisioningService.ParticipantContextStatus::kind)
+                .containsExactly(ParticipantKind.SYSTEM);
+        assertThat(status.participantContexts())
+                .allSatisfy(ctx -> {
+                    assertThat(ctx.contextCreated()).isFalse();
+                    assertThat(ctx.credentialStatus()).isEqualTo(CredentialStatus.ABSENT);
+                });
+    }
+
+    @Test
+    void readStatusProvisionedContextsReportedForSystemAndMember() {
+        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+
+        DataspaceStatus status = statusService.readStatus();
+
         assertThat(status.participantContexts()).hasSize(2);
         assertThat(status.participantContexts()).extracting(DataspaceProvisioningService.ParticipantContextStatus::kind)
-                .containsExactly(ParticipantKind.HOST, ParticipantKind.MANAGEMENT);
+                .containsExactly(ParticipantKind.SYSTEM, ParticipantKind.MEMBER);
         assertThat(status.participantContexts())
                 .allSatisfy(ctx -> {
                     assertThat(ctx.contextCreated()).isFalse();
@@ -205,54 +320,123 @@ class DataspaceProvisioningStatusServiceTest {
     }
 
     @Test
-    void readStatusProvisionedContextsReportedWithAllKinds() {
+    void readStatusReportsUnboundIdentityForSystemAndMemberWithoutBindingRows() {
         when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
         when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
 
         DataspaceStatus status = statusService.readStatus();
 
-        assertThat(status.participantContexts()).hasSize(3);
-        assertThat(status.participantContexts()).extracting(DataspaceProvisioningService.ParticipantContextStatus::kind)
-                .containsExactly(ParticipantKind.HOST, ParticipantKind.MANAGEMENT, ParticipantKind.MEMBER);
-        assertThat(status.participantContexts())
-                .allSatisfy(ctx -> {
-                    assertThat(ctx.contextCreated()).isFalse();
-                    assertThat(ctx.credentialStatus()).isEqualTo(CredentialStatus.ABSENT);
-                });
-    }
-
-    @Test
-    void readStatusReportsIdentityStatusOnlyForMemberContexts() {
-        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
-        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
-
-        DataspaceStatus status = statusService.readStatus();
-
-        var host = status.participantContexts().get(0);
-        var mgmt = status.participantContexts().get(1);
-        var member = status.participantContexts().get(2);
-        assertThat(host.identityStatus()).isNull();
-        assertThat(mgmt.identityStatus()).isNull();
+        var system = status.participantContexts().get(0);
+        var member = status.participantContexts().get(1);
+        assertThat(system.identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
         assertThat(member.identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
     }
 
     @Test
-    void readStatusReportsIdentityMismatchForDriftedBoundRow() {
+    void readStatusReportsRejectedIdentityForSystemAndMemberWhenTheAddressCannotCarryADid() {
         when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
         when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
-        var bound = new DsParticipantEntity();
-        bound.setParticipantType(ParticipantType.MEMBER);
-        bound.setMemberIdentifier(ClientIdEntityFactory.create(OWNER));
-        bound.setCtxId(OWNER_CTX_ID);
-        bound.setDid(ParticipantIdentifierScheme.memberDid(OWNER, "ih.other.test:7183"));
-        bound.setSchemeVersion(ParticipantIdentifierScheme.SCHEME_VERSION);
-        bound.setState(ParticipantState.ACTIVE);
+        when(globalConfProvider.getSecurityServerAddress(any())).thenReturn("b\u00fccher.example");
+
+        DataspaceStatus status = statusService.readStatus();
+
+        var system = status.participantContexts().getFirst();
+        var member = status.participantContexts().getLast();
+        assertThat(system.identityStatus()).isEqualTo(IdentityStatus.REJECTED);
+        assertThat(system.intendedDid()).isNull();
+        assertThat(member.identityStatus()).isEqualTo(IdentityStatus.REJECTED);
+        assertThat(member.intendedDid()).isNull();
+        assertThat(status.server().dspBaseUrl()).isNull();
+    }
+
+    @Test
+    void readStatusReportsSystemIdentityOkOnceItsBindingRowExists() {
+        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findSystemParticipant())
+                .thenReturn(Optional.of(systemRow(ParticipantIdentifierScheme.systemDid("ss.example.test:7183"))));
+
+        DataspaceStatus status = statusService.readStatus();
+
+        assertThat(status.participantContexts().getFirst().identityStatus()).isEqualTo(IdentityStatus.OK);
+    }
+
+    @Test
+    void readStatusReportsSystemIdentityDriftWhenHubServesDifferentDid() {
+        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+        when(identityHubClient.contextDid(SYSTEM_PARTICIPANT_ID))
+                .thenReturn(Optional.of(ParticipantIdentifierScheme.systemDid("ih.other.test:7183")));
+        when(dsParticipantRepository.findSystemParticipant())
+                .thenReturn(Optional.of(systemRow(ParticipantIdentifierScheme.systemDid("ss.example.test:7183"))));
+
+        DataspaceStatus status = statusService.readStatus();
+
+        assertThat(status.participantContexts().getFirst().identityStatus()).isEqualTo(IdentityStatus.DRIFTED);
+    }
+
+    @Test
+    void readStatusKeepsSystemBindingOkWhenRegisteredAddressDiffersFromBoundDid() {
+        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findSystemParticipant())
+                .thenReturn(Optional.of(systemRow(ParticipantIdentifierScheme.systemDid("ih.other.test:7183"))));
+
+        DataspaceStatus status = statusService.readStatus();
+
+        var system = status.participantContexts().getFirst();
+        assertThat(system.identityStatus()).isEqualTo(IdentityStatus.OK);
+        assertThat(system.intendedDid()).isEqualTo(ParticipantIdentifierScheme.systemDid("ih.other.test:7183"));
+    }
+
+    @Test
+    void readStatusKeepsBindingsOkWhenRegisteredAddressBecomesNonAscii() {
+        lenient().when(globalConfProvider.getSecurityServerAddress(any())).thenReturn("b\u00fccher.example");
+        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findSystemParticipant())
+                .thenReturn(Optional.of(systemRow(ParticipantIdentifierScheme.systemDid("ss.example.test:7183"))));
+        when(dsParticipantRepository.findByMemberIdentifier(OWNER))
+                .thenReturn(Optional.of(memberRow(ParticipantIdentifierScheme.memberDid(OWNER, "ss.example.test:7183"))));
+
+        DataspaceStatus status = statusService.readStatus();
+
+        assertThat(status.participantContexts()).extracting(DataspaceProvisioningService.ParticipantContextStatus::identityStatus)
+                .containsExactly(IdentityStatus.OK, IdentityStatus.OK);
+    }
+
+    private static DsParticipantEntity systemRow(Did did) {
+        var row = new DsParticipantEntity();
+        row.setParticipantType(ParticipantType.SYSTEM);
+        row.setCtxId(SYSTEM_PARTICIPANT_ID);
+        row.setDid(did.toString());
+        row.setSchemeVersion(ParticipantIdentifierScheme.SCHEME_VERSION);
+        row.setState(ParticipantState.ACTIVE);
+        return row;
+    }
+
+    @Test
+    void readStatusKeepsMemberBindingOkWhenRegisteredAddressDiffersFromBoundDid() {
+        when(readinessPredicates.hasRegisteredAuthCert()).thenReturn(false);
+        when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+        var bound = memberRow(ParticipantIdentifierScheme.memberDid(OWNER, "ih.other.test:7183"));
         when(dsParticipantRepository.findByMemberIdentifier(OWNER)).thenReturn(Optional.of(bound));
 
         DataspaceStatus status = statusService.readStatus();
 
-        assertThat(status.participantContexts().get(2).identityStatus())
-                .isEqualTo(IdentityStatus.MISMATCH);
+        assertThat(status.participantContexts().get(1).identityStatus())
+                .isEqualTo(IdentityStatus.OK);
+    }
+
+    private static DsParticipantEntity memberRow(Did did) {
+        var row = new DsParticipantEntity();
+        row.setParticipantType(ParticipantType.MEMBER);
+        row.setMemberIdentifier(ClientIdEntityFactory.create(OWNER));
+        row.setCtxId(OWNER_CTX_ID);
+        row.setDid(did.toString());
+        row.setSchemeVersion(ParticipantIdentifierScheme.SCHEME_VERSION);
+        row.setState(ParticipantState.ACTIVE);
+        return row;
     }
 
     @Test
@@ -264,7 +448,7 @@ class DataspaceProvisioningStatusServiceTest {
 
         DataspaceStatus status = statusService.readStatus();
 
-        assertThat(status.participantContexts().get(2).identityStatus())
+        assertThat(status.participantContexts().get(1).identityStatus())
                 .isEqualTo(IdentityStatus.DRIFTED);
     }
 
@@ -278,8 +462,8 @@ class DataspaceProvisioningStatusServiceTest {
 
         DataspaceStatus status = statusService.readStatus();
 
-        assertThat(status.participantContexts()).hasSize(2);
+        assertThat(status.participantContexts()).hasSize(1);
         assertThat(status.participantContexts()).extracting(DataspaceProvisioningService.ParticipantContextStatus::kind)
-                .containsExactly(ParticipantKind.HOST, ParticipantKind.MANAGEMENT);
+                .containsExactly(ParticipantKind.SYSTEM);
     }
 }

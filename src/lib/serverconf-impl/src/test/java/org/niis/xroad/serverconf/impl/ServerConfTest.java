@@ -30,6 +30,7 @@ import ee.ria.xroad.common.ExpectedXrdRuntimeException;
 import ee.ria.xroad.common.ServicePrioritizationStrategy;
 import ee.ria.xroad.common.db.DatabaseCtx;
 import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.LocalGroupId;
 import ee.ria.xroad.common.identifier.SecurityServerId;
 import ee.ria.xroad.common.identifier.ServiceId;
 import ee.ria.xroad.common.util.CryptoUtils;
@@ -44,6 +45,7 @@ import org.niis.xroad.common.CostType;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.ServerConfProvider;
 import org.niis.xroad.serverconf.impl.dao.ServiceDAOImpl;
+import org.niis.xroad.serverconf.model.Endpoint;
 import org.niis.xroad.test.globalconf.TestGlobalConfFactory;
 
 import java.security.cert.X509Certificate;
@@ -60,6 +62,9 @@ import static org.junit.Assert.assertTrue;
 import static org.niis.xroad.common.core.exception.ErrorCode.UNKNOWN_SERVICE;
 import static org.niis.xroad.serverconf.impl.TestUtil.BASE64_CERT;
 import static org.niis.xroad.serverconf.impl.TestUtil.CLIENT_CODE;
+import static org.niis.xroad.serverconf.impl.TestUtil.CROSS_SS_GROUP_CODE;
+import static org.niis.xroad.serverconf.impl.TestUtil.CROSS_SS_MEMBER_CODE;
+import static org.niis.xroad.serverconf.impl.TestUtil.CROSS_SS_SUBSYSTEM_CODE;
 import static org.niis.xroad.serverconf.impl.TestUtil.MEMBER_CLASS;
 import static org.niis.xroad.serverconf.impl.TestUtil.MEMBER_CODE;
 import static org.niis.xroad.serverconf.impl.TestUtil.NUM_CLIENTS;
@@ -68,11 +73,15 @@ import static org.niis.xroad.serverconf.impl.TestUtil.NUM_SERVICES;
 import static org.niis.xroad.serverconf.impl.TestUtil.NUM_TSPS;
 import static org.niis.xroad.serverconf.impl.TestUtil.SERVER_CODE;
 import static org.niis.xroad.serverconf.impl.TestUtil.SERVICE_CODE;
+import static org.niis.xroad.serverconf.impl.TestUtil.SERVICE_DISABLED_BLANK_NOTICE;
+import static org.niis.xroad.serverconf.impl.TestUtil.SERVICE_DISABLED_NULL_NOTICE;
 import static org.niis.xroad.serverconf.impl.TestUtil.SERVICE_TIMEOUT;
 import static org.niis.xroad.serverconf.impl.TestUtil.SERVICE_URL;
 import static org.niis.xroad.serverconf.impl.TestUtil.SERVICE_VERSION;
 import static org.niis.xroad.serverconf.impl.TestUtil.SUBSYSTEM;
 import static org.niis.xroad.serverconf.impl.TestUtil.XROAD_INSTANCE;
+import static org.niis.xroad.serverconf.impl.TestUtil.addDisabledService;
+import static org.niis.xroad.serverconf.impl.TestUtil.addRestGrant;
 import static org.niis.xroad.serverconf.impl.TestUtil.client;
 import static org.niis.xroad.serverconf.impl.TestUtil.createTestClientId;
 import static org.niis.xroad.serverconf.impl.TestUtil.createTestServiceId;
@@ -103,6 +112,10 @@ public class ServerConfTest {
         serverConfProvider = new ServerConfImpl(DATABASE_CTX, globalConfProvider, null);
 
         prepareDB(DATABASE_CTX);
+        addRestGrant(DATABASE_CTX, createTestClientId(client(1)), "restBase", "GET", "**");
+        addRestGrant(DATABASE_CTX, createTestClientId(client(1)), "restPublic", "GET", "/public");
+        addDisabledService(DATABASE_CTX, createTestClientId(client(2)), SERVICE_DISABLED_NULL_NOTICE, null);
+        addDisabledService(DATABASE_CTX, createTestClientId(client(2)), SERVICE_DISABLED_BLANK_NOTICE, " ");
     }
 
     @AfterClass
@@ -221,9 +234,25 @@ public class ServerConfTest {
         ServiceId existingService = createTestServiceId(client(1),
                 service(NUM_SERVICEDESCRIPTIONS - 1, NUM_SERVICES - 1), SERVICE_VERSION);
         ServiceId nonExistingService = createTestServiceId("foo", "bar");
+        ServiceId enabledService = createTestServiceId(client(1), service(0, 0), SERVICE_VERSION);
 
-        assertNotNull(serverConfProvider.getDisabledNotice(existingService));
+        assertEquals("disabledNotice", serverConfProvider.getDisabledNotice(existingService));
+        assertNull(serverConfProvider.getDisabledNotice(enabledService));
         assertNull(serverConfProvider.getDisabledNotice(nonExistingService));
+    }
+
+    /**
+     * Tests that a disabled service description without notice text reports the default notice.
+     */
+    @Test
+    public void getDisabledNoticeDefaultsWhenNoticeIsNullOrBlank() {
+        ServiceId nullNoticeService = createTestServiceId(client(2), SERVICE_DISABLED_NULL_NOTICE, SERVICE_VERSION);
+        ServiceId blankNoticeService = createTestServiceId(client(2), SERVICE_DISABLED_BLANK_NOTICE, SERVICE_VERSION);
+
+        assertEquals(String.format("Service '%s' is disabled", nullNoticeService),
+                serverConfProvider.getDisabledNotice(nullNoticeService));
+        assertEquals(String.format("Service '%s' is disabled", blankNoticeService),
+                serverConfProvider.getDisabledNotice(blankNoticeService));
     }
 
     /**
@@ -262,6 +291,111 @@ public class ServerConfTest {
         assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/%2e%2e/secret"));
         assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/api/%2e%2e/secret"));
         assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/api/test/%2e%2e/%2e%2e/secret"));
+    }
+
+    /**
+     * Tests that ambiguous request paths are not allowed.
+     */
+    @Test
+    public void isQueryAllowedRejectsAmbiguousPaths() {
+        ClientId client1 = createTestClientId(client(1));
+        ServiceId serviceRest = createTestServiceId(client1.getMemberCode(), "rest", null);
+        ServiceId serviceBase = createTestServiceId(client1.getMemberCode(), "restBase", null);
+        ServiceId servicePublic = createTestServiceId(client1.getMemberCode(), "restPublic", null);
+
+        assertTrue(serverConfProvider.isQueryAllowed(client1, servicePublic, "GET", "/public"));
+        assertTrue(serverConfProvider.isQueryAllowed(client1, serviceBase, "GET", "/secret"));
+
+        assertFalse(serverConfProvider.isQueryAllowed(client1, servicePublic, "GET", "/public%3Fx"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "POST", "/api/test/1%3F/../../admin"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/api/foo%23x"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceBase, "GET", "/%2F../secret"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/%2F../api/x"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "POST", "/api/test/.;x/../y"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/api/test/;x/../../admin"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "POST", "/api/test%252Fbar"));
+        assertFalse(serverConfProvider.isQueryAllowed(client1, serviceRest, "GET", "/api/foo bar"));
+    }
+
+    /**
+     * Tests the owner-scoped local-group membership check DSP uses: it matches a group member by its
+     * member-level identity regardless of whether that member is a client of this security server,
+     * and it never falls back to a group some other client happens to own under the same code.
+     */
+    @Test
+    public void isLocalGroupMember() {
+        ClientId owner = createTestClientId(client(1));
+        ClientId otherOwner = createTestClientId(client(2));
+        LocalGroupId groupId = LocalGroupId.Conf.create(CROSS_SS_GROUP_CODE);
+
+        ClientId crossSsMember = ClientId.Conf.create(XROAD_INSTANCE, MEMBER_CLASS, CROSS_SS_MEMBER_CODE);
+        ClientId crossSsMemberOtherSubsystem = ClientId.Conf.create(
+                XROAD_INSTANCE, MEMBER_CLASS, CROSS_SS_MEMBER_CODE, "otherSubsystem");
+        ClientId otherMemberSameSubsystemCode = ClientId.Conf.create(
+                XROAD_INSTANCE, MEMBER_CLASS, "notTheCrossSsMember", CROSS_SS_SUBSYSTEM_CODE);
+
+        // Owner's group contains the consumer subsystem; the consumer is not a client of this SS.
+        assertTrue(serverConfProvider.isLocalGroupMember(owner, groupId, crossSsMember));
+
+        // Matches by member part only: a different subsystem of the same member still matches.
+        assertTrue(serverConfProvider.isLocalGroupMember(owner, groupId, crossSsMemberOtherSubsystem));
+
+        // A different member with the same subsystem code does not match.
+        assertFalse(serverConfProvider.isLocalGroupMember(owner, groupId, otherMemberSameSubsystemCode));
+
+        // otherOwner owns a group with the same code, but otherOwner itself is not a member of
+        // owner's group: scoping to the owner must not fall back to the consumer's own groups.
+        assertFalse(serverConfProvider.isLocalGroupMember(owner, groupId, otherOwner));
+
+        // An owner id that is not a client of this security server fails closed.
+        ClientId unknownOwner = createTestClientId(CLIENT_CODE + "Unknown");
+        assertFalse(serverConfProvider.isLocalGroupMember(unknownOwner, groupId, crossSsMember));
+
+        // A group code the owner does not have fails closed.
+        assertFalse(serverConfProvider.isLocalGroupMember(owner, LocalGroupId.Conf.create("noSuchGroup"), crossSsMember));
+    }
+
+    /**
+     * Tests the exact local-group membership check the ServerProxy uses for group tokens: the subsystem must
+     * be the group's member, as in the legacy ACL, and a member-level identity does not match.
+     */
+    @Test
+    public void isExactLocalGroupMember() {
+        ClientId owner = createTestClientId(client(1));
+        LocalGroupId groupId = LocalGroupId.Conf.create(CROSS_SS_GROUP_CODE);
+
+        ClientId groupMember = ClientId.Conf.create(
+                XROAD_INSTANCE, MEMBER_CLASS, CROSS_SS_MEMBER_CODE, CROSS_SS_SUBSYSTEM_CODE);
+        ClientId sameMemberOtherSubsystem = ClientId.Conf.create(
+                XROAD_INSTANCE, MEMBER_CLASS, CROSS_SS_MEMBER_CODE, "otherSubsystem");
+        ClientId memberLevel = ClientId.Conf.create(XROAD_INSTANCE, MEMBER_CLASS, CROSS_SS_MEMBER_CODE);
+
+        assertTrue(serverConfProvider.isExactLocalGroupMember(owner, groupId, groupMember));
+        assertFalse(serverConfProvider.isExactLocalGroupMember(owner, groupId, sameMemberOtherSubsystem));
+        assertFalse(serverConfProvider.isExactLocalGroupMember(owner, groupId, memberLevel));
+        assertFalse(serverConfProvider.isExactLocalGroupMember(
+                createTestClientId(CLIENT_CODE + "Unknown"), groupId, groupMember));
+        assertFalse(serverConfProvider.isExactLocalGroupMember(
+                owner, LocalGroupId.Conf.create("noSuchGroup"), groupMember));
+    }
+
+    /**
+     * Tests getting the ACL endpoint entries a client holds for a service — the same entries
+     * {@link #isQueryAllowed()} matches a request against.
+     */
+    @Test
+    public void getAclEndpoints() {
+        ClientId client1 = createTestClientId(client(1));
+        ClientId clientX = createTestClientId(CLIENT_CODE + "X");
+        ServiceId serviceRest = createTestServiceId(client1.getMemberCode(), "rest", null);
+
+        List<Endpoint> endpoints = serverConfProvider.getAclEndpoints(client1, serviceRest);
+
+        assertEquals(2, endpoints.size());
+        assertTrue(endpoints.stream().anyMatch(e -> "GET".equals(e.getMethod()) && "/api/**".equals(e.getPath())));
+        assertTrue(endpoints.stream().anyMatch(e -> "POST".equals(e.getMethod()) && "/api/test/*".equals(e.getPath())));
+
+        assertTrue(serverConfProvider.getAclEndpoints(clientX, serviceRest).isEmpty());
     }
 
     /**

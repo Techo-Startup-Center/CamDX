@@ -120,6 +120,9 @@ public enum ErrorMessage implements DeviationBuilder.ErrorDeviationBuilder {
     ALREADY_DISABLED_MAINTENANCE_MODE("already_disabled_maintenance_mode"),
     DUPLICATE_ADDRESS_CHANGE_REQUEST("address_change_request_already_submitted"),
     SAME_ADDRESS_CHANGE_REQUEST("same_address_change_request"),
+    SERVER_NOT_REGISTERED("server_not_registered"),
+    SERVER_NOT_INITIALIZED("server_not_initialized"),
+    GLOBAL_CONF_UNAVAILABLE("global_conf_unavailable"),
     CANNOT_REGISTER_OWNER(ERROR_CANNOT_REGISTER_OWNER),
     CANNOT_UNREGISTER_OWNER(ERROR_CANNOT_UNREGISTER_OWNER),
     CANNOT_MAKE_OWNER(ERROR_CANNOT_MAKE_OWNER),
@@ -142,7 +145,6 @@ public enum ErrorMessage implements DeviationBuilder.ErrorDeviationBuilder {
     MEMBER_NAME_NOT_FOUND("member_name_not_found"),
     INVALID_MEMBER_CLASS(ERROR_INVALID_MEMBER_CLASS),
     INVALID_INSTANCE_IDENTIFIER(ERROR_INVALID_INSTANCE_IDENTIFIER),
-    INVALID_PROPERTY_VALUE("invalid_property_value"),
     INSTANCE_IDENTIFIER_NOT_FOUND("instance_identifier_not_found"),
 
     INVALID_CONNECTION_TYPE(ERROR_INVALID_CONNECTION_TYPE),

@@ -36,7 +36,24 @@
     "configuration_part_validation_failed": "Konfigurasiýanyň böleginiň barlagy amala aşmady",
     "configuration_part_validator_not_found": "Konfigurasiýanyň böleginiň dogrulygyny barlaýjy tapylmady",
     "csr_generation_failed": "CSR döredip bolmady",
+    "did_foreign_system": "DID bu howpsuzlyk serweriniň SYSTEM DID-i däl",
+    "did_held_by_another_server": "DID eýýäm başga howpsuzlyk serweri tarapyndan ulanylýar",
+    "did_host_differs": "DID-iň hosty howpsuzlyk serweriniň salgysy bilen gabat gelmeli",
+    "did_member_not_served": "Howpsuzlyk serweri bu agza hyzmat etmeýär",
+    "did_non_ascii_host": "DID-iň we howpsuzlyk serweriniň salgysynyň hosty ASCII bolmaly",
+    "did_not_canonical": "DID kanoniki görnüşde däl",
+    "did_not_stored": "Howpsuzlyk serwerinde çalyşmak üçin saklanan DID ýok",
+    "did_of_other_member": "DID başga agza degişli",
+    "did_too_long": "DID gaty uzyn",
+    "did_undecodable": "DID-i dekodirläp bolmaýar",
+    "did_unparseable_server_address": "Howpsuzlyk serweriniň salgysyny host hökmünde okap bolmaýar",
+    "did_wrong_scheme": "DID v1 wersiýaly did:web DID bolmaly",
     "double_file_extension": "Faýly iki esse giňeltmek rugsat berilmeýär",
+    "dsp_base_url_host_differs": "DSP esasy URL-iň hosty howpsuzlyk serweriniň salgysy bilen gabat gelmeli",
+    "dsp_base_url_malformed": "DSP esasy URL-i dogry URL däl",
+    "dsp_base_url_non_ascii_host": "DSP esasy URL-iň hosty ASCII bolmaly",
+    "dsp_base_url_not_canonical": "DSP esasy URL-i kanoniki görnüşde däl",
+    "dsp_base_url_not_https": "DSP esasy URL-i https ulanmaly",
     "error_activating_signing_key": "Gol çekme açaryny işe girizmek ýalňyşlygy",
     "error_deleting_signing_key": "Gol çekme açaryny pozmak ýalňyşlygy",
     "error_recreating_anchor": "Labyr faýlyny gaýtadan döretmek ýalňyşlygy",
@@ -105,6 +122,7 @@
     "subsystem_not_found": "Görkezilen kodly kiçi ulgam tapylmady.",
     "subsystem_not_registered_to_security_server": "Kiçi ulgam bu howpsuzlyk serwerinde hasaba alynmady.",
     "subsystem_registered_and_cannot_be_deleted": "Eýýäm hasaba alnan  kiçi ulgamy pozup bolmaýar.",
+    "system_pair_incomplete": "SYSTEM DID-i we DSP esasy URL-i bilelikde beriň ýa-da hiç birini bermäň",
     "timestamping_authority_not_found": "Wagty bellemäge ygtyýarly tapylmady",
     "token_action_not_possible": "Tokeniň hereketi mümkin däl",
     "token_activation_failed": "Tokeni işletmekde ýalňyşlyk ýüze çykdy",
@@ -123,7 +141,7 @@
     "authenticationCertificateProfileId": "Hakykylyk şahadatnamasynyň profil id-si",
     "certFile": "Şahadatnamanyň faýly",
     "certProfile": "Şahadatnamanyň profiliniň maglumaty",
-    "dsTlsCertificateProfileId": "DS TLS şahadatnama profil ID",
+    "dsTlsCertificateProfileId": "Dataspace TLS şahadatnama profil ID",
     "distinguishedName": "Tapawutly at",
     "init": {
       "address": "Merkezi serweriň salgysy",
@@ -365,6 +383,7 @@
     "clientEnable": "Müşderini işe giriz",
     "dialog": {
       "approve": {
+        "addressChangedNotify": "{serverId} howpsuzlyk serweriniň salgysy üýtgedildi: {address}. Operator serweri täzeden kesgitläp bilmegi üçin, howpsuzlyk serweriniň operatoryna, meselem, e-poçta arkaly habar beriň.",
         "bodyMessage": "Siz dogurdanam {serverId} serwerden gelen {id} ID-li dolandyryş talaby tassyklamak isleýärsiňizmi?",
         "newMemberWarning": "Görkezilen agza häzirki wagtda ýok. Bu talap tassyklanwagtynda agza awtomatiki usulda dörediler.",
         "successMessage": "{serverId} -dan {id} ID-li dolandyryş talap tassyklandy",
@@ -395,11 +414,26 @@
         "addedToGroup": "Topara goş",
         "confirmDelete": "Siz dogurdanam {member} agzany ulgamyň konfigurasiýasyndan pozmak isleýärsiňizmi? Tassyklamak üçin agzanyň kodyny giriziň.",
         "deleteMember": "Agzany poz",
+        "editDid": {
+          "check": {
+            "not_resolved_fetch_failure": "Agzanyň DID-i çözülmeýär: onuň DID resminamasyny almak başartmady. Ýöne ýatda saklap bilersiňiz.",
+            "not_resolved_id_mismatch": "Agzanyň DID-i çözülmeýär: DID resminamasy başga DID-e degişli. Ýöne ýatda saklap bilersiňiz.",
+            "not_resolved_malformed_did": "Agzanyň DID-i çözülmeýär: onuň DID resminamasy nädogry görnüşde. Ýöne ýatda saklap bilersiňiz.",
+            "not_resolved_no_document": "Agzanyň DID-i çözülmeýär: DID resminamasy tapylmady. Ýöne ýatda saklap bilersiňiz.",
+            "resolved": "Agzanyň DID-i çözülýär.",
+            "resolver_unavailable": "Agzanyň DID-i barlanyp bilinmedi, sebäbi Issuer Service elýeterli däl. Ýöne ýatda saklap bilersiňiz."
+          },
+          "checkDid": "DID-i barla",
+          "success": "Agzanyň DID-i üstünlikli täzelendi",
+          "title": "{server} serwerinde agzanyň DID-ini üýtget"
+        },
         "editMemberName": "Agzanyň adyny redaktirle",
         "enterCode": "Agza kodyny giriz",
         "globalGroups": "Global toparlar",
         "group": "Topar",
         "memberDeleted": "Agza üstünlikli pozuldy",
+        "memberDid": "Agzanyň DID-i",
+        "memberDidStaleWarning": "Agzanyň DID-i howpsuzlyk serweriniň salgysy bilen gabat gelmeýär. Beýleki serwerler bu agza ýetmek üçin köne DID-i ulanýar.",
         "memberNameSaved": "Agzanyň ady üstünlikli ýatda saklanyldy",
         "ownedServers": "Eýeli serwerler",
         "server": "Serwer"
@@ -447,11 +481,27 @@
       },
       "editAddress": {
         "addressField": "Howpsuzlyk serweriň salgysy",
+        "check": {
+          "not_resolved_fetch_failure": "SYSTEM DID çözülmeýär: onuň DID resminamasyny almak başartmady. Ýöne ýatda saklap bilersiňiz.",
+          "not_resolved_id_mismatch": "SYSTEM DID çözülmeýär: DID resminamasy başga DID-e degişli. Ýöne ýatda saklap bilersiňiz.",
+          "not_resolved_malformed_did": "SYSTEM DID çözülmeýär: onuň DID resminamasy nädogry görnüşde. Ýöne ýatda saklap bilersiňiz.",
+          "not_resolved_no_document": "SYSTEM DID çözülmeýär: DID resminamasy tapylmady. Ýöne ýatda saklap bilersiňiz.",
+          "resolved": "SYSTEM DID çözülýär.",
+          "resolver_unavailable": "SYSTEM DID barlanyp bilinmedi, sebäbi Issuer Service elýeterli däl. Ýöne ýatda saklap bilersiňiz."
+        },
+        "checkDid": "DID-i barla",
+        "dspBaseUrlField": "DSP esasy URL-i",
+        "notify": "Howpsuzlyk serweriniň operatoryna bu üýtgeşme barada, meselem, e-poçta arkaly habar beriň. Operator serweri täzeden kesgitleýänçä, howpsuzlyk serweri öz bahalaryny saklaýar.",
+        "oldHostWarning": "SYSTEM DID we DSP esasy URL-i henizem köne hosty ulanyp bilerler. Olary hem üýtgediň ýa-da serweri täzeden kesgitlemek üçin howpsuzlyk serweriniň operatoryna goýuň.",
+        "publishedValues": "Neşir edilen bahalar",
+        "publishedValuesHint": "Global konfigurasiýa bu bahalary beýleki serwerlere habar berýär.",
         "success": "Howpsuzlyk serweriň salgysy üstünlikli täzelendi",
+        "systemDidField": "SYSTEM DID",
         "title": "Howpsuzlyk serweriň salgysyny üýtget"
       }
     },
     "disabled": "Wagtlaýynça öçürilen",
+    "dspBaseUrl": "DSP esasy URL-i",
     "ownerClass": "Eýesiniň klassy",
     "ownerCode": "Eýesiniň kody",
     "ownerName": "Eýesiniň kody",
@@ -480,9 +530,16 @@
       }
     },
     "serverCode": "Serweriň kody",
+    "staleValuesWarning": "SYSTEM DID ýa-da DSP esasy URL-i howpsuzlyk serweriniň salgysy bilen gabat gelmeýär. Beýleki serwerler bu serwere ýetmek üçin köne bahalary ulanýar. Bahalary üýtgediň ýa-da howpsuzlyk serweriniň operatoryndan serweri täzeden kesgitlemegi soraň.",
+    "systemDid": "SYSTEM DID",
     "unregistered": "Hasaba alynmadyk"
   },
   "status": {
+    "dataspace_tls_acme": {
+      "enrollment_failing": "Dataspace TLS şahadatnamasynyň ACME arkaly hasaba alynmagy amala aşmady, sebäbi {0}",
+      "renewal_failing": "Dataspace TLS şahadatnamasynyň ACME arkaly täzelenmegi amala aşmady, sebäbi {0}",
+      "status_check_failed": "Dataspace TLS şahadatnamasynyň ACME ýagdaýyny barlap bolmady"
+    },
     "global_conf_generation": {
       "failing": "Global konfigurasiýanyň emele gelmegi amala aşmady, sebäbi {0}",
       "global_conf_expired": "Global konfigurasiýanyň möhleti tamamlandy",
@@ -501,6 +558,156 @@
         "missing": "Içki konfigurasiýa gol çekilmedi - işjeň açar ýok",
         "token_not_active": "Içki konfigurasiýa gol çekilmedi - işjeň açaryň PIN-i girmedi",
         "token_not_found": "Içki konfigurasiýa gol çekilmedi - işjeň açar tapylmady"
+      }
+    }
+  },
+  "systemParameters": {
+    "configurableProperties": {
+      "descriptions": {
+        "xroad": {
+          "admin-service": {
+            "auto-approve-auth-cert-reg-requests": "Işjeňleşdirilse, administratoryň tassyklamagyna garaşmazdan, autentifikasiýa şahadatnamasyny bellige almak haýyşlary awtomatiki tassyklanýar.",
+            "auto-approve-client-reg-requests": "Işjeňleşdirilse, müşderini bellige almak haýyşlary awtomatiki tassyklanýar, administratoryň tassyklamagyna garaşylmaýar.",
+            "auto-approve-owner-change-requests": "Işjeňleşdirilse, eýeçiligi üýtgetmek haýyşlary awtomatiki tassyklanýar, administratoryň tassyklamagyna garaşylmaýar.",
+            "authentication-provider": "Interfeýse girmek üçin ulanylýan autentifikasiýa üpjün edijisi. Mümkin bolan bahalar: PAM ýa-da DATABASE.",
+            "cache-api-key-ttl": "API açar keşiniň sekuntda möhletini kesgitleýär. Bahasy -1 bolsa, keş öçürilýär.",
+            "cache-default-ttl": "Sanlyk keşiň sekuntda möhletini kesgitleýär. Keş autentifikasiýa haýyşlarynda ulanylýar. Bahasy -1 bolsa, keş öçürilýär.",
+            "enforce-user-password-policy": "Işjeňleşdirilse, ulanyjy parollary bellenen parol syýasatyna laýyk gelmeli.",
+            "global-configuration-generation-rate-in-seconds": "Merkezi serweriň global konfigurasiýany näçe ýygylykda (sekuntda) täzeden döredýändigi.",
+            "rate-limit-cache-size": "Talap çäklendirme keşinde ýatda saklanyp bilinjek IP salgylarynyň sanyny kesgitleýär. Ýady ulanmak bilen uly hüjümden goramagyň arasyndaky deňagramlylyk.",
+            "rate-limit-enabled": "Administrator API-si üçin haýyşlaryň tizlik çägini işjeňleşdirýär.",
+            "rate-limit-expire-after-access-minutes": "Talap çäklendirme keşiniň ýazgylarynyň näçe wagt hakyky bolýandygyny kesgitleýär.",
+            "rate-limit-requests-per-minute": "Administrator API-si üçin minutda haýyş çägi. Çäklendirmeler her haýyş edýän IP üçin ulanylýar.",
+            "rate-limit-requests-per-second": "Administrator API-si üçin sekuntda haýyş çägi. Çäklendirmeler her haýyş edýän IP üçin ulanylýar.",
+            "request-size-limit-binary-upload": "Faýl ýüklemek üçin Administrator API haýyşlarynyň iň uly ölçegi.",
+            "request-size-limit-regular": "Administrator API haýyşlarynyň iň uly ölçegi.",
+            "strict-identifier-checks": "Girizilen identifikatorlaryň barlagyny sazlaýar (agza kody, kiçi ulgam kody we ş.m.). Bahalar: true - identifikatorlar ^[a-zA-Z0-9'()+,-.=?]* nusgasyna laýyk gelmeli. false - identifikatorlarda iki nokat (:), nokatly otur (;), çyzyklar (/\\), göterim belgisi (%) ýa-da dolandyryş simwollary bolmaly däl.",
+            "trusted-anchors-allowed": "Işjeňleşdirilse, Merkezi serweriň öz labyryndan başga-da goşmaça ynamly konfigurasiýa labyrlaryny ýüklemäge rugsat berýär."
+          },
+          "management-service": {
+            "rate-limit-cache-size": "Talap çäklendirme keşinde ýatda saklanyp bilinjek IP salgylarynyň sanyny kesgitleýär. Ýady ulanmak bilen uly hüjümden goramagyň arasyndaky deňagramlylyk.",
+            "rate-limit-enabled": "Dolandyryş hyzmaty üçin haýyşlaryň tizlik çägini işjeňleşdirýär.",
+            "rate-limit-expire-after-access-minutes": "Talap çäklendirme keşiniň ýazgylarynyň näçe wagt hakyky bolýandygyny kesgitleýär.",
+            "rate-limit-requests-per-minute": "Dolandyryş hyzmaty üçin minutda haýyş çägi. Çäklendirmeler her haýyş edýän IP üçin ulanylýar.",
+            "rate-limit-requests-per-second": "Dolandyryş hyzmaty üçin sekuntda haýyş çägi. -1 bahasy çägi öçürýär. Çäklendirmeler her haýyş edýän IP üçin ulanylýar.",
+            "http-client-properties": {
+              "connection-request-timeout-seconds": "Birikme howzundan birikmäniň elýeterli bolmagyna garaşylýan sekunt sany.",
+              "connection-timeout-seconds": "Administrator API bilen birikme ýola goýulýança garaşylýan sekunt sany.",
+              "max-connections-per-route": "Dolandyryş hyzmatynyň HTTP müşderisiniň her ugur üçin açyk saklaýan iň köp birikme sany.",
+              "max-connections-total": "Dolandyryş hyzmatynyň HTTP müşderisiniň jemi açyk saklaýan iň köp birikme sany.",
+              "response-timeout-seconds": "Administrator API-den jogaba garaşylýan sekunt sany."
+            }
+          },
+          "registration-service": {
+            "rate-limit-cache-size": "Talap çäklendirme keşinde ýatda saklanyp bilinjek IP salgylarynyň sanyny kesgitleýär. Ýady ulanmak bilen uly hüjümden goramagyň arasyndaky deňagramlylyk.",
+            "rate-limit-enabled": "Bellige alyş hyzmaty üçin haýyşlaryň tizlik çägini işjeňleşdirýär.",
+            "rate-limit-expire-after-access-minutes": "Talap çäklendirme keşiniň ýazgylarynyň näçe wagt hakyky bolýandygyny kesgitleýär.",
+            "rate-limit-requests-per-minute": "Bellige alyş hyzmaty üçin minutda haýyş çägi. Çäklendirmeler her haýyş edýän IP üçin ulanylýar.",
+            "rate-limit-requests-per-second": "Bellige alyş hyzmaty üçin sekuntda haýyş çägi. -1 bahasy çägi öçürýär. Çäklendirmeler her haýyş edýän IP üçin ulanylýar.",
+            "http-client-properties": {
+              "connection-request-timeout-seconds": "Birikme howzundan birikmäniň elýeterli bolmagyna garaşylýan sekunt sany.",
+              "connection-timeout-seconds": "Administrator API bilen birikme ýola goýulýança garaşylýan sekunt sany.",
+              "max-connections-per-route": "Bellige alyş hyzmatynyň HTTP müşderisiniň her ugur üçin açyk saklaýan iň köp birikme sany.",
+              "max-connections-total": "Bellige alyş hyzmatynyň HTTP müşderisiniň jemi açyk saklaýan iň köp birikme sany.",
+              "response-timeout-seconds": "Administrator API-den jogaba garaşylýan sekunt sany."
+            },
+            "vault-retry": {
+              "retry-delay": "Vault (OpenBao) haýyşy şowsuz bolanda ilkinji gaýtadan synanyşykdan öňki gijikdirme.",
+              "retry-exponential-backoff-multiplier": "Vault (OpenBao) haýyşynyň her şowsuz synanyşygyndan soň gaýtadan synanyşyk gijikdirmesine ulanylýan köpeldiji.",
+              "retry-max-attempts": "Vault (OpenBao) haýyşy şowsuz bolanda gaýtadan synanyşyklaryň iň köp sany."
+            }
+          },
+          "common-global-conf": {
+            "source": "Global konfigurasiýa üçin çeşme binasy. Mümkin bolan gymmatlar: FILESYSTEM (ýerli faýllardan okamak, deslapky baha) ýa-da REMOTE (konteýnerleşdirilen ýaýlymlarda ulanylýar).",
+            "refresh-rate": "Paýlaşylan global konfigurasiýa önümçisiniň sazlanan çeşmesinden näçe wagtdan bir täzelenýändigi (meselem, 60S).",
+            "configuration-path": "Global konfigurasiýa faýllarynyň saklanylan faýl ulgamy ýoly."
+          },
+          "common-ocsp-verifier": {
+            "cache-period": "OCSP barlag netijelerini täzeden barlamanka önümçide saklanýan wagt (sekunt)."
+          },
+          "common-rpc": {
+            "use-tls": "Diňe synag üçin; önümçilikde hiç wagt öçürmäň. Işledilen halatynda, Merkezi Serweriň bilelikde ýerleşdirilen hyzmatlary arasyndaky gRPC aragatnaşygy üçin özara TLS ulanylýar. Öçürilen halatynda, bu gRPC aragatnaşygy şifrlenmeýär.",
+            "certificate-provisioning": {
+              "refresh-interval": "Hyzmatlaryň gRPC TLS sertifikatyny täzelemek gerekdigi barlaýan ýygylygy (meselem, 5H).",
+              "wait-duration": "Gizlin ammardan gRPC TLS sertifikatyny ýüklemek şowsuz bolandan soň ilkinji gaýtadan synanyşykdan öňki gijikdirme (meselem, 5S).",
+              "exponential-backoff-multiplier": "gRPC TLS sertifikatyny yzygiderli her şowsuz ýüklemeden soň gaýtadan synanyşyk gijikdirmesine ulanylýan köpeldiji.",
+              "exponential-max-wait-duration": "gRPC TLS sertifikatyny şowsuz ýüklemelerden soň gaýtadan synanyşyk gijikdirmesiniň ýokarky çägi (meselem, 5M)."
+            },
+            "channel": {
+              "op-monitor": {
+                "host": "Operasion gözegçilik demony gRPC serwere birikme üçin ulanylýan hosta ady.",
+                "port": "Operasion gözegçilik demony gRPC serwere birikme üçin ulanylýan port.",
+                "deadline-after": "Operasion gözegçilik demonyna gRPC çagyryşynyň möhleti dolmazdan öňki millisekuntlar."
+              },
+              "env-monitor": {
+                "host": "Env-monitor gRPC serwere birikme üçin ulanylýan hosta ady.",
+                "port": "Env-monitor gRPC serwere birikme üçin ulanylýan port.",
+                "deadline-after": "Env-monitora gRPC çagyryşynyň möhleti dolmazdan öňki millisekuntlar."
+              },
+              "configuration-client": {
+                "host": "Konfigurasiýa müşderi gRPC serwere birikme üçin ulanylýan hosta ady.",
+                "port": "Konfigurasiýa müşderi gRPC serwere birikme üçin ulanylýan port.",
+                "deadline-after": "Konfigurasiýa müşderisine gRPC çagyryşynyň möhleti dolmazdan öňki millisekuntlar."
+              },
+              "proxy": {
+                "host": "Proksi gRPC serwere birikme üçin ulanylýan hosta ady.",
+                "port": "Proksi gRPC serwere birikme üçin ulanylýan port.",
+                "deadline-after": "Proksä gRPC çagyryşynyň möhleti dolmazdan öňki millisekuntlar."
+              },
+              "auxiliary-service": {
+                "host": "Kömekçi hyzmat gRPC serwere birikme üçin ulanylýan hosta ady.",
+                "port": "Kömekçi hyzmat gRPC serwere birikme üçin ulanylýan port.",
+                "deadline-after": "Kömekçi hyzmate gRPC çagyryşynyň möhleti dolmazdan öňki millisekuntlar."
+              }
+            }
+          },
+          "signer": {
+            "selfsigned-cert-digest-algorithm": "Öz-özüne gol çekilen şahadatnamalar döredilende ulanylýan şifrlemesi algoritmi.",
+            "csr-signature-digest-algorithm": "Şahadatnama Gol Çekme Talaby gol şifrlemesi algoritmi. Mümkin bahalar: SHA-256, SHA-384, SHA-512.",
+            "enforce-token-pin-policy": "Token pin syýasatyny güýçlendirmegi dolandyrýar. Dogry edilende, programma üpjünçiliginiň token pini azyndan 4 nyşan klassydan (kiçi harplar, uly harplar, sanlar, ýörite nyşanlar) azyndan 10 ASCII nyşandan ybarat bolmaly. (6.7.7 wersiýasyndan bäri)",
+            "ocsp-response-retrieval-active": "Bu häsiýet bu wezipä mätäç bolmadyk, ýöne entek imzaçyny ulanýan komponentler üçin döwürleýin OCSP-jogap almany işsizleştirmek üçin ýazdyrma hökmünde ulanylýar. Bahalar: false - OCSP-jogap almak işleri hiç wagt planlanylmaýar. true - döwürleýin OCSP-jogap almak ocspFetchInterval esasynda işjeňdir. Eger ähli häsiýet ýok bolsa, dogry hökmünde düşünilýändigini ýadyňyzda saklaň. Bu häsiýet diňe OCSP-jogap almak işleriniň işsizleşdirilmeli komponentleri üçin ýazdyrma hökmünde iberilýär. Bu häsiýet OCSP-jogap almagy işjeň bolmagyny talap edýän komponentler üçin ýokdur.",
+            "ocsp-retry-delay": "OCSP jogaplaryny almak şowsuz bolanda imzaçy üçin OCSP gaýtalama gijikmesi. OCSP jogaplaryny almak şowsuz bolansoň imzaçy \"ocsp-retry-delay\" tarapyndan kesgitlenen wagt döwri üçin garaşýar, soň ýene synanyşýar. Bu OCSP jogaplaryny almak üstünlikli bolýança gaýtalanýar. OCSP jogaplaryny üstünlikli alansoň imzaçy \"ocspFetchInterval\" tarapyndan kesgitlenen adaty OCSP täzelenme tertibine dolanýar. Eger \"ocsp-retry-delay\" bahasy \"ocspFetchInterval\"-dan uly bolsa, \"ocspFetchInterval\" bahasy OCSP gaýtalama gijikmesi hökmünde ulanylýar.",
+            "ocsp-cache-path": "Keşlenen OCSP jogaplarynyň saklanylýan katalogyna doly ýol.",
+            "ocsp-prioritization-strategy": "OCSP ileri tutulma strategiýasy, nähili OCSP jogap beriş gulluklarynyň we haýsy tertipde OCSP jogaplaryny almak üçin ulanylýandygyny kesgitleýär. Mümkin bahalar: ONLY_FREE - Diňe mugt OCSP jogap beriş gulluklary ulanylýar. ONLY_PAID - Diňe tölegli OCSP jogap beriş gulluklary ulanylýar. FREE_FIRST - Ilki mugt OCSP jogap beriş gulluklary ulanylýar, üstünlikli jogap ýok bolsa, soňra tölegli jogap beriş gulluklary ulanylýar, ahyrynda çykdajy görnüşi kesgitlenmedik OCSP jogap beriş gulluklary soňunda ulanylýar. PAID_FIRST - Ilki tölegli OCSP jogap beriş gulluklary ulanylýar, üstünlikli jogap ýok bolsa, soňra mugt jogap beriş gulluklary ulanylýar, ahyrynda çykdajy görnüşi kesgitlenmedik OCSP jogap beriş gulluklary soňunda ulanylýar. NONE - Täze tertip ýa-da süzgüç goşulmaýar (OCSP nokatlaryna çykdajy görnüşi goşulmazdan öňküsi ýaly).",
+            "module-manager-update-interval": "HSM modul dolandyryjy täzeleme aralygny sekuntlarda.",
+            "soft-token-rsa-sign-mechanism": "Programma üpjünçiliginiň tokeninde RSA gol çekme üçin ulanylýan PKCS#11 mehanizmi.",
+            "soft-token-ec-sign-mechanism": "Programma üpjünçiliginiň tokeninde EC gol çekme üçin ulanylýan PKCS#11 mehanizmi.",
+            "soft-token-pin-keystore-algorithm": "Programma üpjünçiliginiň tokeni üçin PIN açar dükany döretmek üçin ulanylýan açar algoritmi. Mümkin bahalar: RSA we EC. (7.6 wersiýasyndan bäri)",
+            "key-length": "Tassyklama we gol çekme açarlaryny döretmek üçin açar uzynlygy (6.7 wersiýasyndan bäri).",
+            "key-named-curve": "EC algoritmleri ulanylýan ýagdaýynda tassyklama we gol çekme açarlaryny döretmek üçin görkezilen egri (7.6 wersiýasyndan bäri).",
+            "autologin": {
+              "enabled": "Başlangyçda awtomatiki token girişini işe giriziň.",
+              "retry": {
+                "retry-delay": "Awtomatiki giriş gaýtalama synanyşyklarynyň arasynda başlangyç gijikme (mysal üçin 3S).",
+                "retry-exponential-backoff-multiplier": "Her soňraky awtomatiki giriş synanyşygynda gaýtalama gijikgesine ulanylýan köpeldiji.",
+                "retry-max-attempts": "Awtomatiki giriş gaýtalama synanyşyklarynyň iň köp sany.",
+                "retry-timeout": "Ähli awtomatiki giriş gaýtalama synanyşyklary üçin jemi wagt çägi (mysal üçin 60S)."
+              }
+            },
+            "addon": {
+              "hwtoken": {
+                "enabled": "Enjam tokeni (HSM) goşundy dwigateli işe giriziň.",
+                "session-pool-enabled": "Enjam tokeni üçin PKCS#11 seans howuzlanmasyny işe giriziň.",
+                "session-pool-max-total": "Enjam tokeni seans howuzyndaky iň köp jemi PKCS#11 seans sany.",
+                "session-pool-min-idle": "Enjam tokeni howuzunda saklanylýan iň az boş PKCS#11 seans sany.",
+                "session-pool-max-idle": "Enjam tokeni howuzunda saklanylýan iň köp boş PKCS#11 seans sany.",
+                "session-acquire-timeout": "Howuzdan PKCS#11 seans almak üçin iň köp garaşma wagty (mysal üçin 15S)."
+              }
+            },
+            "rpc": {
+              "enabled": "Imzaçy gRPC serweri işe giriziň.",
+              "listen-address": "Imzaçy gRPC serweri diňleýän IP salgysy.",
+              "port": "Imzaçy gRPC serweri diňleýän porty."
+            },
+            "pin-hasher": {
+              "iterations": "Token PINlerini şifrläp işlenende ulanylýan Argon2 gaýtalama sany.",
+              "memory-kb": "Token PINlerini şifrläp işlenende ulanylýan Argon2 kilobaýtlardaky hakyda çykdajysy.",
+              "parallelism": "Token PINlerini şifrläp işlenende ulanylýan Argon2 parallellik derejesi.",
+              "hash-length": "Token PINlerini şifrläp işlenende ulanylýan baýtlardaky çykyş şifrlemesi uzynlygy.",
+              "salt-length": "Token PINlerini şifrläp işlenende ulanylýan baýtlardaky duz uzynlygy."
+            }
+          }
+        }
       }
     }
   },
@@ -570,6 +777,7 @@
       "apiKeys": "API Açarlary",
       "backupAndRestore": "Ätiýaçlyk nusgasy we gaýtadan dikeltmek",
       "globalResources": "Global resurslary",
+      "systemParameters": "Ulgam parametrleri",
       "systemSettings": "Ulgam sazlamalary",
       "tlsCertificates": "TLS şahadatnamalary"
     }
@@ -622,20 +830,20 @@
     "certificationServices": "Şahadatnama boýunça hyzmatlary",
     "defaultCsrFormat": "Deslapky CSR formaty",
     "dsTls": {
-      "addDsTlsCertificationAuthority": "DS TLS CA goş",
+      "addDsTlsCertificationAuthority": "Dataspace TLS CA goş",
       "delete": {
         "confirmationDialog": {
-          "message": "Siz dogurdanam \"{name}\" DS TLS CA-ny pozmak isleýärsiňizmi?",
+          "message": "Siz dogurdanam \"{name}\" Dataspace TLS CA-ny pozmak isleýärsiňizmi?",
           "title": "Tassyklaýarsyňyzmy?"
         },
-        "success": "DS TLS CA üstünlikli pozuldy"
+        "success": "Dataspace TLS CA üstünlikli pozuldy"
       },
-      "dsTlsCertificateProfileIdExplanation": "DS TLS şahadatnamasyny sargyt edilende, käbir ACME serwerleriniň şahadatnamanyň ulanyş görnüşini bilmegi üçin ulanylýan profil ID.",
-      "dsTlsCertificationAuthorities": "DS TLS CA-lar",
-      "dsTlsCertificationAuthority": "DS TLS CA",
+      "dsTlsCertificateProfileIdExplanation": "Dataspace TLS şahadatnamasyny sargyt edilende, käbir ACME serwerleriniň şahadatnamanyň ulanyş görnüşini bilmegi üçin ulanylýan profil ID.",
+      "dsTlsCertificationAuthorities": "Dataspace TLS CA-lar",
+      "dsTlsCertificationAuthority": "Dataspace TLS CA",
       "nameExplanation": "Bu şahadatnama edarasyny kesgitleýän erkin ady, mysal üçin \"Let's Encrypt\".",
       "settings": {
-        "title": "DS TLS CA sazlamalary"
+        "title": "Dataspace TLS CA sazlamalary"
       }
     },
     "timestampingService": {

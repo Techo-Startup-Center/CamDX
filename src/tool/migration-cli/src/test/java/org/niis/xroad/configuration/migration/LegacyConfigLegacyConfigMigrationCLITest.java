@@ -27,6 +27,8 @@ package org.niis.xroad.configuration.migration;
 
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedConstruction;
+import org.mockito.Mockito;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.PathResource;
@@ -35,6 +37,8 @@ import org.springframework.core.io.Resource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -56,7 +60,7 @@ class LegacyConfigLegacyConfigMigrationCLITest {
     private final YamlPropertySourceLoader yamlLoader = new YamlPropertySourceLoader();
 
     @Test
-    void testPropertyCopy() {
+    void shouldMapKeepAndDropOpMonitorRows() {
         LegacyConfigMigrationCLI.main(new String[]{
                 "config",
                 INPUT_INI,
@@ -64,14 +68,20 @@ class LegacyConfigLegacyConfigMigrationCLITest {
 
         var result = loadYaml("build/local.yml");
 
-        assertEquals("test-scheme", result.getProperty("xroad.proxy.addon.op-monitor.connection.scheme"));
-        assertEquals("test-scheme", result.getProperty("xroad.op-monitor.scheme"));
-        assertEquals(1313, result.getProperty("xroad.proxy.addon.op-monitor.connection.port"));
-        assertEquals(1313, result.getProperty("xroad.op-monitor.port"));
-
+        assertEquals("127.0.0.1", result.getProperty("xroad.common-rpc.channel.op-monitor.host"));
+        assertNull(result.getProperty("xroad.op-monitor.rpc.listen-address"));
+        assertEquals(2181, result.getProperty("xroad.op-monitor.rpc.port"));
+        assertEquals(2181, result.getProperty("xroad.common-rpc.channel.op-monitor.port"));
+        assertEquals(45000, result.getProperty("xroad.common-rpc.channel.op-monitor.deadline-after"));
         assertEquals("test1,test2,test3", result.getProperty("xroad.proxy.xroad-tls-ciphers"));
-        assertEquals("test1,test2,test3", result.getProperty("xroad.op-monitor.xroad-tls-ciphers"));
-        assertEquals("test1,test2,test3", result.getProperty("xroad.proxy.addon.op-monitor.connection.xroad-tls-ciphers"));
+
+        assertNull(result.getProperty("xroad.op-monitor.scheme"));
+        assertNull(result.getProperty("xroad.op-monitor.port"));
+        assertNull(result.getProperty("xroad.op-monitor.xroad-tls-ciphers"));
+        assertNull(result.getProperty("xroad.proxy.addon.op-monitor.connection.scheme"));
+        assertNull(result.getProperty("xroad.proxy.addon.op-monitor.connection.port"));
+        assertNull(result.getProperty("xroad.proxy.addon.op-monitor.connection.host"));
+        assertNull(result.getProperty("xroad.proxy.addon.op-monitor.connection.xroad-tls-ciphers"));
     }
 
     @Test
@@ -181,6 +191,22 @@ class LegacyConfigLegacyConfigMigrationCLITest {
                 .anyMatch(l -> l.contains("# serverconf.hibernate.connection.password")));
     }
 
+
+    @Test
+    void shouldStoreNodeLookingValueOfSetPropertyUnchanged() {
+        var constructorArguments = new ArrayList<List<?>>();
+        try (MockedConstruction<SinglePropertySetter> setters = Mockito.mockConstruction(SinglePropertySetter.class,
+                (setter, context) -> constructorArguments.add(List.copyOf(context.arguments())))) {
+            LegacyConfigMigrationCLI.main(new String[]{
+                    "set-property",
+                    INPUT_DB_PROPERTIES_SRC,
+                    "xroad.sample.property",
+                    "--node=secret"});
+            assertEquals(1, setters.constructed().size());
+            Mockito.verify(setters.constructed().getFirst()).migrate("cmdline", INPUT_DB_PROPERTIES_SRC);
+        }
+        assertEquals(List.of(List.of("xroad.sample.property", "--node=secret")), constructorArguments);
+    }
 
     @SneakyThrows
     private PropertySource<?> loadYaml(String path) {

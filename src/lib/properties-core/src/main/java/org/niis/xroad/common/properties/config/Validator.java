@@ -85,6 +85,27 @@ public interface Validator<T> {
     }
 
     /**
+     * @return validator rejecting a value that failed to parse as a boolean, describing the literals
+     *         accepted by {@link org.apache.commons.lang3.BooleanUtils#toBooleanObject}
+     */
+    static Validator<Boolean> bool() {
+        var accepted = "true, false, TRUE, FALSE, True, False, 1, 0, Y, N, Yes, No, YES, NO, on, ON, off, OFF";
+        return new Validator<>() {
+            @Override
+            public Result validate(Boolean value) {
+                return value != null
+                        ? Result.ok()
+                        : Result.error("must be one of: " + accepted);
+            }
+
+            @Override
+            public Optional<String> describe() {
+                return Optional.of("one of: " + accepted);
+            }
+        };
+    }
+
+    /**
      * @param allowed permitted values
      * @return validator accepting only {@code allowed}
      */
@@ -198,6 +219,40 @@ public interface Validator<T> {
             @Override
             public Optional<String> describe() {
                 return Optional.of("positive duration");
+            }
+        };
+    }
+
+    /** @return validator rejecting null and negative durations, accepting zero */
+    static Validator<Duration> nonNegative() {
+        return new Validator<>() {
+            @Override
+            public Result validate(Duration value) {
+                return value != null && !value.isNegative()
+                        ? Result.ok()
+                        : Result.error("must not be a negative duration");
+            }
+
+            @Override
+            public Optional<String> describe() {
+                return Optional.of("non-negative duration");
+            }
+        };
+    }
+
+    /** @return validator rejecting null, zero, and negative integers */
+    static Validator<Integer> positiveInt() {
+        return new Validator<>() {
+            @Override
+            public Result validate(Integer value) {
+                return value != null && value > 0
+                        ? Result.ok()
+                        : Result.error("must be a positive number");
+            }
+
+            @Override
+            public Optional<String> describe() {
+                return Optional.of("positive number");
             }
         };
     }

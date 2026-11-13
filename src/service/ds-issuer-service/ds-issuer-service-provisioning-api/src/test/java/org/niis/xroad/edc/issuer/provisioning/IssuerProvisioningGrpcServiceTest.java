@@ -26,20 +26,35 @@
  */
 package org.niis.xroad.edc.issuer.provisioning;
 
+import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.StatusRuntimeException;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialSubject;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredential;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredentialContainer;
+import org.eclipse.edc.identityhub.spi.did.DidDocumentService;
+import org.eclipse.edc.identityhub.spi.did.model.DidResource;
+import org.eclipse.edc.identityhub.spi.did.model.DidState;
+import org.eclipse.edc.identityhub.spi.keypair.KeyPairService;
+import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairResource;
+import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairState;
 import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.CreateParticipantContextResponse;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.VerifiableCredentialResource;
 import org.eclipse.edc.issuerservice.spi.credentials.CredentialStatusService;
 import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationDefinitionService;
 import org.eclipse.edc.issuerservice.spi.issuance.credentialdefinition.CredentialDefinitionService;
+import org.eclipse.edc.keys.spi.PrivateKeyResolver;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
+import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,21 +65,37 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.common.core.exception.ErrorOrigin;
 import org.niis.xroad.common.rpc.server.RpcResponseHandler;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignCause;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignOutcome;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignReq;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignResp;
+import org.niis.xroad.edc.issuer.provisioning.proto.CreateAttestationDefinitionReq;
+import org.niis.xroad.edc.issuer.provisioning.proto.CreateAttestationDefinitionResp;
 import org.niis.xroad.edc.issuer.provisioning.proto.CreateParticipantContextReq;
 import org.niis.xroad.edc.issuer.provisioning.proto.CreateParticipantContextResp;
 import org.niis.xroad.edc.issuer.provisioning.proto.RevokeCredentialReq;
 import org.niis.xroad.edc.issuer.provisioning.proto.RevokeCredentialResp;
+import org.niis.xroad.rpc.error.XrdRuntimeExceptionProto;
 
+import java.security.PrivateKey;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PARTICIPANT_CONTEXT_CONFLICT;
+import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PARTICIPANT_CONTEXT_FAILED;
 
 @ExtendWith(MockitoExtension.class)
 class IssuerProvisioningGrpcServiceTest {
@@ -78,18 +109,34 @@ class IssuerProvisioningGrpcServiceTest {
     @Mock
     private CredentialStatusService credentialStatusService;
     @Mock
+    private KeyPairService keyPairService;
+    @Mock
+    private DidDocumentService didDocumentService;
+    @Mock
+    private PrivateKeyResolver privateKeyResolver;
+    @Mock
+    private Monitor monitor;
+    @Mock
     private StreamObserver<CreateParticipantContextResp> participantContextResponseObserver;
     @Mock
+    private StreamObserver<CreateAttestationDefinitionResp> attestationDefinitionResponseObserver;
+    @Mock
     private StreamObserver<RevokeCredentialResp> revokeResponseObserver;
+    @Mock
+    private StreamObserver<CanSignResp> canSignResponseObserver;
     @Captor
     private ArgumentCaptor<QuerySpec> querySpecCaptor;
+    @Captor
+    private ArgumentCaptor<ParticipantManifest> manifestCaptor;
 
     private IssuerProvisioningGrpcService service;
 
     @BeforeEach
     void setUp() {
         service = new IssuerProvisioningGrpcService(participantContextService, attestationDefinitionService,
-                credentialDefinitionService, credentialStatusService, new RpcResponseHandler());
+                credentialDefinitionService, credentialStatusService, keyPairService, didDocumentService,
+                privateKeyResolver, new RpcResponseHandler(), monitor);
+        lenient().when(privateKeyResolver.resolvePrivateKey(any(), any())).thenReturn(Result.success(mock(PrivateKey.class)));
     }
 
     @ParameterizedTest
@@ -121,95 +168,390 @@ class IssuerProvisioningGrpcServiceTest {
     }
 
     @Test
+    void createParticipantContextAsksForEcP256IssuerKey() {
+        when(participantContextService.createParticipantContext(manifestCaptor.capture()))
+                .thenReturn(ServiceResult.success(new CreateParticipantContextResponse(null, null, null)));
+
+        service.createParticipantContext(createReq(), participantContextResponseObserver);
+
+        var keys = manifestCaptor.getValue().getKeys();
+        assertThat(keys).hasSize(1);
+        var key = keys.iterator().next();
+        assertThat(key.getKeyId()).isEqualTo("did:web:issuer.example.com#key-1");
+        assertThat(key.getPrivateKeyAlias()).isEqualTo("issuer-key-alias");
+        assertThat(key.getType()).isEqualTo("JsonWebKey2020");
+        assertThat(key.getKeyGeneratorParams()).containsOnly(
+                entry("algorithm", "EC"),
+                entry("curve", "secp256r1"));
+        verify(participantContextResponseObserver).onCompleted();
+    }
+
+    @Test
+    void createParticipantContextFailsWithConflictWhenParticipantAlreadyExists() {
+        when(participantContextService.createParticipantContext(any()))
+                .thenReturn(ServiceResult.conflict("Another participant with the same DID already exists."));
+
+        service.createParticipantContext(createReq(), participantContextResponseObserver);
+
+        verify(participantContextService).createParticipantContext(any());
+        var error = ArgumentCaptor.forClass(Throwable.class);
+        verify(participantContextResponseObserver).onError(error.capture());
+        assertThat(unpackProto(error.getValue()).getErrorCode())
+                .isEqualTo(ErrorOrigin.DATASPACE.toPrefix() + DSP_PARTICIPANT_CONTEXT_CONFLICT.code());
+        verify(participantContextResponseObserver, never()).onNext(any());
+        verify(participantContextResponseObserver, never()).onCompleted();
+    }
+
+    @Test
+    void createParticipantContextFailsWithGenericErrorForOtherFailureReasons() {
+        when(participantContextService.createParticipantContext(any()))
+                .thenReturn(ServiceResult.badRequest("manifest rejected"));
+
+        service.createParticipantContext(createReq(), participantContextResponseObserver);
+
+        var error = ArgumentCaptor.forClass(Throwable.class);
+        verify(participantContextResponseObserver).onError(error.capture());
+        assertThat(unpackProto(error.getValue()).getErrorCode())
+                .isEqualTo(ErrorOrigin.DATASPACE.toPrefix() + DSP_PARTICIPANT_CONTEXT_FAILED.code());
+        verify(participantContextResponseObserver, never()).onNext(any());
+        verify(participantContextResponseObserver, never()).onCompleted();
+    }
+
+    @Test
+    void createAttestationDefinitionAcceptsConflictAsSuccess() {
+        when(attestationDefinitionService.createAttestation(any()))
+                .thenReturn(ServiceResult.conflict("Attestation definition already exists."));
+
+        service.createAttestationDefinition(
+                CreateAttestationDefinitionReq.newBuilder()
+                        .setParticipantContextId("issuer")
+                        .setAttestationDefinitionId("xroad-membership-attestation-definition")
+                        .setAttestationType("holder")
+                        .build(),
+                attestationDefinitionResponseObserver);
+
+        verify(attestationDefinitionResponseObserver).onNext(CreateAttestationDefinitionResp.getDefaultInstance());
+        verify(attestationDefinitionResponseObserver).onCompleted();
+        verify(attestationDefinitionResponseObserver, never()).onError(any());
+    }
+
+    @Test
     void revokeCredentialHappyPath() {
-        var resource = hostCredentialResource("cred-id-1", "issuer", "EE", "ORG", "12345678",
-                "did:web:ss1.example.com");
-        when(credentialStatusService.queryCredentials(any(QuerySpec.class)))
-                .thenReturn(ServiceResult.success(List.of(resource)));
-        when(credentialStatusService.revokeCredential("cred-id-1"))
+        var resource = hostCredentialResource("cred-id-1", "issuer", "did:web:ss1.example.com", 1_000L);
+        stubStore(resource);
+        when(credentialStatusService.revokeCredential("issuer", "cred-id-1"))
                 .thenReturn(ServiceResult.success(null));
 
-        service.revokeCredential(revokeReq("issuer", "EE", "ORG", "12345678"), revokeResponseObserver);
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
 
-        verify(credentialStatusService).revokeCredential(eq("cred-id-1"));
-        verify(revokeResponseObserver).onNext(any(RevokeCredentialResp.class));
+        verify(credentialStatusService).revokeCredential(eq("issuer"), eq("cred-id-1"));
+        verify(revokeResponseObserver).onNext(RevokeCredentialResp.newBuilder().setRevokedCount(1).build());
         verify(revokeResponseObserver).onCompleted();
     }
 
     @Test
     void revokeCredentialBuildsPushedDownQuerySpec() {
-        var resource = hostCredentialResource("cred-id-1", "issuer", "EE", "ORG", "12345678",
-                "did:web:ss1.example.com");
+        var resource = hostCredentialResource("cred-id-1", "issuer", "did:web:ss1.example.com", 1_000L);
         when(credentialStatusService.queryCredentials(querySpecCaptor.capture()))
                 .thenReturn(ServiceResult.success(List.of(resource)));
-        when(credentialStatusService.revokeCredential("cred-id-1"))
+        when(credentialStatusService.revokeCredential("issuer", "cred-id-1"))
                 .thenReturn(ServiceResult.success(null));
 
-        service.revokeCredential(revokeReq("issuer", "EE", "ORG", "12345678"), revokeResponseObserver);
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
 
         var querySpec = querySpecCaptor.getValue();
         assertThat(querySpec.getLimit()).isEqualTo(Integer.MAX_VALUE);
         assertThat(querySpec.getFilterExpression()).containsExactlyInAnyOrder(
                 Criterion.criterion("participantContextId", "=", "issuer"),
-                Criterion.criterion("verifiableCredential.credential.credentialSubject.xroadInstance", "=", "EE"),
-                Criterion.criterion("verifiableCredential.credential.credentialSubject.memberClass", "=", "ORG"),
-                Criterion.criterion("verifiableCredential.credential.credentialSubject.memberCode", "=", "12345678"));
+                Criterion.criterion("holderId", "=", "did:web:ss1.example.com"),
+                Criterion.criterion("timestamp", "<", 2_000L));
+    }
+
+    @Test
+    void revokeCredentialRevokesAllMatches() {
+        var first = hostCredentialResource("cred-id-1", "issuer", "did:web:ss1.example.com", 1_000L);
+        var second = hostCredentialResource("cred-id-2", "issuer", "did:web:ss1.example.com", 1_500L);
+        stubStore(first, second);
+        when(credentialStatusService.revokeCredential(any(), any())).thenReturn(ServiceResult.success(null));
+
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
+
+        verify(credentialStatusService).revokeCredential("issuer", "cred-id-1");
+        verify(credentialStatusService).revokeCredential("issuer", "cred-id-2");
+        verify(revokeResponseObserver).onNext(RevokeCredentialResp.newBuilder().setRevokedCount(2).build());
+    }
+
+    @Test
+    void revokeCredentialIsolatesByHolderAcrossServers() {
+        var server1Credential = hostCredentialResource("cred-ss1", "issuer", "did:web:ss1.example.com", 1_000L);
+        var server2Credential = hostCredentialResource("cred-ss2", "issuer", "did:web:ss2.example.com", 1_000L);
+        stubStore(server1Credential, server2Credential);
+        when(credentialStatusService.revokeCredential("issuer", "cred-ss1")).thenReturn(ServiceResult.success(null));
+
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
+
+        verify(credentialStatusService).revokeCredential("issuer", "cred-ss1");
+        verify(credentialStatusService, never()).revokeCredential("issuer", "cred-ss2");
+        verify(revokeResponseObserver).onNext(RevokeCredentialResp.newBuilder().setRevokedCount(1).build());
+    }
+
+    @Test
+    void revokeCredentialAppliesIssuedBeforeCutoff() {
+        var beforeCutoff = hostCredentialResource("cred-old", "issuer", "did:web:ss1.example.com", 1_000L);
+        var atCutoff = hostCredentialResource("cred-new", "issuer", "did:web:ss1.example.com", 2_000L);
+        stubStore(beforeCutoff, atCutoff);
+        when(credentialStatusService.revokeCredential("issuer", "cred-old")).thenReturn(ServiceResult.success(null));
+
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
+
+        verify(credentialStatusService).revokeCredential("issuer", "cred-old");
+        verify(credentialStatusService, never()).revokeCredential("issuer", "cred-new");
+        verify(revokeResponseObserver).onNext(RevokeCredentialResp.newBuilder().setRevokedCount(1).build());
     }
 
     @Test
     void revokeCredentialSkipsMgmtHolder() {
-        var mgmtResource = hostCredentialResource("mgmt-id", "issuer", "EE", "ORG", "12345678",
-                "did:web:ss1.example.com:mgmt");
-        var hostResource = hostCredentialResource("host-id", "issuer", "EE", "ORG", "12345678",
-                "did:web:ss1.example.com");
+        var mgmtResource = hostCredentialResource("mgmt-id", "issuer", "did:web:ss1.example.com:mgmt", 1_000L);
+        var hostResource = hostCredentialResource("host-id", "issuer", "did:web:ss1.example.com", 1_000L);
         when(credentialStatusService.queryCredentials(any(QuerySpec.class)))
                 .thenReturn(ServiceResult.success(List.of(mgmtResource, hostResource)));
-        when(credentialStatusService.revokeCredential("host-id"))
+        when(credentialStatusService.revokeCredential("issuer", "host-id"))
                 .thenReturn(ServiceResult.success(null));
 
-        service.revokeCredential(revokeReq("issuer", "EE", "ORG", "12345678"), revokeResponseObserver);
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
 
-        verify(credentialStatusService).revokeCredential(eq("host-id"));
-        verify(credentialStatusService, never()).revokeCredential(eq("mgmt-id"));
+        verify(credentialStatusService).revokeCredential(eq("issuer"), eq("host-id"));
+        verify(credentialStatusService, never()).revokeCredential(eq("issuer"), eq("mgmt-id"));
     }
 
     @Test
-    void revokeCredentialThrowsWhenNoMatchFound() {
-        when(credentialStatusService.queryCredentials(any(QuerySpec.class)))
-                .thenReturn(ServiceResult.success(List.of()));
+    void revokeCredentialZeroMatchesIsIdempotentSuccess() {
+        stubStore();
 
-        service.revokeCredential(revokeReq("issuer", "EE", "ORG", "99999999"), revokeResponseObserver);
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
 
-        verify(revokeResponseObserver).onError(any(StatusRuntimeException.class));
-        verify(credentialStatusService, never()).revokeCredential(any());
+        verify(credentialStatusService, never()).revokeCredential(any(), any());
+        verify(revokeResponseObserver).onNext(RevokeCredentialResp.newBuilder().setRevokedCount(0).build());
+        verify(revokeResponseObserver).onCompleted();
+        verify(revokeResponseObserver, never()).onError(any());
+
+        ArgumentCaptor<String> infoMessages = ArgumentCaptor.forClass(String.class);
+        verify(monitor, atLeastOnce()).info(infoMessages.capture());
+        assertThat(infoMessages.getAllValues())
+                .anySatisfy(message -> assertThat(message).contains("no credentials matched holder did:web:ss1.example.com"));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"", "   "})
     void revokeCredentialRejectsBlankParticipantContextId(String blank) {
-        service.revokeCredential(revokeReq(blank, "EE", "ORG", "12345678"), revokeResponseObserver);
+        service.revokeCredential(revokeReq(blank, "did:web:ss1.example.com", 2_000L), revokeResponseObserver);
 
         verify(revokeResponseObserver).onError(any(StatusRuntimeException.class));
         verify(credentialStatusService, never()).queryCredentials(any());
     }
 
-    private RevokeCredentialReq revokeReq(String ctx, String instance, String memberClass, String memberCode) {
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    void revokeCredentialRejectsBlankHolderDid(String blank) {
+        service.revokeCredential(revokeReq("issuer", blank, 2_000L), revokeResponseObserver);
+
+        verify(revokeResponseObserver).onError(any(StatusRuntimeException.class));
+        verify(credentialStatusService, never()).queryCredentials(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void revokeCredentialRejectsNonPositiveIssuedBefore(long nonPositive) {
+        service.revokeCredential(revokeReq("issuer", "did:web:ss1.example.com", nonPositive), revokeResponseObserver);
+
+        verify(revokeResponseObserver).onError(any(StatusRuntimeException.class));
+        verify(credentialStatusService, never()).queryCredentials(any());
+    }
+
+    @Test
+    void canSignReturnsAbsentWhenNoParticipantContext() {
+        when(participantContextService.getParticipantContext("issuer"))
+                .thenReturn(ServiceResult.notFound("not found"));
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder().setOutcome(CanSignOutcome.ABSENT).build());
+        verify(canSignResponseObserver).onCompleted();
+    }
+
+    @Test
+    void canSignReturnsCanSignWithDidWhenActiveKeyAndPublishedDidExist() {
+        stubParticipantContext("issuer", "did:web:issuer.example.com");
+        when(keyPairService.getActiveKeyPairForUsage("issuer", KeyPairUsage.CREDENTIAL_SIGNING))
+                .thenReturn(ServiceResult.success(activeSigningKey("did:web:issuer.example.com#key-1")));
+        when(didDocumentService.findById("did:web:issuer.example.com"))
+                .thenReturn(publishedDid("did:web:issuer.example.com"));
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder()
+                .setOutcome(CanSignOutcome.CAN_SIGN)
+                .setDid("did:web:issuer.example.com")
+                .build());
+        verify(canSignResponseObserver).onCompleted();
+    }
+
+    @Test
+    void canSignPassesForSigningKeyOtherThanKeyOne() {
+        stubParticipantContext("issuer", "did:web:issuer.example.com");
+        when(keyPairService.getActiveKeyPairForUsage("issuer", KeyPairUsage.CREDENTIAL_SIGNING))
+                .thenReturn(ServiceResult.success(activeSigningKey("did:web:issuer.example.com#key-7")));
+        when(didDocumentService.findById("did:web:issuer.example.com"))
+                .thenReturn(publishedDid("did:web:issuer.example.com"));
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder()
+                .setOutcome(CanSignOutcome.CAN_SIGN)
+                .setDid("did:web:issuer.example.com")
+                .build());
+    }
+
+    @Test
+    void canSignReturnsCannotSignWithNoActiveKeyCauseWhenNoActiveSigningKey() {
+        stubParticipantContext("issuer", "did:web:issuer.example.com");
+        when(keyPairService.getActiveKeyPairForUsage("issuer", KeyPairUsage.CREDENTIAL_SIGNING))
+                .thenReturn(ServiceResult.notFound("no active key"));
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder()
+                .setOutcome(CanSignOutcome.CANNOT_SIGN)
+                .setCause(CanSignCause.NO_ACTIVE_KEY)
+                .build());
+        verify(didDocumentService, never()).findById(any());
+    }
+
+    @Test
+    void canSignReturnsCannotSignWithKeySecretNotReadableCauseWhenPrivateKeyCannotBeResolved() {
+        stubParticipantContext("issuer", "did:web:issuer.example.com");
+        when(keyPairService.getActiveKeyPairForUsage("issuer", KeyPairUsage.CREDENTIAL_SIGNING))
+                .thenReturn(ServiceResult.success(activeSigningKey("did:web:issuer.example.com#key-1")));
+        when(privateKeyResolver.resolvePrivateKey("issuer", "did:web:issuer.example.com#key-1-alias"))
+                .thenReturn(Result.failure("vault read failed"));
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder()
+                .setOutcome(CanSignOutcome.CANNOT_SIGN)
+                .setCause(CanSignCause.KEY_SECRET_NOT_READABLE)
+                .build());
+        verify(didDocumentService, never()).findById(any());
+    }
+
+    @Test
+    void canSignReturnsCannotSignWithDidNotPublishedCauseWhenDidResourceNotPublished() {
+        stubParticipantContext("issuer", "did:web:issuer.example.com");
+        when(keyPairService.getActiveKeyPairForUsage("issuer", KeyPairUsage.CREDENTIAL_SIGNING))
+                .thenReturn(ServiceResult.success(activeSigningKey("did:web:issuer.example.com#key-1")));
+        when(didDocumentService.findById("did:web:issuer.example.com"))
+                .thenReturn(DidResource.Builder.newInstance()
+                        .did("did:web:issuer.example.com")
+                        .state(DidState.GENERATED)
+                        .build());
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder()
+                .setOutcome(CanSignOutcome.CANNOT_SIGN)
+                .setCause(CanSignCause.DID_NOT_PUBLISHED)
+                .build());
+    }
+
+    @Test
+    void canSignReturnsCannotSignWithDidNotPublishedCauseWhenDidResourceMissing() {
+        stubParticipantContext("issuer", "did:web:issuer.example.com");
+        when(keyPairService.getActiveKeyPairForUsage("issuer", KeyPairUsage.CREDENTIAL_SIGNING))
+                .thenReturn(ServiceResult.success(activeSigningKey("did:web:issuer.example.com#key-1")));
+        when(didDocumentService.findById("did:web:issuer.example.com")).thenReturn(null);
+
+        service.canSign(canSignReq("issuer"), canSignResponseObserver);
+
+        verify(canSignResponseObserver).onNext(CanSignResp.newBuilder()
+                .setOutcome(CanSignOutcome.CANNOT_SIGN)
+                .setCause(CanSignCause.DID_NOT_PUBLISHED)
+                .build());
+    }
+
+    private CanSignReq canSignReq(String participantContextId) {
+        return CanSignReq.newBuilder().setParticipantContextId(participantContextId).build();
+    }
+
+    private void stubParticipantContext(String participantContextId, String did) {
+        var context = IdentityHubParticipantContext.Builder.newInstance()
+                .id(participantContextId)
+                .did(did)
+                .apiTokenAlias(participantContextId + "-api-token-alias")
+                .build();
+        when(participantContextService.getParticipantContext(participantContextId))
+                .thenReturn(ServiceResult.success(context));
+    }
+
+    private KeyPairResource activeSigningKey(String keyId) {
+        return KeyPairResource.Builder.newInstance()
+                .id(keyId)
+                .keyId(keyId)
+                .privateKeyAlias(keyId + "-alias")
+                .usage(KeyPairUsage.CREDENTIAL_SIGNING)
+                .state(KeyPairState.ACTIVATED)
+                .build();
+    }
+
+    private DidResource publishedDid(String did) {
+        return DidResource.Builder.newInstance().did(did).state(DidState.PUBLISHED).build();
+    }
+
+    private void stubStore(VerifiableCredentialResource... seed) {
+        when(credentialStatusService.queryCredentials(any(QuerySpec.class))).thenAnswer(invocation -> {
+            QuerySpec spec = invocation.getArgument(0);
+            var matches = Arrays.stream(seed).filter(resource -> matchesAll(resource, spec)).toList();
+            return ServiceResult.success(matches);
+        });
+    }
+
+    private boolean matchesAll(VerifiableCredentialResource resource, QuerySpec spec) {
+        return spec.getFilterExpression().stream().allMatch(criterion -> matches(resource, criterion));
+    }
+
+    private boolean matches(VerifiableCredentialResource resource, Criterion criterion) {
+        var field = (String) criterion.getOperandLeft();
+        var value = criterion.getOperandRight();
+        return switch (field) {
+            case "participantContextId" -> resource.getParticipantContextId().equals(value);
+            case "holderId" -> resource.getHolderId().equals(value);
+            case "timestamp" -> resource.getTimestamp() < (Long) value;
+            default -> throw new IllegalStateException("Unexpected filter field: " + field);
+        };
+    }
+
+    private CreateParticipantContextReq createReq() {
+        return CreateParticipantContextReq.newBuilder()
+                .setParticipantContextId("issuer")
+                .setDid("did:web:issuer.example.com")
+                .setIssuerServiceUrl("https://issuer.example.com/api/issuance")
+                .setKeyId("did:web:issuer.example.com#key-1")
+                .setPrivateKeyAlias("issuer-key-alias")
+                .build();
+    }
+
+    private RevokeCredentialReq revokeReq(String ctx, String holderDid, long issuedBefore) {
         return RevokeCredentialReq.newBuilder()
                 .setParticipantContextId(ctx)
-                .setXroadInstance(instance)
-                .setMemberClass(memberClass)
-                .setMemberCode(memberCode)
+                .setHolderDid(holderDid)
+                .setIssuedBefore(issuedBefore)
                 .build();
     }
 
     private VerifiableCredentialResource hostCredentialResource(String id, String participantContextId,
-                                                                String xroadInstance, String memberClass,
-                                                                String memberCode, String subjectDid) {
+                                                                String subjectDid, long timestamp) {
         var subject = CredentialSubject.Builder.newInstance()
                 .id(subjectDid)
-                .claim("xroadInstance", xroadInstance)
-                .claim("memberClass", memberClass)
-                .claim("memberCode", memberCode)
+                .claim("subjectDid", subjectDid)
                 .build();
         var vc = VerifiableCredential.Builder.newInstance()
                 .type("MembershipCredential")
@@ -223,7 +565,23 @@ class IssuerProvisioningGrpcServiceTest {
                 .participantContextId(participantContextId)
                 .issuerId("did:web:issuer.example.com")
                 .holderId(subjectDid)
+                .timestamp(timestamp)
                 .credential(container)
                 .build();
+    }
+
+    private static XrdRuntimeExceptionProto unpackProto(Throwable ex) {
+        var status = StatusProto.fromThrowable(ex);
+        assertThat(status).isNotNull();
+        for (var any : status.getDetailsList()) {
+            if (any.is(XrdRuntimeExceptionProto.class)) {
+                try {
+                    return any.unpack(XrdRuntimeExceptionProto.class);
+                } catch (InvalidProtocolBufferException e) {
+                    throw new AssertionError("Failed to unpack XrdRuntimeExceptionProto", e);
+                }
+            }
+        }
+        throw new AssertionError("No XrdRuntimeExceptionProto found in gRPC status details");
     }
 }

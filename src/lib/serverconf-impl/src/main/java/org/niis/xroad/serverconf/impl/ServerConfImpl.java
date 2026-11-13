@@ -40,6 +40,7 @@ import ee.ria.xroad.common.metadata.RestServiceDetailsListType;
 import ee.ria.xroad.common.metadata.RestServiceType;
 import ee.ria.xroad.common.metadata.XRoadRestServiceDetailsType;
 import ee.ria.xroad.common.util.CryptoUtils;
+import ee.ria.xroad.common.util.UriPathRejectedException;
 import ee.ria.xroad.common.util.UriUtils;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
@@ -92,6 +93,7 @@ import org.niis.xroad.serverconf.model.Endpoint;
 import org.niis.xroad.serverconf.model.ServerConf;
 import org.niis.xroad.serverconf.model.Service;
 import org.niis.xroad.serverconf.model.ServiceDescription;
+import org.niis.xroad.serverconf.model.ServiceDescriptionBase;
 import org.niis.xroad.serverconf.model.TimestampingService;
 
 import java.io.IOException;
@@ -104,6 +106,7 @@ import java.security.spec.InvalidKeySpecException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.BiPredicate;
 import java.util.stream.Collectors;
 
 import static ee.ria.xroad.common.ErrorCodes.translateException;
@@ -277,14 +280,24 @@ public class ServerConfImpl implements ServerConfProvider {
     }
 
     @Override
-    public boolean isSubjectInLocalGroup(ClientId clientId, LocalGroupId localGroupId) {
+    public boolean isLocalGroupMember(ClientId ownerId, LocalGroupId localGroupId, ClientId memberId) {
         return tx(session -> {
-            ClientEntity clientEntity = clientDao.getClient(session, clientId);
-            if (clientEntity == null) {
+            ClientEntity ownerEntity = clientDao.getClient(session, ownerId);
+            if (ownerEntity == null) {
                 return false;
             }
-            return clientEntity.getLocalGroups().stream()
-                    .anyMatch(g -> Objects.equals(localGroupId.getGroupCode(), g.getGroupCode()));
+            return isMemberInLocalGroup(memberId, localGroupId, ownerEntity, ClientId::memberEquals);
+        });
+    }
+
+    @Override
+    public boolean isExactLocalGroupMember(ClientId ownerId, LocalGroupId localGroupId, ClientId clientId) {
+        return tx(session -> {
+            ClientEntity ownerEntity = clientDao.getClient(session, ownerId);
+            if (ownerEntity == null) {
+                return false;
+            }
+            return isMemberInLocalGroup(clientId, localGroupId, ownerEntity, Object::equals);
         });
     }
 
@@ -344,16 +357,20 @@ public class ServerConfImpl implements ServerConfProvider {
     public String getDisabledNotice(ServiceId serviceId) {
         return tx(session -> {
             ServiceDescription serviceDescription = getServiceDescription(session, serviceId);
-            if (serviceDescription != null && serviceDescription.isDisabled()) {
-                if (serviceDescription.getDisabledNotice() == null) {
-                    return String.format("Service '%s' is disabled", serviceId);
-                }
-
-                return serviceDescription.getDisabledNotice();
-            }
-
-            return null;
+            return disabledNotice(serviceDescription, serviceId);
         });
+    }
+
+    static String disabledNotice(ServiceDescriptionBase serviceDescription, ServiceId serviceId) {
+        if (serviceDescription == null || !serviceDescription.isDisabled()) {
+            return null;
+        }
+
+        if (StringUtils.isBlank(serviceDescription.getDisabledNotice())) {
+            return String.format("Service '%s' is disabled", serviceId);
+        }
+
+        return serviceDescription.getDisabledNotice();
     }
 
     @Override
@@ -431,6 +448,11 @@ public class ServerConfImpl implements ServerConfProvider {
                 .filter(e -> !e.isBaseEndpoint())
                 .map(e -> createEndpoint(e.getMethod(), e.getPath()))
                 .toList());
+    }
+
+    @Override
+    public List<Endpoint> getAclEndpoints(ClientId clientId, ServiceId serviceId) {
+        return tx(session -> loadAclEndpoints(session, clientId, serviceId));
     }
 
     @Override
@@ -516,7 +538,12 @@ public class ServerConfImpl implements ServerConfProvider {
         if (path == null) {
             normalizedPath = null;
         } else {
-            normalizedPath = UriUtils.decodeAndNormalize(path);
+            try {
+                normalizedPath = UriUtils.decodeAndNormalize(path);
+            } catch (UriPathRejectedException e) {
+                log.warn("Request path rejected: {}. Access will be rejected.", path);
+                return false;
+            }
 
             // Explicitly reject any remaining traversal sequences
             if (normalizedPath.contains("..")) {
@@ -534,6 +561,15 @@ public class ServerConfImpl implements ServerConfProvider {
      * Includes only endpoints the client has a direct acl entry for, does not check for implicitly allowed endpoints.
      */
     protected List<Endpoint> getAclEndpoints(Session session, ClientId clientId, ServiceId serviceId) {
+        return loadAclEndpoints(session, clientId, serviceId);
+    }
+
+    /**
+     * Uncached ACL endpoint load. Called directly by {@link #getAclEndpoints(ClientId, ServiceId)} so that
+     * call always reads the current configuration, and by {@link #getAclEndpoints(Session, ClientId, ServiceId)},
+     * which a caching subclass overrides to serve a cached answer instead.
+     */
+    private List<Endpoint> loadAclEndpoints(Session session, ClientId clientId, ServiceId serviceId) {
         log.debug("getAcl, session = {}", session);
 
         final ClientEntity serviceOwner = clientDao.getClient(session, serviceId.getClientId());
@@ -579,17 +615,24 @@ public class ServerConfImpl implements ServerConfProvider {
         if (aclSubjectId instanceof GlobalGroupId globalGroupId) {
             return globalConfProvider.isSubjectInGlobalGroup(clientId, globalGroupId);
         } else if (aclSubjectId instanceof LocalGroupId localGroupId) {
-            return isMemberInLocalGroup(clientId, localGroupId, serviceOwner);
+            return isMemberInLocalGroup(clientId, localGroupId, serviceOwner, (a, b) -> a.equals(b));
         } else {
             return clientId.equals(aclSubjectId);
         }
     }
 
-    private boolean isMemberInLocalGroup(ClientId memberId, LocalGroupId groupId, ClientEntity groupOwner) {
+    /**
+     * @param matchMode how a group member's identifier is compared against {@code memberId} -- an exact
+     *                  {@code ClientId::equals} for the legacy ACL path, or {@code ClientId::memberEquals}
+     *                  for DSP, where the identity available at evaluation time is member-level while group
+     *                  members are subsystems.
+     */
+    private boolean isMemberInLocalGroup(ClientId memberId, LocalGroupId groupId, ClientEntity groupOwner,
+                                         BiPredicate<ClientId, ClientId> matchMode) {
         return groupOwner.getLocalGroups().stream()
                 .filter(g -> Objects.equals(groupId.getGroupCode(), g.getGroupCode()))
                 .flatMap(g -> g.getGroupMembers().stream())
-                .anyMatch(m -> m.getGroupMemberId().equals(memberId));
+                .anyMatch(m -> matchMode.test(memberId, m.getGroupMemberId()));
     }
 
     /**

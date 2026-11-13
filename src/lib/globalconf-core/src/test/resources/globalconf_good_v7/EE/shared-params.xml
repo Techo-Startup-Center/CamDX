@@ -95,7 +95,7 @@
         <cert>MIICwjCCAaqgAwIBAgIIb+RPNmkfCdYwDQYJKoZIhvcNAQEFBQAwNzERMA8GA1UEAwwIQWRtaW5DQTExFTATBgNVBAoMDEVKQkNBIFNhbXBsZTELMAkGA1UEBhMCU0UwHhcNMTIxMTI5MTE1MzA2WhcNMTQxMTI5MTE1MzA2WjAVMRMwEQYDVQQDDAp0aW1lc3RhbXAxMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCb55NVDtHzs91sflX3fatZWUS69rxkxDMpcGo6doJ7YaKrCMr3BZ3ZlDTfCdEosWocTcYXdm3CO8BXlZvhkvKyHN/hr0UzD0T8j8mBYoq3fGjTVTJOIG2yTsyT/3z3dpcMyGMWwsiqOd9TTtI8DcR2cOvQzlLiV9hz/kB9iLJeSQIDAQABo3gwdjAdBgNVHQ4EFgQUbdmtvKHCe0+vhKP+ZcVUjmf5w/AwDAYDVR0TAQH/BAIwADAfBgNVHSMEGDAWgBR3LYkuA7b9+NJlOTE1ItBGGujSCTAOBgNVHQ8BAf8EBAMCBkAwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwDQYJKoZIhvcNAQEFBQADggEBAFJ3AJ4I4RTeMBWhN8RLPQdJzcd0VRp9FUyYhnIkR679nXU+ZbIyaQNx3+hPIbhcOMKxlKGm0LcDnjHL4EuJ6Gb027vF7mSwFbcKPM+L23x2QLvuVcUEjcbP3Kcm93XCSu3RI71JINM+WinjXke/COuFzhMWJcLYj7S5dGR53ya0NnSf7dlua5FLBRiOFA5kRWTft6RcEW0jGZzscL6wZn+hH99IihjqgdxV1GydL+BgDMfryZzhl+h1WtTwv0Bi5Gs81v8UlNUTnCCfLu9fatHx85/ttFcXEyt9SQze3NGcaR1i3kyZvNijzG3C+jrUnJ/lFs5AcIiPG0Emz6oZEYs=</cert>
         <costType>PAID</costType>
     </approvedTSA>
-    <approvedDsTlsCa>
+    <approvedConnectorTlsCA>
         <name>Test DS TLS CA</name>
         <topCA>
             <cert>MIIDjTCCAnWgAwIBAgIJAKL3zm5uAgNAMA0GCSqGSIb3DQEBBQUAMF0xCzAJBgNVBAYTAkVFMRQwEgYDVQQKEwtDeWJlcm5ldGljYTEMMAoGA1UECxMDSVRPMQ4wDAYDVQQDEwVDeWJlcjEaMBgGCSqGSIb3DQEJARYLYWFhQGJiYi5jY2MwHhcNMTQwOTI5MDk0MTM3WhcNMjQwOTI2MDk0MTM3WjBdMQswCQYDVQQGEwJFRTEUMBIGA1UEChMLQ3liZXJuZXRpY2ExDDAKBgNVBAsTA0lUTzEOMAwGA1UEAxMFQ3liZXIxGjAYBgkqhkiG9w0BCQEWC2FhYUBiYmIuY2NjMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0ntJBTdBj7KT+j37yQ3r9pzO/VgVRQptQO6pDGSYonBRDbziYyBAuo8Owta2GshTqiqbD9OMqi8EK2fxrnCfo5HhG4BwY4DPGCozwI/9ETCNp/ElxrICbb68zCQy6ecOrPbirG3baKUKPxBwnN/S1w57rR66Eb02hlA0/AAqN7GJnNqonpeDnIQ5vq4bdrrjGEwke44hfR+wI81fVP2oc28AWk3p1TVA0TPLjKfQOlXMfVYIA+Pf+9N4uiOXAcv4ZfUAJbiZQujBdHR7wF4SiV0u3Xfwfk6uj1Ddpv5ehh8HKhiNoDySCXgRI8I5X1gbQ3MIFR7CSwcZuZkolsQnHQIDAQABo1AwTjAMBgNVHRMEBTADAQH/MB0GA1UdDgQWBBR+egbuTBG1XAUq40xvTvPKht3y3jAfBgNVHSMEGDAWgBR+egbuTBG1XAUq40xvTvPKht3y3jANBgkqhkiG9w0BAQUFAAOCAQEAu6QBabq8zQXnxGRCeKpBvp4iMY4VOWm2QYiwDljaQpMvQWjoBhMEZsaaux/ouSiQvAzbO/NdHHJsXAfwxM2Eo8kFtZNIlTvBs3Os7CvLle1z7pwU/m9LOeakys9xDQRzlPqQwN0Q2oELu0tOHtkd2RBLXjy5ZXHHw+KnDwfQlLUzvNRLLmZIfZxMf57z53eP59T0UYBj2bHYV2hxfzYHmJG6nz8FW/mImr53meFTrM6muw6fKbeKTNvr4n+7AK6Hn6Whie730DB4A9xyWvjdQWYo7FtYJ/WvbC45E8ppGZH0OWBI028yDvfVgeB8eIpzeMyI1fSHGb66hKc3ruWdSA==</cert>
@@ -106,9 +106,15 @@
         <acmeServer>
             <directoryURL>http://testca.com/acme</directoryURL>
             <ipAddress>192.99.88.7</ipAddress>
-            <dsTlsCertificateProfileId>ds-tls-profile</dsTlsCertificateProfileId>
+            <connectorTlsCertificateProfileId>ds-tls-profile</connectorTlsCertificateProfileId>
         </acmeServer>
-    </approvedDsTlsCa>
+    </approvedConnectorTlsCA>
+    <credentialIssuer>
+        <did>did:web:cs1.ee%3A443:issuer</did>
+    </credentialIssuer>
+    <credentialIssuer>
+        <did>did:web:cs2.ee%3A443:issuer</did>
+    </credentialIssuer>
     <member id="id0">
         <memberClass>
             <code>BUSINESS</code>
@@ -116,6 +122,8 @@
         </memberClass>
         <memberCode>producer</memberCode>
         <name>Experimental producer</name>
+        <did securityServer="id5">did:web:127.0.0.1%3A7183:v1:EE:BUSINESS:producer</did>
+        <did securityServer="id9">did:web:127.0.0.1%3A7283:v1:EE:BUSINESS:producer</did>
     </member>
     <member id="id1">
         <memberClass>
@@ -124,6 +132,7 @@
         </memberClass>
         <memberCode>consumer</memberCode>
         <name>Experimental consumer</name>
+        <did securityServer="id6">did:web:www.foo.com%3A7183:v1:EE:BUSINESS:consumer</did>
     </member>
     <member id="id2">
         <memberClass>
@@ -139,8 +148,9 @@
         <subsystem id="id4">
             <subsystemCode>barsubsystemId</subsystemCode>
         </subsystem>
+        <did securityServer="id8">did:web:foo.bar.baz%3A7183:v2:EE:BUSINESS:foo</did>
     </member>
-    <securityServer>
+    <securityServer id="id5">
         <owner>id0</owner>
         <serverCode>producerServerCode</serverCode>
         <address>127.0.0.1</address>
@@ -148,20 +158,22 @@
         <client>id1</client>
         <client>id2</client>
         <client>id3</client>
+        <dspBaseUrl>https://127.0.0.1:8183/api/dsp</dspBaseUrl>
+        <systemDid>did:web:127.0.0.1%3A7183:v1:system</systemDid>
     </securityServer>
-    <securityServer>
+    <securityServer id="id6">
         <owner>id1</owner>
         <serverCode>consumerServerCode</serverCode>
         <address>https://www.foo.com/bar</address>
         <authCertHash>XhdxNaWNz7XBuakTRDyz+5Ald53DCy3DwxUacFe/VX8=</authCertHash>
     </securityServer>
-    <securityServer>
+    <securityServer id="id7">
         <owner>id2</owner>
         <serverCode>fooServerCode</serverCode>
         <authCertHash>enRxKzBGb0q7sUJa8Hx0A5aHmQwCa1HzWNFrN3ZDDJw=</authCertHash>
         <client>id0</client>
     </securityServer>
-    <securityServer>
+    <securityServer id="id8">
         <owner>id2</owner>
         <serverCode>FooBarServerCode</serverCode>
         <address>https://foo.bar.baz</address>
@@ -170,6 +182,17 @@
         <inMaintenanceMode>
             <message>Test maintenance mode</message>
         </inMaintenanceMode>
+        <dspBaseUrl>https://foo.bar.baz:8183/api/dsp</dspBaseUrl>
+        <systemDid>did:web:foo.bar.baz%3A7183:v1:system</systemDid>
+    </securityServer>
+    <securityServer id="id9">
+        <owner>id0</owner>
+        <serverCode>producerServerCode2</serverCode>
+        <address>127.0.0.1</address>
+        <authCertHash>IJBbi0Y46y/OW02eiU8NEQUkIngeT13LSDhzUQ03NM8=</authCertHash>
+        <client>id0</client>
+        <dspBaseUrl>https://127.0.0.1:8283/api/dsp</dspBaseUrl>
+        <systemDid>did:web:127.0.0.1%3A7283:v1:system</systemDid>
     </securityServer>
     <globalGroup>
         <groupCode>Test group</groupCode>

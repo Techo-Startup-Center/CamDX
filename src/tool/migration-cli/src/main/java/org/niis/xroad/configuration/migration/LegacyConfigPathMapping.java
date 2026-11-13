@@ -29,7 +29,6 @@ package org.niis.xroad.configuration.migration;
 
 import lombok.NoArgsConstructor;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -43,6 +42,9 @@ import java.util.Set;
 public class LegacyConfigPathMapping {
     private static final Map<String, Set<String>> MAPPING = new HashMap<>();
     private static final Set<String> REMOVED_KEYS = new HashSet<>();
+
+    /** Legacy key whose value is classified by {@link OpMonitorHostRule} instead of being mapped. */
+    static final String OP_MONITOR_HOST_KEY = "op-monitor.host";
 
     static {
         addMapping("common.configuration-path", "common-global-conf.configuration-path");
@@ -68,6 +70,7 @@ public class LegacyConfigPathMapping {
         addMapping("proxy.client-https-port", "proxy.client-proxy.client-https-port");
         addMapping("proxy.jetty-clientproxy-configuration-file", "proxy.client-proxy.jetty-configuration-file");
         addMapping("proxy.client-connector-initial-idle-time", "proxy.client-proxy.client-connector-initial-idle-time");
+        addMapping("proxy.client-connector-max-idle-time", "proxy.client-proxy.client-connector-max-idle-time");
         addMapping("proxy.client-tls-protocols", "proxy.client-proxy.client-tls-protocols");
         addMapping("proxy.client-tls-ciphers", "proxy.client-proxy.client-tls-ciphers");
         addMapping("proxy.client-httpclient-so-linger", "proxy.client-proxy.client-httpclient-so-linger");
@@ -138,19 +141,12 @@ public class LegacyConfigPathMapping {
         addMapping("message-log.messagelog-key-id", "message-log-encryption.db.key-id");
 
         // op-monitor
-        addMapping("op-monitor-service.socket-timeout-seconds", "proxy.addon.op-monitor.connection.socket-timeout-seconds");
-        addMapping("op-monitor-service.connection-timeout-seconds", "proxy.addon.op-monitor.connection.connection-timeout-seconds");
-
-        addMapping("op-monitor.host", "proxy.addon.op-monitor.connection.host");
-        addCopy("op-monitor.port", "proxy.addon.op-monitor.connection.port");
-        addCopy("op-monitor.scheme", "proxy.addon.op-monitor.connection.scheme");
-        addCopy("proxy.xroad-tls-ciphers", "op-monitor.xroad-tls-ciphers", "proxy.addon.op-monitor.connection.xroad-tls-ciphers");
+        addMapping("op-monitor.grpc-port", "op-monitor.rpc.port", "common-rpc.channel.op-monitor.port");
+        addMapping("op-monitor.grpc-client-timeout", "common-rpc.channel.op-monitor.deadline-after");
 
         addMapping("op-monitor-buffer.size", "proxy.addon.op-monitor.buffer.size");
         addMapping("op-monitor-buffer.max-records-in-message", "proxy.addon.op-monitor.buffer.max-records-in-message");
         addMapping("op-monitor-buffer.sending-interval-seconds", "proxy.addon.op-monitor.buffer.sending-interval-seconds");
-        addMapping("op-monitor-buffer.socket-timeout-seconds", "proxy.addon.op-monitor.buffer.socket-timeout-seconds");
-        addMapping("op-monitor-buffer.connection-timeout-seconds", "proxy.addon.op-monitor.buffer.connection-timeout-seconds");
 
         // proxy-ui
         addMapping("proxy-ui-api.security-server-url", "proxy-ui-api.proxy-server-url");
@@ -166,7 +162,6 @@ public class LegacyConfigPathMapping {
         addMapping("center.auto-approve-owner-change-requests", "management-requests.auto-approve-owner-change-requests");
         addMapping("center.auto-approve-client-reg-requests", "management-requests.auto-approve-client-reg-requests");
         addMapping("center.auto-approve-auth-cert-reg-requests", "management-requests.auto-approve-auth-cert-reg-requests");
-        addMapping("center.ha-node-name", "admin-service.ha-node-name");
         addMapping("center.backup-encryption-enabled", "backups.backup-encryption-enabled");
         addMapping("center.backup-encryption-keyids", "backups.backup-encryption-keyids");
 
@@ -177,6 +172,7 @@ public class LegacyConfigPathMapping {
         // ----- removed keys ------------
         REMOVED_KEYS.add("conf.path");
         REMOVED_KEYS.add("center.database-properties");
+        REMOVED_KEYS.add("center.ha-node-name");
         REMOVED_KEYS.add("proxy-ui-api.ssl-properties");
         REMOVED_KEYS.add("proxy.configuration-anchor-file");
         REMOVED_KEYS.add("proxy.database-properties");
@@ -186,16 +182,21 @@ public class LegacyConfigPathMapping {
         REMOVED_KEYS.add("message-log.archive-gpg-home-directory");
 
         REMOVED_KEYS.add("configuration-proxy.download-script");
+
+        REMOVED_KEYS.add(OP_MONITOR_HOST_KEY);
+        REMOVED_KEYS.add("op-monitor.port");
+        REMOVED_KEYS.add("op-monitor.scheme");
+        REMOVED_KEYS.add("op-monitor.tls-certificate");
+        REMOVED_KEYS.add("op-monitor.client-tls-certificate");
+        REMOVED_KEYS.add("op-monitor.xroad-tls-ciphers");
+        REMOVED_KEYS.add("op-monitor-service.socket-timeout-seconds");
+        REMOVED_KEYS.add("op-monitor-service.connection-timeout-seconds");
+        REMOVED_KEYS.add("op-monitor-buffer.socket-timeout-seconds");
+        REMOVED_KEYS.add("op-monitor-buffer.connection-timeout-seconds");
     }
 
     private static void addMapping(String oldKey, String... newKeys) {
         MAPPING.put(oldKey, Set.of(newKeys));
-    }
-
-    private static void addCopy(String key, String... copyTo) {
-        Set<String> copies = new HashSet<>(Arrays.asList(copyTo));
-        copies.add(key);
-        MAPPING.put(key, copies);
     }
 
     private static Map<String, Set<String>> addDatabaseMapping(String dbName) {

@@ -34,6 +34,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DspConfigKeysTest {
 
     @Test
+    void didPortRejectsOutOfRangeAndAcceptsInRange() {
+        assertThat(DspConfigKeys.DID_PORT.validate(0).valid()).isFalse();
+        assertThat(DspConfigKeys.DID_PORT.validate(65536).valid()).isFalse();
+        assertThat(DspConfigKeys.DID_PORT.validate(7183).valid()).isTrue();
+    }
+
+    @Test
+    void dspPortRejectsOutOfRangeAndAcceptsInRange() {
+        assertThat(DspConfigKeys.DSP_PORT.validate(0).valid()).isFalse();
+        assertThat(DspConfigKeys.DSP_PORT.validate(65536).valid()).isFalse();
+        assertThat(DspConfigKeys.DSP_PORT.validate(8183).valid()).isTrue();
+    }
+
+    @Test
     void ttlSecondsRejectsZeroNegativeAndNull() {
         assertThat(DspConfigKeys.CATALOG_CACHE_TTL_SECONDS.validate(0L).valid()).isFalse();
         assertThat(DspConfigKeys.CATALOG_CACHE_TTL_SECONDS.validate(-5L).valid()).isFalse();
@@ -51,6 +65,27 @@ class DspConfigKeysTest {
         assertThat(DspConfigKeys.CATALOG_CACHE_FIND_BY_ID_MAX_SIZE.validate(0).valid()).isFalse();
         assertThat(DspConfigKeys.CATALOG_CACHE_FIND_BY_ID_MAX_SIZE.validate(-1).valid()).isFalse();
         assertThat(DspConfigKeys.CATALOG_CACHE_FIND_BY_ID_MAX_SIZE.validate(1).valid()).isTrue();
+    }
+
+    @Test
+    void issuerTrustRefreshIntervalSecondsRejectsZeroAndNegative() {
+        assertThat(DspConfigKeys.ISSUER_TRUST_REFRESH_INTERVAL_SECONDS.validate(0L).valid()).isFalse();
+        assertThat(DspConfigKeys.ISSUER_TRUST_REFRESH_INTERVAL_SECONDS.validate(-1L).valid()).isFalse();
+        assertThat(DspConfigKeys.ISSUER_TRUST_REFRESH_INTERVAL_SECONDS.validate(1L).valid()).isTrue();
+    }
+
+    @Test
+    void issuerTrustRefreshIntervalSecondsAcceptsPositiveValueAndDefault() {
+        assertThat(DspConfigKeys.ISSUER_TRUST_REFRESH_INTERVAL_SECONDS.validate(5L).valid()).isTrue();
+        assertThat(DspConfigKeys.ISSUER_TRUST_REFRESH_INTERVAL_SECONDS.convertedDefaultValue()).isEqualTo(60L);
+    }
+
+    @Test
+    void didResolutionFetchTimeoutRejectsZeroAndNegativeAndDefaultsToThreeSeconds() {
+        assertThat(DspConfigKeys.DID_RESOLUTION_FETCH_TIMEOUT_MS.validate(0L).valid()).isFalse();
+        assertThat(DspConfigKeys.DID_RESOLUTION_FETCH_TIMEOUT_MS.validate(-1L).valid()).isFalse();
+        assertThat(DspConfigKeys.DID_RESOLUTION_FETCH_TIMEOUT_MS.validate(1L).valid()).isTrue();
+        assertThat(DspConfigKeys.DID_RESOLUTION_FETCH_TIMEOUT_MS.convertedDefaultValue()).isEqualTo(3000L);
     }
 
     @Test
@@ -74,15 +109,17 @@ class DspConfigKeysTest {
         assertThat(DspConfigKeys.instance().keys())
                 .extracting(key -> key.key())
                 .containsExactlyInAnyOrder(
-                        "xroad.dsp.participant-context-id",
-                        "xroad.dsp.management-participant-context-id",
+                        "xroad.dsp.did-port",
+                        "xroad.dsp.dsp-port",
                         "xroad.dsp.catalog.cache.enabled",
                         "xroad.dsp.catalog.cache.ttl-seconds",
                         "xroad.dsp.catalog.cache.find-by-id-max-size",
                         "xroad.dsp.builtin-services.proxyMonitor.enabled",
                         "xroad.dsp.builtin-services.opMonitor.enabled",
                         "xroad.dsp.builtin-services.metaservices.enabled",
-                        "xroad.dsp.builtin-services.server-proxy-url");
+                        "xroad.dsp.builtin-services.server-proxy-url",
+                        "xroad.dsp.issuer-trust.refresh-interval-seconds",
+                        "xroad.dsp.did-resolution.fetch-timeout-ms");
     }
 
     @Test

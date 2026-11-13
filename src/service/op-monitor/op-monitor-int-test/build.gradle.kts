@@ -6,8 +6,13 @@ plugins {
 dependencies {
   intTestImplementation(project(":tool:liquibase-executor"))
   intTestImplementation(project(":service:op-monitor:op-monitor-client"))
+  intTestImplementation(testFixtures(project(":lib:rpc-core")))
   intTestImplementation(project(":tool:api-test-core"))
+  intTestImplementation(project(":lib:vault-quarkus")) {
+    exclude(group = "org.jboss.slf4j", module = "slf4j-jboss-logmanager")
+  }
   intTestImplementation(libs.liquibase.core)
+  intTestImplementation(libs.mockito.core)
 
   intTestRuntimeOnly(libs.postgresql)
 }
@@ -39,6 +44,8 @@ tasks.register<Test>("intTest") {
 
   testClassesDirs = sourceSets["intTest"].output.classesDirs
   classpath = sourceSets["intTest"].runtimeClasspath
+
+  include("**/*IntTest.class")
 
   testLogging {
     showStackTraces = true

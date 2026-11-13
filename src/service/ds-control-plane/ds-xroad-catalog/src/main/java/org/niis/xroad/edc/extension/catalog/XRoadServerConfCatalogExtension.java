@@ -28,41 +28,36 @@
 package org.niis.xroad.edc.extension.catalog;
 
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.AssetIndex;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.DataAddressResolver;
 import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractDefinitionStore;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
+import org.eclipse.edc.connector.controlplane.policy.spi.PolicyDefinition;
 import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionStore;
+import org.eclipse.edc.participantcontext.spi.service.ParticipantContextService;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
+import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.serverconf.ServerConfProvider;
+
+import java.util.List;
 
 /**
  * Overrides EDC's default catalog SPIs (AssetIndex, DataAddressResolver,
  * PolicyDefinitionStore, ContractDefinitionStore) with ServerConf-backed read-only stores.
  */
 @Slf4j
+@Provides(CatalogCacheInvalidator.class)
 @Extension(XRoadServerConfCatalogExtension.NAME)
 public class XRoadServerConfCatalogExtension implements ServiceExtension {
 
     static final String NAME = "X-Road ServerConf Catalog";
-
-    /**
-     * Tag for catalog entities owned by this SS. Must match the ParticipantContext registered
-     * in the Identity Hub (SS hostname) — EDC's catalog endpoint filters by it under
-     * edc-iam-dcp-core. Defaults to {@code edc.hostname}.
-     */
-    static final String SETTING_PARTICIPANT_CONTEXT_ID = "xroad.dsp.participant-context-id";
-
-    /**
-     * Distinct DSP identity for MANAGEMENT-subsystem entities. Required so that self-negotiation
-     * (SS hosting MANAGEMENT locally) avoids the {@code edc_contract_negotiation} unique-constraint
-     * collision. Defaults to {@code ${xroad.dsp.participant-context-id}-mgmt}.
-     */
-    static final String SETTING_MANAGEMENT_PARTICIPANT_CONTEXT_ID = "xroad.dsp.management-participant-context-id";
 
     static final String SETTING_CACHE_ENABLED = "xroad.dsp.catalog.cache.enabled";
     static final String SETTING_CACHE_TTL_SECONDS = "xroad.dsp.catalog.cache.ttl-seconds";
@@ -77,11 +72,17 @@ public class XRoadServerConfCatalogExtension implements ServiceExtension {
     @Inject
     private GlobalConfProvider globalConfProvider;
 
-    private String participantContextId;
-    private String managementParticipantContextId;
+    @Inject
+    private ParticipantContextService participantContextService;
+
     private BuiltinServiceCatalog builtinServiceCatalog;
     private StoreCacheConfig cacheConfig;
+    private ServiceContextResolver serviceContextResolver;
     private AssetIndexServerConfStore assetIndexStore;
+    private StoreEnumerationCache<Asset> assetIndexCache;
+    private StoreEnumerationCache<PolicyDefinition> policyDefinitionCache;
+    private StoreEnumerationCache<ContractDefinition> contractDefinitionCache;
+    private CatalogCacheInvalidator catalogCacheInvalidator;
 
     @Override
     public String name() {
@@ -90,12 +91,7 @@ public class XRoadServerConfCatalogExtension implements ServiceExtension {
 
     @Override
     public void initialize(ServiceExtensionContext context) {
-        var defaultContextId = context.getSetting("edc.hostname", "localhost");
-        participantContextId = context.getSetting(SETTING_PARTICIPANT_CONTEXT_ID, defaultContextId);
-        managementParticipantContextId = context.getSetting(
-                SETTING_MANAGEMENT_PARTICIPANT_CONTEXT_ID, participantContextId + "-mgmt");
-        log.info("Participant context ID for catalog assets: {}", participantContextId);
-        log.info("Management participant context ID for catalog assets: {}", managementParticipantContextId);
+        log.info("SYSTEM participant context ID for catalog assets: {}", ParticipantIdentifierScheme.SYSTEM_SEGMENT);
 
         var proxyMonitorEnabled = context.getSetting(BuiltinServiceCatalog.SETTING_PROXY_MONITOR_ENABLED, true);
         var opMonitorEnabled = context.getSetting(BuiltinServiceCatalog.SETTING_OP_MONITOR_ENABLED, true);
@@ -114,11 +110,22 @@ public class XRoadServerConfCatalogExtension implements ServiceExtension {
         log.info("Store cache enabled={} ttlSeconds={} findByIdMaxSize={}",
                 cacheEnabled, cacheTtlSeconds, cacheFindByIdMaxSize);
 
+        serviceContextResolver = new ServiceContextResolver(
+                globalConfProvider, serverConfProvider, participantContextService);
+
+        assetIndexCache = new StoreEnumerationCache<>(cacheConfig.enabled(), cacheConfig.ttlSeconds(),
+                cacheConfig.findByIdMaxSize(), "AssetIndex");
         assetIndexStore = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, participantContextId, managementParticipantContextId,
-                builtinServiceCatalog,
-                new StoreEnumerationCache<>(cacheConfig.enabled(), cacheConfig.ttlSeconds(),
-                        cacheConfig.findByIdMaxSize(), "AssetIndex"));
+                serverConfProvider, builtinServiceCatalog, assetIndexCache,
+                serviceContextResolver);
+
+        policyDefinitionCache = new StoreEnumerationCache<>(cacheConfig.enabled(), cacheConfig.ttlSeconds(),
+                cacheConfig.findByIdMaxSize(), "PolicyDefinition");
+        contractDefinitionCache = new StoreEnumerationCache<>(cacheConfig.enabled(), cacheConfig.ttlSeconds(),
+                cacheConfig.findByIdMaxSize(), "ContractDefinition");
+
+        catalogCacheInvalidator = new DefaultCatalogCacheInvalidator(
+                serverConfProvider, List.of(assetIndexCache, policyDefinitionCache, contractDefinitionCache));
     }
 
     @Provider
@@ -137,20 +144,27 @@ public class XRoadServerConfCatalogExtension implements ServiceExtension {
     public PolicyDefinitionStore policyDefinitionStore() {
         log.trace("Providing PolicyDefinitionStore backed by ServerConf");
         return new PolicyDefinitionServerConfStore(
-                serverConfProvider, globalConfProvider, new PolicyMapper(),
-                participantContextId, managementParticipantContextId, builtinServiceCatalog,
-                new StoreEnumerationCache<>(cacheConfig.enabled(), cacheConfig.ttlSeconds(),
-                        cacheConfig.findByIdMaxSize(), "PolicyDefinition"));
+                serverConfProvider, new PolicyMapper(),
+                builtinServiceCatalog, policyDefinitionCache,
+                serviceContextResolver);
     }
 
     @Provider
     public ContractDefinitionStore contractDefinitionStore() {
         log.trace("Providing ContractDefinitionStore backed by ServerConf");
         return new ContractDefinitionServerConfStore(
-                serverConfProvider, globalConfProvider,
-                participantContextId, managementParticipantContextId,
+                serverConfProvider,
                 builtinServiceCatalog,
-                new StoreEnumerationCache<>(cacheConfig.enabled(), cacheConfig.ttlSeconds(),
-                        cacheConfig.findByIdMaxSize(), "ContractDefinition"));
+                contractDefinitionCache,
+                serviceContextResolver);
+    }
+
+    /**
+     * Exposes the hook other extensions call to flush the catalog store caches — for example on a
+     * signal that a local client was added or removed.
+     */
+    @Provider
+    public CatalogCacheInvalidator catalogCacheInvalidator() {
+        return catalogCacheInvalidator;
     }
 }

@@ -26,6 +26,7 @@
 package org.niis.xroad.globalconf.model;
 
 import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.SecurityServerId;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -35,7 +36,9 @@ import lombok.NoArgsConstructor;
 import org.niis.xroad.common.CostType;
 import org.niis.xroad.common.SortableByCostType;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Getter
 public class SharedParameters {
@@ -43,7 +46,8 @@ public class SharedParameters {
     private final List<ConfigurationSource> sources;
     private final List<ApprovedCA> approvedCAs;
     private final List<ApprovedTSA> approvedTSAs;
-    private final List<ApprovedDsTlsCa> approvedDsTlsCas;
+    private final List<ApprovedConnectorTlsCA> approvedConnectorTlsCAs;
+    private final List<String> credentialIssuerDids;
     private final List<Member> members;
     private final List<SecurityServer> securityServers;
     private final List<GlobalGroup> globalGroups;
@@ -52,19 +56,22 @@ public class SharedParameters {
     public SharedParameters(String instanceIdentifier, List<ConfigurationSource> sources, List<ApprovedCA> approvedCAs,
                             List<ApprovedTSA> approvedTSAs, List<Member> members, List<SecurityServer> securityServers,
                             List<GlobalGroup> globalGroups, GlobalSettings globalSettings) {
-        this(instanceIdentifier, sources, approvedCAs, approvedTSAs, null, members, securityServers, globalGroups,
+        this(instanceIdentifier, sources, approvedCAs, approvedTSAs, null, null, members, securityServers, globalGroups,
                 globalSettings);
     }
 
     @Builder(toBuilder = true)
     public SharedParameters(String instanceIdentifier, List<ConfigurationSource> sources, List<ApprovedCA> approvedCAs,
-                            List<ApprovedTSA> approvedTSAs, List<ApprovedDsTlsCa> approvedDsTlsCas, List<Member> members,
-                            List<SecurityServer> securityServers, List<GlobalGroup> globalGroups, GlobalSettings globalSettings) {
+                            List<ApprovedTSA> approvedTSAs, List<ApprovedConnectorTlsCA> approvedConnectorTlsCAs,
+                            List<String> credentialIssuerDids, List<Member> members,
+                            List<SecurityServer> securityServers, List<GlobalGroup> globalGroups,
+                            GlobalSettings globalSettings) {
         this.instanceIdentifier = instanceIdentifier;
         this.sources = sources;
         this.approvedCAs = approvedCAs;
         this.approvedTSAs = approvedTSAs;
-        this.approvedDsTlsCas = approvedDsTlsCas != null ? approvedDsTlsCas : List.of();
+        this.approvedConnectorTlsCAs = approvedConnectorTlsCAs != null ? approvedConnectorTlsCAs : List.of();
+        this.credentialIssuerDids = credentialIssuerDids != null ? credentialIssuerDids : List.of();
         this.members = members;
         this.securityServers = securityServers;
         this.globalGroups = globalGroups;
@@ -86,6 +93,7 @@ public class SharedParameters {
         private String name;
         private List<Subsystem> subsystems;
         private ClientId id;
+        private Map<SecurityServerId, String> dids = new LinkedHashMap<>();
     }
 
     @Data
@@ -131,7 +139,7 @@ public class SharedParameters {
         private String ipAddress;
         private String authenticationCertificateProfileId;
         private String signingCertificateProfileId;
-        private String dsTlsCertificateProfileId;
+        private String connectorTlsCertificateProfileId;
 
         public AcmeServer(String directoryURL, String ipAddress, String authenticationCertificateProfileId,
                           String signingCertificateProfileId) {
@@ -178,7 +186,7 @@ public class SharedParameters {
     }
 
     @Data
-    public static class ApprovedDsTlsCa {
+    public static class ApprovedConnectorTlsCA {
         private String name;
         private CaInfo topCA;
         private List<CaInfo> intermediateCas;
@@ -193,6 +201,7 @@ public class SharedParameters {
         private List<CertHash> authCertHashes;
         private List<ClientId> clients;
         private MaintenanceMode maintenanceMode;
+        private ServerSystemValues systemValues;
     }
 
     public record MaintenanceMode(boolean enabled, String message) {
@@ -220,5 +229,6 @@ public class SharedParameters {
     public static class GlobalSettings {
         private List<MemberClass> memberClasses;
         private Integer ocspFreshnessSeconds;
+        private boolean legacyProtocolDisabled;
     }
 }

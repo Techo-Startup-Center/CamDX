@@ -25,6 +25,8 @@ dependencies {
   }
   api(libs.apache.httpclient5)
 
+  implementation(project(":lib:properties-core"))
+
   api(libs.jakarta.injectApi)
   api(libs.jakarta.bindApi)
   api(libs.jakarta.soapApi)
@@ -33,6 +35,7 @@ dependencies {
   api(libs.opentelemetry.instrumentation.annotations)
 
   testImplementation(project(":common:common-test"))
+  testImplementation(project(":common:common-management-request"))
   testImplementation(libs.logback.classic)
   testImplementation(libs.opentelemetry.sdk.testing)
 }

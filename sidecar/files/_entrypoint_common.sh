@@ -27,6 +27,147 @@ init_db_dir() {
   fi
 }
 
+configure_secret_store() {
+  log "Configuring secret store"
+  if ! bash /usr/share/xroad/scripts/sidecar/secret-store-init.sh 2>&1 | sed 's/^/    /'; then
+    warn "Secret store configuration failed"
+    return 1
+  fi
+}
+
+# TLS trust for the embedded secret store's vault clients. The OpenBao TLS
+# certificate is regenerated on every boot (see secret-store-init.sh), so it
+# cannot ride the native packages' install-time system/JVM trust-store route;
+# instead the services inherit the CA path through supervisord's environment.
+# With an external store nothing is exported — the operator supplies trust
+# configuration, and any value already present in the container environment
+# wins over the embedded default.
+configure_secret_store_trust_env() {
+  if [ -n "${XROAD_SECRET_STORE_HOST:-}" ]; then
+    return 0
+  fi
+  export QUARKUS_VAULT_TLS_CA_CERT="${QUARKUS_VAULT_TLS_CA_CERT:-/etc/xroad/ssl/openbao.crt}"
+  export SPRING_CLOUD_VAULT_SSL_TRUST_STORE="${SPRING_CLOUD_VAULT_SSL_TRUST_STORE:-file:/etc/xroad/ssl/openbao.crt}"
+  export SPRING_CLOUD_VAULT_SSL_TRUST_STORE_TYPE="${SPRING_CLOUD_VAULT_SSL_TRUST_STORE_TYPE:-PEM}"
+}
+
+seed_dsp_config() {
+  log "Seeding DSP configuration"
+  if ! bash /usr/share/xroad/scripts/sidecar/dsp-config-seed.sh 2>&1 | sed 's/^/    /'; then
+    warn "DSP configuration seeding failed"
+    return 1
+  fi
+}
+
+# xroad.signer.autologin.enabled (XRDADR-34) is resolved by the signer's
+# XRoadConfig DSL from the serverconf configuration_properties table or its
+# packaged default only - unlike the per-token PINs
+# (XROAD_SIGNER_AUTOLOGIN_TOKENS__<id>__PIN, a plain smallrye @ConfigMapping
+# that reads the process environment directly), it has no environment or
+# JVM-system-property binding. XROAD_SIGNER_AUTOLOGIN_ENABLED is the
+# sidecar's operator-facing bridge from a docker-run variable to that row;
+# see signer-autologin-config-seed.sh for the full contract.
+seed_signer_autologin_enabled() {
+  log "Seeding signer autologin enable flag"
+  if ! bash /usr/share/xroad/scripts/sidecar/signer-autologin-config-seed.sh 2>&1 | sed 's/^/    /'; then
+    warn "Signer autologin enable-flag seeding failed"
+    return 1
+  fi
+}
+
+# The packaged xroad-proxy startup script (proxy.conf, via global.conf's
+# set_quarkus_profiles) always launches the JVM with -Dquarkus.profile=native,ss,
+# so proxy's own DeploymentMode stays NATIVE (org.niis.xroad.proxy.core.
+# configuration.ProxyConfig#deploymentMode checks for "containerized" in the
+# active profile list) - which is required: DeploymentMode.CONTAINERIZED also
+# flips xroad.common-global-conf.source to REMOTE and the gRPC peer hosts
+# (signer, configuration-client, ...) from 127.0.0.1 to service DNS names that
+# do not exist in this single-container image. Adding "containerized" to the
+# profile list is therefore not an option here.
+#
+# health-check-enabled is the one health-check key with a container-only
+# default (ProxyConfigKeys.HEALTH_CHECK_ENABLED: false natively, true under
+# "%containerized"); health-check-port and health-check-interface default the
+# same way in both modes, so only this one property needs forcing. Forced
+# directly as JVM system properties (ordinal 400, above the packaged
+# application.yaml's ordinal-255 defaults) through the documented local.conf
+# override point (see global.conf's apply_local_conf), so the proxy's
+# quarkus.http.host-enabled: ${xroad.proxy.health-check-enabled} interpolation
+# resolves true without touching quarkus.profile/DeploymentMode at all.
+configure_proxy_health_check_listener() {
+  local local_conf=/etc/xroad/services/local.conf
+  local marker="# xroad-sidecar: force-enable xroad-proxy's health-check HTTP listener"
+  if [ -f "$local_conf" ] && grep -qF "$marker" "$local_conf"; then
+    return 0
+  fi
+  log "Force-enabling xroad-proxy's health-check HTTP listener"
+  cat >>"$local_conf" <<EOF
+$marker
+if [ "\$1" = "XROAD_PROXY_PARAMS" ]; then
+  PROXY_PARAMS="\$PROXY_PARAMS -Dxroad.proxy.health-check-enabled=true -Dquarkus.http.host-enabled=true"
+fi
+EOF
+  chown root:root "$local_conf"
+  chmod 644 "$local_conf"
+}
+
+# xroad-opmonitor's packaged JVM flags fix -XX:MaxMetaspaceSize at 120m, sized
+# for a dedicated container with the daemon's own uncontended memory
+# allocation - every other deployment mode. In this image, op-monitor-daemon
+# is one of several JVMs sharing one container's resource envelope, so the
+# same request-driven metaspace growth has markedly less isolation here and
+# can exhaust the packaged ceiling under sustained load, failing live
+# requests with OutOfMemoryError: Metaspace. Raised here, in the documented
+# local.conf override point, rather than in the shared xroad-opmonitor
+# package config every deployment mode consumes.
+configure_opmonitor_metaspace() {
+  local local_conf=/etc/xroad/services/local.conf
+  local marker="# xroad-sidecar: raise xroad-opmonitor's Metaspace ceiling"
+  if [ -f "$local_conf" ] && grep -qF "$marker" "$local_conf"; then
+    return 0
+  fi
+  log "Raising xroad-opmonitor's Metaspace ceiling for the shared single-container deployment"
+  cat >>"$local_conf" <<EOF
+$marker
+if [ "\$1" = "XROAD_OPMON_PARAMS" ]; then
+  OPMON_PARAMS="\$OPMON_PARAMS -XX:MaxMetaspaceSize=256m"
+fi
+EOF
+  chown root:root "$local_conf"
+  chmod 644 "$local_conf"
+}
+
+HOOK_DIR=/etc/xroad/entrypoint.d
+
+# Hooks are the last provisioning step: they run after every seed_*/configure_*
+# function above, once the dpkg-reconfigure step has succeeded - true by default
+# only on the container's first boot (see RECONFIG_REQUIRED), so a plain restart
+# does not re-run them. The local database started further down for the
+# reconfigure step is still running when they execute, so a hook can reach it.
+#
+# find -L follows symlinks so that hook files delivered as symlinks (every file
+# in a Kubernetes ConfigMap or Secret mount is one) are found; a symlink with no
+# target resolves to nothing and is not a regular file, so it is not run.
+run_first_boot_hooks() {
+  [ -d "$HOOK_DIR" ] || return 0
+  local hook rc
+  local -a hooks
+  mapfile -t hooks < <(find -L "$HOOK_DIR" -maxdepth 1 -type f -print | LC_ALL=C sort)
+  for hook in "${hooks[@]}"; do
+    if [ ! -x "$hook" ]; then
+      log "Skipping non-executable first-boot hook \"$hook\""
+      continue
+    fi
+    log "Running first-boot hook \"$hook\""
+    "$hook"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      warn "First-boot hook \"$hook\" exited with status $rc, aborting boot"
+      exit 1
+    fi
+  done
+}
+
 create_backup_dir_if_not_exists() {
   local xroadDir=/var/lib/xroad
   local backupDir=$xroadDir/backup
@@ -38,6 +179,13 @@ create_backup_dir_if_not_exists() {
     chmod 0755 "$backupDir"
     chmod -R go-w "$backupDir"
   fi
+}
+
+# Migration mode (X-Road 7.8 volumes) runs in two phases around the
+# provisioning below; a failed phase stops the container.
+run_migration_phase() {
+  [ "${XROAD_MIGRATION_MODE:-}" = "true" ] || return 0
+  "/usr/share/xroad/scripts/sidecar/migration/migration_$1.sh" || exit $?
 }
 
 XROAD_SCRIPT_LOCATION=/usr/share/xroad/scripts
@@ -57,19 +205,16 @@ INSTALLED_VERSION=$(dpkg-query --showformat='${Version}' --show xroad-proxy)
 PACKAGED_CONFIG=/usr/share/xroad/config
 PACKAGED_VERSION="$(cat /${PACKAGED_CONFIG}/VERSION)"
 
-RECONFIG=(xroad-signer xroad-proxy xroad-confclient)
-if [ -f /usr/share/xroad/jlib/addon/proxy/opmonitoring.conf ]; then
-  RECONFIG+=(xroad-opmonitor)
-fi
+RECONFIG=(xroad-signer xroad-proxy xroad-proxy-ui-api xroad-confclient xroad-opmonitor xroad-ds-control-plane xroad-ds-identity-hub)
 
 LOCAL_DB=
+RECONFIGURED=false
 
 if [ -f /.xroad-reconfigured ]; then
   # restarted container, skip reconfigure by default
   RECONFIG_REQUIRED=${RECONFIG_REQUIRED:-false}
 else
   # new container, run reconfigure by default
-  # makes it possible to "upgrade" from "slim" to "full" container
   # (Disabling reconfigure by setting RECONFIG_REQUIRED to false
   # when it is known to be unnecessary saves some container startup time)
   RECONFIG_REQUIRED=${RECONFIG_REQUIRED:-true}
@@ -95,6 +240,8 @@ XROAD_ADMIN_USER=
 XROAD_ADMIN_PASSWORD=
 XROAD_ADMIN_PWD_HASH=
 
+run_migration_phase start
+
 if [ "$INSTALLED_VERSION" == "$PACKAGED_VERSION" ]; then
   if [ -f /etc/xroad/VERSION ]; then
     CONFIG_VERSION="$(cat /etc/xroad/VERSION)"
@@ -106,10 +253,20 @@ if [ "$INSTALLED_VERSION" == "$PACKAGED_VERSION" ]; then
     # ensure that the updated stock configuration is present in /etc/xroad
     # handles also the case where configuration is missing (e.g. config volume not automatically populated)
     log "Migrating configuration from ${CONFIG_VERSION:-none} to $PACKAGED_VERSION"
+    # migration mode: the packaged local.ini is empty, but the migration CLI
+    # still has to read the operator's settings from the copied 7.8 one
+    MIGRATION_LOCAL_INI=
+    if [ "${XROAD_MIGRATION_MODE:-}" = "true" ] && [ -f /etc/xroad/conf.d/local.ini ]; then
+      MIGRATION_LOCAL_INI="$(mktemp -d)" && cp -a /etc/xroad/conf.d/local.ini "$MIGRATION_LOCAL_INI/" \
+        || { warn "Cannot preserve the 7.8 conf.d/local.ini for migration"; exit 1; }
+    fi
     cp -a "$PACKAGED_CONFIG/etc/xroad/"* /etc/xroad/
+    if [ -n "$MIGRATION_LOCAL_INI" ]; then
+      cp -a "$MIGRATION_LOCAL_INI/local.ini" /etc/xroad/conf.d/ \
+        || { warn "Cannot restore the 7.8 conf.d/local.ini for migration"; exit 1; }
+      rm -rf "$MIGRATION_LOCAL_INI"
+    fi
     # copy if not exists
-    cp -a -n "$PACKAGED_CONFIG"/backup/devices.ini /etc/xroad/
-    cp -a -n "$PACKAGED_CONFIG"/backup/local.ini /etc/xroad/conf.d/
     cp -a -n "$PACKAGED_CONFIG"/backup/local.properties /etc/xroad/services/
     # packages need to be reconfigured (runs possible db and config migrations)
     RECONFIG_REQUIRED=true
@@ -127,12 +284,8 @@ if [ ! -f ${DB_PROPERTIES} ]; then
   if [[ "${XROAD_DB_HOST}" != "127.0.0.1" ]]; then
     LOCAL_DB=false
     log "Using remote database $XROAD_DB_HOST:$XROAD_DB_PORT"
-    if [ -f /usr/share/xroad/jlib/addon/proxy/messagelog.conf ]; then
-      messagelog=true
-    fi
-    if [ -f /usr/share/xroad/jlib/addon/proxy/opmonitoring.conf ]; then
-      opmonitor=true
-    fi
+    messagelog=true
+    opmonitor=true
     echo "xroad-proxy xroad-common/database-host string ${XROAD_DB_HOST}:${XROAD_DB_PORT}" | debconf-set-selections
     if [ -n "${XROAD_DATABASE_NAME}" ]; then
       touch /etc/xroad/db.properties
@@ -140,8 +293,8 @@ if [ ! -f ${DB_PROPERTIES} ]; then
       chmod 640 /etc/xroad/db.properties
       set_db_props() {
         crudini --set --inplace "$ROOT_PROPERTIES" "" "$1.database.admin_user" "${XROAD_DATABASE_NAME}_$1_admin"
-        echo "$1.hibernate.connection.username= ${XROAD_DATABASE_NAME}_$1" >>"${DB_PROPERTIES}"
-        echo "$1.hibernate.connection.url = jdbc:postgresql://${XROAD_DB_HOST}:${XROAD_DB_PORT}/${XROAD_DATABASE_NAME}_$1" >>"${DB_PROPERTIES}"
+        echo "xroad.db.$1.hibernate.connection.username= ${XROAD_DATABASE_NAME}_$1" >>"${DB_PROPERTIES}"
+        echo "xroad.db.$1.hibernate.connection.url = jdbc:postgresql://${XROAD_DB_HOST}:${XROAD_DB_PORT}/${XROAD_DATABASE_NAME}_$1" >>"${DB_PROPERTIES}"
       }
       set_db_props serverconf
       if [ -n "$opmonitor" ]; then
@@ -168,7 +321,7 @@ if [[ "$RECONFIG_REQUIRED" == "true" ]]; then
   db_host="${XROAD_DB_HOST:-127.0.0.1}:${XROAD_DB_PORT:-5432}"
   if [ -z "$LOCAL_DB" ]; then
     # exising config, determine database location from db.properties
-    db_url=$(crudini --get '/etc/xroad/db.properties' "" 'serverconf.hibernate.connection.url' 2>/dev/null)
+    db_url=$(crudini --get '/etc/xroad/db.properties' "" 'xroad.db.serverconf.hibernate.connection.url' 2>/dev/null)
     pat='^jdbc:postgresql://([^/]*).*'
     if [[ "$db_url" =~ $pat ]]; then
       db_host="${BASH_REMATCH[1]:-$db_host}"
@@ -204,16 +357,12 @@ if [[ "$RECONFIG_REQUIRED" == "true" ]]; then
 
   log "Reconfiguring packages"
   if dpkg-reconfigure -fnoninteractive "${RECONFIG[@]}" 2>&1 | sed 's/^/    /'; then
-    echo "$PACKAGED_VERSION" >/etc/xroad/VERSION
-    touch /.xroad-reconfigured
+    RECONFIGURED=true
+    seed_dsp_config
+    seed_signer_autologin_enabled
   fi
-  if [[ "$LOCAL_DB" == "true" ]]; then
-    pg_ctlcluster 18 main stop
-    sleep 1
-    crudini --set --existing=section /etc/supervisor/conf.d/xroad.conf program:postgres autostart true &>/dev/null || :
-  else
-    crudini --set --existing=section /etc/supervisor/conf.d/xroad.conf program:postgres autostart false &>/dev/null || :
-  fi
+  # The local database, if any, is left running until the provisioning steps
+  # below (and the first-boot hooks that follow them) are done with it.
 fi
 XROAD_DB_PWD=
 
@@ -225,4 +374,34 @@ if [ -n "${XROAD_ROOT_LOG_LEVEL}" ]; then
   sed -i -e "s/XROAD_ROOT_LOG_LEVEL=.*/XROAD_ROOT_LOG_LEVEL=${XROAD_ROOT_LOG_LEVEL}/" /etc/xroad/conf.d/variables-logback.properties
 fi
 
+configure_proxy_health_check_listener
+configure_opmonitor_metaspace
+configure_secret_store
+configure_secret_store_trust_env
 create_backup_dir_if_not_exists
+
+if [[ "${XROAD_MIGRATION_MODE:-}" == "true" && "$RECONFIG_REQUIRED" == "true" && "$RECONFIGURED" != "true" ]]; then
+  warn "Package reconfiguration failed, migration not finished"
+  exit 1
+fi
+run_migration_phase finish
+unset XROAD_MIGRATION_SOFTTOKEN_PIN
+
+# The configuration is only recorded as provisioned once the operator's hooks
+# have succeeded too, so a hook that fails leaves the container retryable: the
+# next start finds no /.xroad-reconfigured, reconfigures again and re-runs it.
+if [[ "$RECONFIGURED" == "true" ]]; then
+  run_first_boot_hooks
+  echo "$PACKAGED_VERSION" >/etc/xroad/VERSION
+  touch /.xroad-reconfigured
+fi
+
+if [[ "$RECONFIG_REQUIRED" == "true" ]]; then
+  if [[ "$LOCAL_DB" == "true" ]]; then
+    pg_ctlcluster 18 main stop
+    sleep 1
+    crudini --set --existing=section /etc/supervisor/conf.d/xroad.conf program:postgres autostart true &>/dev/null || :
+  else
+    crudini --set --existing=section /etc/supervisor/conf.d/xroad.conf program:postgres autostart false &>/dev/null || :
+  fi
+fi

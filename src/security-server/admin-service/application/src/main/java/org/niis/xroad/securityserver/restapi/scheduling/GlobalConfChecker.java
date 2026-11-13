@@ -44,10 +44,15 @@ import org.niis.xroad.securityserver.restapi.cache.MaintenanceModeStatus;
 import org.niis.xroad.securityserver.restapi.cache.SecurityServerAddressChangeStatus;
 import org.niis.xroad.securityserver.restapi.cache.SubsystemNameStatus;
 import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties;
+import org.niis.xroad.securityserver.restapi.repository.ServerConfRepository;
 import org.niis.xroad.securityserver.restapi.util.MailNotificationHelper;
 import org.niis.xroad.serverconf.impl.entity.ClientEntity;
 import org.niis.xroad.serverconf.impl.entity.ServerConfEntity;
 import org.niis.xroad.serverconf.impl.entity.TimestampingServiceEntity;
+import org.niis.xroad.serverconf.impl.ownserver.OwnAddress;
+import org.niis.xroad.serverconf.impl.ownserver.OwnIdentity;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
+import org.niis.xroad.serverconf.impl.ownserver.OwnerNotInitialised;
 import org.niis.xroad.serverconf.model.Client;
 import org.niis.xroad.signer.api.dto.AuthKeyInfo;
 import org.niis.xroad.signer.api.dto.CertificateInfo;
@@ -58,6 +63,8 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.cert.X509Certificate;
 import java.util.List;
@@ -78,7 +85,7 @@ public class GlobalConfChecker {
     public static final int JOB_REPEAT_INTERVAL_MS = 30000;
     public static final int INITIAL_DELAY_MS = 30000;
     private volatile boolean restoreInProgress = false;
-    private final ScheduledJobHelper scheduledJobHelper;
+    private final ServerConfRepository serverConfRepository;
     private final GlobalConfProvider globalConfProvider;
     private final SignerRpcClient signerRpcClient;
     private final SecurityServerAddressChangeStatus addressChangeStatus;
@@ -86,15 +93,19 @@ public class GlobalConfChecker {
     private final MaintenanceModeStatus maintenanceModeStatus;
     private final MailNotificationHelper mailNotificationHelper;
     private final AdminServiceProperties adminServiceProperties;
+    private final OwnSecurityServerResolver ownSecurityServerResolver;
+    private final DataspaceParticipantProvisioningTrigger dataspaceParticipantProvisioningTrigger;
+    private final DataspacePublicationGlobalConfCheck dataspacePublicationGlobalConfCheck;
 
     /**
-     * Reloads global configuration, and updates client statuses, authentication certificate statuses
-     * and server owner identity to the serverconf database. The task is scheduled at a fixed rate
-     * which means that the task is run at a fixed interval (defined by FIXED_RATE_MS) regardless of the
-     * previous executions of the task. However, scheduled tasks do not run in parallel by default. The
-     * next task won't be invoked until the previous one is done. Set an initial delay before running the task
-     * for the first time after a startup to be sure that all required components are available, e.g.
-     * SignerClient may not be available immediately.
+     * Reloads global configuration, and updates client statuses, authentication certificate statuses and
+     * server owner identity to the serverconf database, then, once that transaction commits, the publication
+     * state of the dataspace SYSTEM values and member DIDs. The task is scheduled at a fixed rate which means
+     * that the task is run at a fixed interval (defined by FIXED_RATE_MS) regardless of the previous executions
+     * of the task. However, scheduled tasks do not run in parallel by default. The next task won't be invoked
+     * until the previous one is done. Set an initial delay before running the task for the first time after a
+     * startup to be sure that all required components are available, e.g. SignerClient may not be available
+     * immediately.
      *
      */
     @Scheduled(fixedRate = JOB_REPEAT_INTERVAL_MS, initialDelay = INITIAL_DELAY_MS)
@@ -133,17 +144,15 @@ public class GlobalConfChecker {
             return;
         }
 
-        ServerConfEntity serverConf = scheduledJobHelper.getServerConf();
+        switch (ownSecurityServerResolver.identity()) {
+            case OwnIdentity.Known(var id) -> updateServerConf(id);
+            case OwnerNotInitialised _ -> log.debug("Security Server owner is not set - skip serverconf updates");
+        }
+    }
 
-        var securityServerId = buildSecurityServerId(serverConf);
-
+    private void updateServerConf(SecurityServerId securityServerId) {
         addressChangeStatus.getAddressChangeRequest()
-                .ifPresent(requestedAddress -> {
-                    var currentAddress = globalConfProvider.getSecurityServerAddress(securityServerId);
-                    if (requestedAddress.equals(currentAddress)) {
-                        addressChangeStatus.clear();
-                    }
-                });
+                .ifPresent(requestedAddress -> clearAddressChangeIfRegistered(securityServerId, requestedAddress));
 
         switch (maintenanceModeStatus.getStatus()) {
             case MaintenanceModeStatus.DisableRequested ignore -> globalConfProvider.getMaintenanceMode(securityServerId)
@@ -152,7 +161,7 @@ public class GlobalConfChecker {
 
             case MaintenanceModeStatus.EnableRequested ignore -> globalConfProvider.getMaintenanceMode(securityServerId)
                     .filter(SharedParameters.MaintenanceMode::enabled)
-                    .ifPresent(mode -> maintenanceModeStatus.clear());
+                    .ifPresent(_ -> maintenanceModeStatus.clear());
 
             case null -> {
 
@@ -160,6 +169,7 @@ public class GlobalConfChecker {
         }
 
         try {
+            ServerConfEntity serverConf = serverConfRepository.getServerConf();
             if (globalConfProvider.getServerOwner(securityServerId) == null) {
                 log.debug("Server owner not found in globalconf - owner may have changed");
                 updateOwner(serverConf);
@@ -168,9 +178,19 @@ public class GlobalConfChecker {
             log.debug("Security Server ID is \"{}\"", securityServerId);
             updateClientStatuses(serverConf, securityServerId);
             updateAuthCertStatuses(securityServerId);
+            checkDataspacePublicationAfterCommit(securityServerId);
             updateTimestampServices(serverConf);
         } catch (Exception e) {
             throw XrdRuntimeException.systemException(e);
+        }
+    }
+
+    private void clearAddressChangeIfRegistered(SecurityServerId securityServerId, String requestedAddress) {
+        switch (ownSecurityServerResolver.address(securityServerId)) {
+            case OwnAddress.Registered(_, var address) when requestedAddress.equals(address) -> addressChangeStatus.clear();
+            case OwnAddress.Registered _ -> log.debug("Registered address differs - keeping address change request");
+            case OwnAddress.NotRegistered _ -> log.debug("Server not registered - keeping address change request");
+            case OwnAddress.GlobalConfUnavailable _ -> log.debug("Globalconf unavailable - keeping address change request");
         }
     }
 
@@ -254,17 +274,6 @@ public class GlobalConfChecker {
         return costType == null ? CostType.UNDEFINED.name() : costType.name();
     }
 
-    private SecurityServerId buildSecurityServerId(ClientId ownerId, String serverCode) {
-        return SecurityServerId.Conf.create(
-                ownerId.getXRoadInstance(), ownerId.getMemberClass(),
-                ownerId.getMemberCode(), serverCode);
-    }
-
-    private SecurityServerId buildSecurityServerId(ServerConfEntity serverConf) {
-        ClientId ownerId = serverConf.getOwner().getIdentifier();
-        return buildSecurityServerId(ownerId, serverConf.getServerCode());
-    }
-
     private void updateOwner(ServerConfEntity serverConf) {
         ClientId ownerId = serverConf.getOwner().getIdentifier();
         for (ClientEntity client : serverConf.getClients()) {
@@ -274,7 +283,7 @@ public class GlobalConfChecker {
                 log.debug("Found potential new owner: \"{}\"", client.getIdentifier());
 
                 // Build a new server id using the alternative member as owner
-                SecurityServerId altSecurityServerId = buildSecurityServerId(client.getIdentifier(),
+                SecurityServerId altSecurityServerId = SecurityServerId.Conf.create(client.getIdentifier(),
                         serverConf.getServerCode());
 
                 // Get local auth cert
@@ -345,9 +354,19 @@ public class GlobalConfChecker {
         }
     }
 
+    private void checkDataspacePublicationAfterCommit(SecurityServerId securityServerId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                dataspacePublicationGlobalConfCheck.check(securityServerId);
+            }
+        });
+    }
+
     private void updateClientStatus(ClientEntity client, String status) {
         client.setClientStatus(status);
         log.debug("Setting client '{}' status to '{}'", client.getIdentifier(), client.getClientStatus());
+        dataspaceParticipantProvisioningTrigger.provisionParticipantAsync();
     }
 
     private void updateAuthCertStatuses(SecurityServerId securityServerId) {

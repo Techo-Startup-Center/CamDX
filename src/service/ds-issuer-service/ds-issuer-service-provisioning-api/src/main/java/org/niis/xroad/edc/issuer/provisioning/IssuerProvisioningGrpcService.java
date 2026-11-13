@@ -29,8 +29,12 @@ package org.niis.xroad.edc.issuer.provisioning;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import org.eclipse.edc.iam.did.spi.document.Service;
+import org.eclipse.edc.identityhub.spi.did.DidDocumentService;
+import org.eclipse.edc.identityhub.spi.did.model.DidState;
+import org.eclipse.edc.identityhub.spi.keypair.KeyPairService;
 import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.VerifiableCredentialResource;
 import org.eclipse.edc.issuerservice.spi.credentials.CredentialStatusService;
@@ -39,10 +43,17 @@ import org.eclipse.edc.issuerservice.spi.issuance.credentialdefinition.Credentia
 import org.eclipse.edc.issuerservice.spi.issuance.model.AttestationDefinition;
 import org.eclipse.edc.issuerservice.spi.issuance.model.CredentialDefinition;
 import org.eclipse.edc.issuerservice.spi.issuance.model.MappingDefinition;
+import org.eclipse.edc.keys.spi.PrivateKeyResolver;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
+import org.eclipse.edc.spi.result.ServiceFailure;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.common.rpc.server.RpcResponseHandler;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignCause;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignOutcome;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignReq;
+import org.niis.xroad.edc.issuer.provisioning.proto.CanSignResp;
 import org.niis.xroad.edc.issuer.provisioning.proto.CreateAttestationDefinitionReq;
 import org.niis.xroad.edc.issuer.provisioning.proto.CreateAttestationDefinitionResp;
 import org.niis.xroad.edc.issuer.provisioning.proto.CreateCredentialDefinitionReq;
@@ -56,8 +67,10 @@ import org.niis.xroad.edc.issuer.provisioning.proto.RevokeCredentialResp;
 import java.util.List;
 import java.util.Map;
 
+import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PARTICIPANT_CONTEXT_CONFLICT;
 import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PARTICIPANT_CONTEXT_FAILED;
 import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PROVISIONING_FAILED;
+import static org.niis.xroad.edc.extension.rpc.EdcProvisioningHelper.failure;
 import static org.niis.xroad.edc.extension.rpc.EdcProvisioningHelper.requireSuccessOrConflict;
 import static org.niis.xroad.edc.extension.rpc.EdcProvisioningHelper.validateManifestFields;
 
@@ -77,16 +90,22 @@ class IssuerProvisioningGrpcService extends IssuerProvisioningServiceGrpc.Issuer
     private static final String ISSUER_SERVICE_ID_SUFFIX = "-issuer-service";
     private static final String ADMIN_ROLE = "admin";
     private static final String KEY_ALGORITHM_PARAM = "algorithm";
-    private static final String KEY_ALGORITHM = "EdDSA";
+    private static final String KEY_ALGORITHM = "EC";
+    private static final String KEY_CURVE_PARAM = "curve";
+    private static final String KEY_CURVE = "secp256r1";
     private static final String MGMT_HOLDER_DID_SUFFIX = ":mgmt";
-    private static final String CREDENTIAL_SUBJECT_PATH = "verifiableCredential.credential.credentialSubject.";
     private static final String EQ_OPERATOR = "=";
+    private static final String LT_OPERATOR = "<";
 
     private final IdentityHubParticipantContextService participantContextService;
     private final AttestationDefinitionService attestationDefinitionService;
     private final CredentialDefinitionService credentialDefinitionService;
     private final CredentialStatusService credentialStatusService;
+    private final KeyPairService keyPairService;
+    private final DidDocumentService didDocumentService;
+    private final PrivateKeyResolver privateKeyResolver;
     private final RpcResponseHandler responseHandler;
+    private final Monitor monitor;
 
     @Override
     public void createParticipantContext(CreateParticipantContextReq request,
@@ -111,6 +130,11 @@ class IssuerProvisioningGrpcService extends IssuerProvisioningServiceGrpc.Issuer
         responseHandler.handleRequest(responseObserver, () -> revokeCredentialInternal(request));
     }
 
+    @Override
+    public void canSign(CanSignReq request, StreamObserver<CanSignResp> responseObserver) {
+        responseHandler.handleRequest(responseObserver, () -> canSignInternal(request));
+    }
+
     private CreateParticipantContextResp createParticipantContextInternal(CreateParticipantContextReq request) {
         validateManifestFields(request.getParticipantContextId(), request.getDid());
         var manifest = ParticipantManifest.Builder.newInstance()
@@ -125,13 +149,18 @@ class IssuerProvisioningGrpcService extends IssuerProvisioningServiceGrpc.Issuer
                 .key(KeyDescriptor.Builder.newInstance()
                         .keyId(request.getKeyId())
                         .privateKeyAlias(request.getPrivateKeyAlias())
-                        .keyGeneratorParams(Map.of(KEY_ALGORITHM_PARAM, KEY_ALGORITHM))
+                        .keyGeneratorParams(Map.of(KEY_ALGORITHM_PARAM, KEY_ALGORITHM, KEY_CURVE_PARAM, KEY_CURVE))
                         .build())
                 .build();
 
         var result = participantContextService.createParticipantContext(manifest);
-        requireSuccessOrConflict(result, DSP_PARTICIPANT_CONTEXT_FAILED, request.getParticipantContextId());
-        return CreateParticipantContextResp.getDefaultInstance();
+        if (result.succeeded()) {
+            return CreateParticipantContextResp.getDefaultInstance();
+        }
+        if (result.reason() == ServiceFailure.Reason.CONFLICT) {
+            throw failure(DSP_PARTICIPANT_CONTEXT_CONFLICT, request.getParticipantContextId(), result.getFailureDetail());
+        }
+        throw failure(DSP_PARTICIPANT_CONTEXT_FAILED, request.getParticipantContextId(), result.getFailureDetail());
     }
 
     private CreateAttestationDefinitionResp createAttestationDefinitionInternal(CreateAttestationDefinitionReq request) {
@@ -171,49 +200,85 @@ class IssuerProvisioningGrpcService extends IssuerProvisioningServiceGrpc.Issuer
 
     private RevokeCredentialResp revokeCredentialInternal(RevokeCredentialReq request) {
         validateRevokeFields(request);
+        monitor.info("Issuer: revoke request received for holder %s issued before %d"
+                .formatted(request.getHolderDid(), request.getIssuedBefore()));
 
         var queryResult = credentialStatusService.queryCredentials(hostCredentialQuery(request));
         requireSuccessOrConflict(queryResult, DSP_PROVISIONING_FAILED, request.getParticipantContextId());
 
-        var credentialId = queryResult.getContent().stream()
+        var credentialIds = queryResult.getContent().stream()
                 .filter(resource -> resource.getVerifiableCredential() != null
                         && resource.getVerifiableCredential().credential() != null)
                 .filter(resource -> resource.getVerifiableCredential().credential().getCredentialSubject().stream()
                         .noneMatch(subject -> subject.getId() != null && subject.getId().endsWith(MGMT_HOLDER_DID_SUFFIX)))
                 .map(VerifiableCredentialResource::getId)
-                .findFirst()
-                .orElseThrow(() -> XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED,
-                        "No HOST credential found for member %s/%s/%s".formatted(
-                                request.getXroadInstance(), request.getMemberClass(), request.getMemberCode())));
+                .toList();
 
-        var revokeResult = credentialStatusService.revokeCredential(credentialId);
-        requireSuccessOrConflict(revokeResult, DSP_PROVISIONING_FAILED, credentialId);
+        for (var credentialId : credentialIds) {
+            var revokeResult = credentialStatusService.revokeCredential(request.getParticipantContextId(), credentialId);
+            requireSuccessOrConflict(revokeResult, DSP_PROVISIONING_FAILED, credentialId);
+            monitor.debug("Issuer: revoked credential %s".formatted(credentialId));
+        }
 
-        return RevokeCredentialResp.newBuilder().setRevoked(true).build();
+        if (credentialIds.isEmpty()) {
+            monitor.info("Issuer: no credentials matched holder %s".formatted(request.getHolderDid()));
+        } else {
+            monitor.info("Issuer: revoked %d credential(s) for holder %s".formatted(credentialIds.size(), request.getHolderDid()));
+        }
+
+        return RevokeCredentialResp.newBuilder().setRevokedCount(credentialIds.size()).build();
+    }
+
+    private CanSignResp canSignInternal(CanSignReq request) {
+        var participantContextId = request.getParticipantContextId();
+        var contextResult = participantContextService.getParticipantContext(participantContextId);
+        if (contextResult.failed()) {
+            return CanSignResp.newBuilder().setOutcome(CanSignOutcome.ABSENT).build();
+        }
+
+        var keyResult = keyPairService.getActiveKeyPairForUsage(participantContextId, KeyPairUsage.CREDENTIAL_SIGNING);
+        if (keyResult.failed()) {
+            return cannotSign(CanSignCause.NO_ACTIVE_KEY);
+        }
+
+        var privateKeyResult = privateKeyResolver.resolvePrivateKey(participantContextId, keyResult.getContent().getPrivateKeyAlias());
+        if (privateKeyResult.failed()) {
+            return cannotSign(CanSignCause.KEY_SECRET_NOT_READABLE);
+        }
+
+        var did = contextResult.getContent().getDid();
+        var didResource = didDocumentService.findById(did);
+        if (didResource == null || didResource.getStateAsEnum() != DidState.PUBLISHED) {
+            return cannotSign(CanSignCause.DID_NOT_PUBLISHED);
+        }
+
+        return CanSignResp.newBuilder().setOutcome(CanSignOutcome.CAN_SIGN).setDid(did).build();
+    }
+
+    private static CanSignResp cannotSign(CanSignCause cause) {
+        return CanSignResp.newBuilder().setOutcome(CanSignOutcome.CANNOT_SIGN).setCause(cause).build();
     }
 
     private QuerySpec hostCredentialQuery(RevokeCredentialReq request) {
         return QuerySpec.Builder.newInstance()
                 .filter(Criterion.criterion("participantContextId", EQ_OPERATOR, request.getParticipantContextId()))
-                .filter(Criterion.criterion(CREDENTIAL_SUBJECT_PATH + "xroadInstance", EQ_OPERATOR, request.getXroadInstance()))
-                .filter(Criterion.criterion(CREDENTIAL_SUBJECT_PATH + "memberClass", EQ_OPERATOR, request.getMemberClass()))
-                .filter(Criterion.criterion(CREDENTIAL_SUBJECT_PATH + "memberCode", EQ_OPERATOR, request.getMemberCode()))
+                .filter(Criterion.criterion("holderId", EQ_OPERATOR, request.getHolderDid()))
+                .filter(Criterion.criterion("timestamp", LT_OPERATOR, request.getIssuedBefore()))
                 .limit(Integer.MAX_VALUE)
                 .build();
     }
 
     private void validateRevokeFields(RevokeCredentialReq request) {
-        if (request.getParticipantContextId() == null || request.getParticipantContextId().isBlank()) {
+        request.getParticipantContextId();
+        if (request.getParticipantContextId().isBlank()) {
             throw XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED, "participantContextId must not be blank");
         }
-        if (request.getXroadInstance() == null || request.getXroadInstance().isBlank()) {
-            throw XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED, "xroadInstance must not be blank");
+        request.getHolderDid();
+        if (request.getHolderDid().isBlank()) {
+            throw XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED, "holderDid must not be blank");
         }
-        if (request.getMemberClass() == null || request.getMemberClass().isBlank()) {
-            throw XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED, "memberClass must not be blank");
-        }
-        if (request.getMemberCode() == null || request.getMemberCode().isBlank()) {
-            throw XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED, "memberCode must not be blank");
+        if (request.getIssuedBefore() <= 0) {
+            throw XrdRuntimeException.systemException(DSP_PROVISIONING_FAILED, "issuedBefore must be positive");
         }
     }
 

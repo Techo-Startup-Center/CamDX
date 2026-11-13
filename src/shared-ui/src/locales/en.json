@@ -243,11 +243,77 @@
     "true": "True",
     "yes": "Yes"
   },
+  "configurableProperties": {
+    "title": "Configurable System Properties",
+    "search": "Search configurable properties",
+    "restartWarning": "The following services need to be restarted for the changes to take effect: {scopes}.",
+    "propertyRestartWarning": "Restart required for changes to take effect.",
+    "collapseAll": "Collapse All",
+    "updateSuccess": "Property updated successfully",
+    "editDialog": {
+      "title": "Edit Property Value"
+    },
+    "table": {
+      "header": {
+        "propertyName": "Property Name",
+        "currentValue": "Current Value",
+        "defaultValue": "Default Value",
+        "description": "Description"
+      }
+    }
+  },
   "dataTables": {
     "paginator": {
       "allPerPage": "All",
       "info": "{start}-{end} of {total}",
       "rowsPerPage": "Rows per page:"
+    }
+  },
+  "dsTlsCertificates": {
+    "automaticRenewal": "Automatic Renewal",
+    "downloadCertificate": "Download certificate",
+    "downloadSuccess": "Dataspace TLS certificate successfully downloaded",
+    "enrollmentStatus": {
+      "method": {
+        "none": "Not configured",
+        "manual": "Manual",
+        "acme": "ACME"
+      },
+      "unavailable": "Unavailable"
+    },
+    "generateCsr": {
+      "button": "Generate CSR",
+      "content": "First, provide a distinguished name and a subject alternative name. Then, generate a new CSR and save it into a safe place",
+      "distinguishedName": "Enter Distinguished name",
+      "subjectAltName": "Subject alternative name",
+      "title": "Generate Dataspace TLS Certificate Signing Request",
+      "tooltip": "The Distinguished Name (DN) uniquely identifies an entity in an X.509 certificate. The following attribute types are commonly found in the DN: CN = Common name, O = Organization name, C = Country code."
+    },
+    "generateKey": {
+      "button": "Re-create key"
+    },
+    "key": "Dataspace TLS Key and Certificate",
+    "keyGeneratedPending": "Dataspace TLS key generated - certificate signing pending",
+    "keyNotGenerated": "No Dataspace TLS key has been generated yet",
+    "keyText": "Dataspace TLS Key",
+    "orderCertificate": {
+      "button": "Order certificate",
+      "certificationAuthority": "Certification authority",
+      "distinguishedName": "Distinguished name",
+      "hint": "The prefilled names work as they are with public certificate authorities. For a private certificate authority you may add organisation attributes to the distinguished name.",
+      "subjectAltName": "Subject alternative name",
+      "success": "Dataspace TLS certificate ordered successfully",
+      "title": "Order Dataspace TLS Certificate"
+    },
+    "renewalStatus": {
+      "error": "Renewal error:",
+      "na": "N/A",
+      "nextRenewal": "Next planned renewal on"
+    },
+    "status": "Status",
+    "uploadCertificate": {
+      "button": "Upload certificate",
+      "label": "Upload the certificate file from your computer"
     }
   },
   "error_code": {
@@ -345,6 +411,7 @@
     "noBackups": "No backups yet",
     "noCertificate": "No certificate",
     "noCertificates": "No certificates",
+    "noConfigurableProperties": "No configurable properties",
     "noData": "No data",
     "noMatches": "No items matching criteria",
     "noServices": "No services",

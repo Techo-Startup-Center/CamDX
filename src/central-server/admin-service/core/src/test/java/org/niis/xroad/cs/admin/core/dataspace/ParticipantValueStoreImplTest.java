@@ -1,0 +1,1002 @@
+/*
+ * The MIT License
+ *
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+ * Copyright (c) 2018 Estonian Information System Authority (RIA),
+ * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+ * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+package org.niis.xroad.cs.admin.core.dataspace;
+
+import ee.ria.xroad.common.identifier.ClientId;
+
+import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.InOrder;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.common.exception.NotFoundException;
+import org.niis.xroad.cs.admin.api.domain.ParticipantValueResult;
+import org.niis.xroad.cs.admin.api.domain.SystemPairCheck;
+import org.niis.xroad.cs.admin.core.entity.MemberClassEntity;
+import org.niis.xroad.cs.admin.core.entity.MemberDidEntity;
+import org.niis.xroad.cs.admin.core.entity.MemberRow;
+import org.niis.xroad.cs.admin.core.entity.SecurityServerEntity;
+import org.niis.xroad.cs.admin.core.entity.XRoadMemberEntity;
+import org.niis.xroad.cs.admin.core.repository.MemberDidRepository;
+import org.niis.xroad.cs.admin.core.repository.SecurityServerRepository;
+import org.niis.xroad.restapi.config.audit.AuditEventLoggingFacade;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.DID_HELD_BY_ANOTHER_SERVER;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.DID_OF_OTHER_MEMBER;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.HOST_DIFFERS;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.MEMBER_NOT_SERVED;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.NO_STORED_VALUE;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.VALUE_DIFFERS;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.WRONG_SCHEME;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditEvent.REJECT_CONNECTOR_PUBLISHED_VALUE;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.MEMBER_CLASS;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.MEMBER_CODE;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.OWNER_CLASS;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.OWNER_CODE;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.SERVER_CODE;
+
+@ExtendWith(MockitoExtension.class)
+class ParticipantValueStoreImplTest {
+
+    private static final int SERVER_ID = 7;
+    private static final String ADDRESS = "ss0.example.org";
+
+    private static final String SYSTEM_DID = "did:web:ss0.example.org%3A7183:v1:system";
+    private static final String DSP_URL = "https://ss0.example.org:8183/api/dsp";
+    private static final String OTHER_SYSTEM_DID = "did:web:ss0.example.org%3A7184:v1:system";
+    private static final String OTHER_DSP_URL = "https://ss0.example.org:8184/api/dsp";
+    private static final String OLD_SYSTEM_DID = "did:web:old.example.org%3A7183:v1:system";
+    private static final String OLD_DSP_URL = "https://old.example.org:8183/api/dsp";
+
+    private static final String OWNER_DID = "did:web:ss0.example.org%3A7183:v1:DEV:COM:222";
+    private static final String CLIENT_DID = "did:web:ss0.example.org%3A7183:v1:DEV:COM:333";
+    private static final String OTHER_CLIENT_DID = "did:web:ss0.example.org%3A7184:v1:DEV:COM:333";
+    private static final String OLD_OWNER_DID = "did:web:old.example.org%3A7183:v1:DEV:COM:222";
+    private static final String OLD_CLIENT_DID = "did:web:old.example.org%3A7183:v1:DEV:COM:333";
+    private static final String WRONG_HOST_CLIENT_DID = "did:web:other.example.org%3A7183:v1:DEV:COM:333";
+
+    private static final String HELD_REASON = "Published value rejected: " + DID_HELD_BY_ANOTHER_SERVER;
+
+    private static final ClientId OWNER = member("222");
+    private static final ClientId CLIENT = member("333");
+    private static final ClientId UNRELATED = member("999");
+
+    @Mock
+    private SecurityServerRepository securityServerRepository;
+    @Mock
+    private MemberDidRepository memberDidRepository;
+    @Mock
+    private AuditEventLoggingFacade auditLogging;
+    @Mock
+    private EntityManager entityManager;
+
+    private final Map<Long, MemberDidEntity> storedRows = new HashMap<>();
+    private final Set<String> didsOfOtherServers = new HashSet<>();
+    private final Set<ClientId> servedMembers = new HashSet<>();
+
+    private SecurityServerEntity server;
+    private XRoadMemberEntity ownerEntity;
+    private XRoadMemberEntity clientEntity;
+    private ParticipantValueStoreImpl store;
+
+    @BeforeEach
+    void setUp() {
+        var memberClass = new MemberClassEntity("COM", "Companies");
+        ownerEntity = memberEntity(memberClass, OWNER, 1L);
+        clientEntity = memberEntity(memberClass, CLIENT, 2L);
+
+        server = new SecurityServerEntity(ownerEntity, "SS0");
+        ReflectionTestUtils.setField(server, "id", SERVER_ID);
+        server.setAddress(ADDRESS);
+        servedMembers.add(CLIENT);
+
+        lenient().when(securityServerRepository.lockForUpdateById(SERVER_ID)).thenReturn(Optional.of(SERVER_ID));
+        lenient().when(securityServerRepository.findById(SERVER_ID)).thenReturn(Optional.of(server));
+        lenient().when(securityServerRepository.existsBySystemDidAndIdNot(anyString(), anyInt())).thenReturn(false);
+        lenient().when(securityServerRepository.findServedMembers(SERVER_ID)).thenAnswer(invocation -> Stream.of(ownerEntity, clientEntity)
+                .filter(entity -> servedMembers.stream()
+                        .anyMatch(id -> id.getMemberCode().equals(entity.getIdentifier().getMemberCode())))
+                .map(entity -> new MemberRow(entity.getId(), entity.getIdentifier().getXRoadInstance(),
+                        entity.getIdentifier().getMemberClass(), entity.getIdentifier().getMemberCode()))
+                .toList());
+        lenient().when(entityManager.getReference(eq(XRoadMemberEntity.class), anyLong())).thenAnswer(invocation ->
+                Stream.of(ownerEntity, clientEntity)
+                        .filter(entity -> entity.getId().equals(invocation.getArgument(1)))
+                        .findFirst()
+                        .orElseThrow());
+        lenient().when(memberDidRepository.findBySecurityServerIdAndMemberIdIn(eq(SERVER_ID), any()))
+                .thenAnswer(invocation -> invocation.<Collection<Long>>getArgument(1).stream()
+                        .map(storedRows::get)
+                        .filter(Objects::nonNull)
+                        .toList());
+        lenient().when(memberDidRepository.findDidsHeldByOtherServers(any(), eq(SERVER_ID)))
+                .thenAnswer(invocation -> invocation.<Collection<String>>getArgument(0).stream()
+                        .filter(didsOfOtherServers::contains)
+                        .toList());
+        lenient().when(memberDidRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+            var row = (MemberDidEntity) invocation.getArgument(0);
+            storedRows.put(row.getMember().getId(), row);
+            return row;
+        });
+
+        store = new ParticipantValueStoreImpl(securityServerRepository, memberDidRepository,
+                auditLogging, entityManager);
+    }
+
+    @Test
+    void shouldWriteSystemPairWhenServerHasNone() {
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.STORED);
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+        verify(securityServerRepository).saveAndFlush(server);
+    }
+
+    @Test
+    void shouldCheckSystemPairAsAbsentWhenServerHasNoneAndWriteNothing() {
+        var result = store.checkSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(SystemPairCheck.ABSENT);
+        assertThat(server.getSystemDid()).isNull();
+        verify(securityServerRepository, never()).saveAndFlush(any());
+        verify(securityServerRepository, never()).lockForUpdateById(anyInt());
+        verify(securityServerRepository, never()).lockForUpdateBy(any());
+    }
+
+    @Test
+    void shouldCheckSystemPairAsEqualWhenStoredPairMatches() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(DSP_URL);
+
+        assertThat(store.checkSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL)).isEqualTo(SystemPairCheck.EQUAL);
+    }
+
+    @Test
+    void shouldCheckSystemPairAsStaleReplaceableWhenOnlyTheStoredDspBaseUrlIsStale() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(OLD_DSP_URL);
+
+        assertThat(store.checkSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL)).isEqualTo(SystemPairCheck.STALE_REPLACEABLE);
+    }
+
+    @Test
+    void shouldCheckSystemPairAsValueDiffersWhenTheStoredPairIsCurrent() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(DSP_URL);
+
+        assertThat(store.checkSystemPair(SERVER_ID, SYSTEM_DID, OTHER_DSP_URL)).isEqualTo(SystemPairCheck.VALUE_DIFFERS);
+    }
+
+    @Test
+    void shouldCheckSystemPairAsRejectedWhenAnotherServerHoldsTheDid() {
+        when(securityServerRepository.existsBySystemDidAndIdNot(SYSTEM_DID, SERVER_ID)).thenReturn(true);
+
+        var result = store.checkSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(SystemPairCheck.rejected(DID_HELD_BY_ANOTHER_SERVER));
+        verifyNoInteractions(auditLogging);
+    }
+
+    @ParameterizedTest
+    @MethodSource("systemPairCases")
+    void shouldAnswerTheSystemPairCheckTheWayTheWriteOnceOperationDecides(SystemPairCase pairCase) {
+        pairCase.storedDid().ifPresent(server::setSystemDid);
+        pairCase.storedDspBaseUrl().ifPresent(server::setDspBaseUrl);
+        lenient().when(securityServerRepository.existsBySystemDidAndIdNot(any(), eq(SERVER_ID))).thenReturn(pairCase.heldByAnother());
+
+        var check = store.checkSystemPair(SERVER_ID, pairCase.did(), pairCase.dspBaseUrl());
+        var written = store.writeSystemPairOnce(SERVER_ID, pairCase.did(), pairCase.dspBaseUrl());
+
+        assertThat(check).isEqualTo(pairCase.expectedCheck());
+        assertThat(written).isEqualTo(pairCase.expectedWrite());
+    }
+
+    private static Stream<SystemPairCase> systemPairCases() {
+        return Stream.of(
+                new SystemPairCase("absent", SYSTEM_DID, DSP_URL, null, null, false,
+                        SystemPairCheck.ABSENT, ParticipantValueResult.STORED),
+                new SystemPairCase("equal", SYSTEM_DID, DSP_URL, SYSTEM_DID, DSP_URL, false,
+                        SystemPairCheck.EQUAL, ParticipantValueResult.UNCHANGED),
+                new SystemPairCase("stale", SYSTEM_DID, DSP_URL, OLD_SYSTEM_DID, OLD_DSP_URL, false,
+                        SystemPairCheck.STALE_REPLACEABLE, ParticipantValueResult.STORED),
+                new SystemPairCase("value differs", OTHER_SYSTEM_DID, OTHER_DSP_URL, SYSTEM_DID, DSP_URL, false,
+                        SystemPairCheck.VALUE_DIFFERS, ParticipantValueResult.rejected(VALUE_DIFFERS)),
+                new SystemPairCase("validator rejection", null, null, null, null, false,
+                        SystemPairCheck.rejected(WRONG_SCHEME), ParticipantValueResult.rejected(WRONG_SCHEME)),
+                new SystemPairCase("held, absent", SYSTEM_DID, DSP_URL, null, null, true,
+                        SystemPairCheck.rejected(DID_HELD_BY_ANOTHER_SERVER),
+                        ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER)),
+                new SystemPairCase("held, stale", SYSTEM_DID, DSP_URL, OLD_SYSTEM_DID, OLD_DSP_URL, true,
+                        SystemPairCheck.rejected(DID_HELD_BY_ANOTHER_SERVER),
+                        ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER)),
+                new SystemPairCase("held, equal", SYSTEM_DID, DSP_URL, SYSTEM_DID, DSP_URL, true,
+                        SystemPairCheck.EQUAL, ParticipantValueResult.UNCHANGED),
+                new SystemPairCase("held, value differs", OTHER_SYSTEM_DID, OTHER_DSP_URL, SYSTEM_DID, DSP_URL, true,
+                        SystemPairCheck.VALUE_DIFFERS, ParticipantValueResult.rejected(VALUE_DIFFERS)));
+    }
+
+    private record SystemPairCase(String name, String did, String dspBaseUrl, String storedDidOrNull,
+                                  String storedDspBaseUrlOrNull, boolean heldByAnother,
+                                  SystemPairCheck expectedCheck, ParticipantValueResult expectedWrite) {
+
+        Optional<String> storedDid() {
+            return Optional.ofNullable(storedDidOrNull);
+        }
+
+        Optional<String> storedDspBaseUrl() {
+            return Optional.ofNullable(storedDspBaseUrlOrNull);
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    @Test
+    void shouldPassTheValidatorRejectionThroughOnCheck() {
+        var result = store.checkSystemPair(SERVER_ID, null, null);
+
+        assertThat(result).isEqualTo(SystemPairCheck.rejected(WRONG_SCHEME));
+    }
+
+    @Test
+    void shouldFailTheSystemPairCheckForUnknownServer() {
+        when(securityServerRepository.findById(99)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> store.checkSystemPair(99, SYSTEM_DID, DSP_URL)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void shouldLeaveSystemPairUntouchedOnEqualResend() {
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.UNCHANGED);
+        verify(securityServerRepository, times(1)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectDifferentSystemPairForSameAddress() {
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, OTHER_SYSTEM_DID, OTHER_DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(VALUE_DIFFERS));
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+        verify(securityServerRepository, times(1)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectSystemPairWhenOnlyTheDspBaseUrlDiffers() {
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, OTHER_DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(VALUE_DIFFERS));
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+    }
+
+    @Test
+    void shouldReplaceStaleSystemPair() {
+        server.setSystemDid(OLD_SYSTEM_DID);
+        server.setDspBaseUrl(OLD_DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.STORED);
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+    }
+
+    @Test
+    void shouldReplaceSystemPairAsOneUnitWhenOnlyTheDspBaseUrlIsStale() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(OLD_DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, OTHER_SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.STORED);
+        assertThat(server.getSystemDid()).isEqualTo(OTHER_SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+    }
+
+    @Test
+    void shouldReplaceSystemPairAsOneUnitWhenOnlyTheDidIsStale() {
+        server.setSystemDid(OLD_SYSTEM_DID);
+        server.setDspBaseUrl(DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, OTHER_DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.STORED);
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(OTHER_DSP_URL);
+    }
+
+    @Test
+    void shouldFollowStaleSystemPairReplacementWithUnchangedEqualResend() {
+        server.setSystemDid(OLD_SYSTEM_DID);
+        server.setDspBaseUrl(OLD_DSP_URL);
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.UNCHANGED);
+        verify(securityServerRepository, times(1)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectSystemPairResendAfterAdminReplace() {
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+        var replaced = store.replaceSystemPair(SERVER_ID, OTHER_SYSTEM_DID, OTHER_DSP_URL);
+
+        var resend = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(replaced).isEqualTo(ParticipantValueResult.STORED);
+        assertThat(resend).isEqualTo(ParticipantValueResult.rejected(VALUE_DIFFERS));
+        assertThat(server.getSystemDid()).isEqualTo(OTHER_SYSTEM_DID);
+    }
+
+    @Test
+    void shouldReplaceExistingSystemPairOnAdminReplace() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(DSP_URL);
+
+        var result = store.replaceSystemPair(SERVER_ID, OTHER_SYSTEM_DID, OTHER_DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.STORED);
+        assertThat(server.getSystemDid()).isEqualTo(OTHER_SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(OTHER_DSP_URL);
+    }
+
+    @Test
+    void shouldLeaveAnEqualSystemPairAsItIsOnAdminReplace() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(DSP_URL);
+
+        var result = store.replaceSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.UNCHANGED);
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+        verify(securityServerRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRefuseToAddSystemPairOnAdminReplace() {
+        var result = store.replaceSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(NO_STORED_VALUE));
+        assertThat(server.getSystemDid()).isNull();
+        assertThat(server.getDspBaseUrl()).isNull();
+        verify(securityServerRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRefuseToAddAnInvalidSystemPairOnAdminReplaceAsNotStored() {
+        var result = store.replaceSystemPair(SERVER_ID, SYSTEM_DID, "http://ss0.example.org/api/dsp");
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(NO_STORED_VALUE));
+        verify(securityServerRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldNotClearSystemPairOnAdminReplace() {
+        server.setSystemDid(SYSTEM_DID);
+        server.setDspBaseUrl(DSP_URL);
+
+        var result = store.replaceSystemPair(SERVER_ID, null, null);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(WRONG_SCHEME));
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        assertThat(server.getDspBaseUrl()).isEqualTo(DSP_URL);
+        verify(securityServerRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectSystemPairHeldByAnotherServerAndAudit() {
+        when(securityServerRepository.existsBySystemDidAndIdNot(SYSTEM_DID, SERVER_ID)).thenReturn(true);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER));
+        assertThat(server.getSystemDid()).isNull();
+        verify(securityServerRepository, never()).saveAndFlush(any());
+        verify(auditLogging).auditLogFailWithData(REJECT_CONNECTOR_PUBLISHED_VALUE, HELD_REASON, Map.of(
+                SERVER_CODE, "SS0",
+                OWNER_CLASS, "COM",
+                OWNER_CODE, "222"));
+    }
+
+    @Test
+    void shouldRejectSystemPairHeldByAnotherServerOnAdminReplaceWithoutConnectorAudit() {
+        server.setSystemDid(OTHER_SYSTEM_DID);
+        server.setDspBaseUrl(OTHER_DSP_URL);
+        when(securityServerRepository.existsBySystemDidAndIdNot(SYSTEM_DID, SERVER_ID)).thenReturn(true);
+
+        var result = store.replaceSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER));
+        assertThat(server.getSystemDid()).isEqualTo(OTHER_SYSTEM_DID);
+        verify(securityServerRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditLogging);
+    }
+
+    @Test
+    void shouldPropagateRepositoryExceptionOnSystemPairWrite() {
+        var failure = new DataIntegrityViolationException("duplicate");
+        doThrow(failure).when(securityServerRepository).saveAndFlush(server);
+
+        assertThatThrownBy(() -> store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL)).isSameAs(failure);
+        verifyNoInteractions(auditLogging);
+    }
+
+    @Test
+    void shouldWriteMemberDidsWhenNoneStored() {
+        var results = store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        assertThat(results).containsEntry(OWNER, ParticipantValueResult.STORED)
+                .containsEntry(CLIENT, ParticipantValueResult.STORED);
+        assertThat(storedRows.get(1L).getDid()).isEqualTo(OWNER_DID);
+        assertThat(storedRows.get(2L).getDid()).isEqualTo(CLIENT_DID);
+    }
+
+    @Test
+    void shouldLeaveMemberDidUntouchedOnEqualResend() {
+        store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        assertThat(results.values()).containsOnly(ParticipantValueResult.UNCHANGED);
+        verify(memberDidRepository, times(2)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectDifferentMemberDidForSameAddress() {
+        store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, OTHER_CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(VALUE_DIFFERS));
+        assertThat(storedRows.get(2L).getDid()).isEqualTo(CLIENT_DID);
+        verify(memberDidRepository, times(2)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldReplaceStaleMemberDidInPlace() {
+        var staleRow = new MemberDidEntity(server, clientEntity, OLD_CLIENT_DID);
+        storedRows.put(2L, staleRow);
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.STORED);
+        assertThat(storedRows).hasSize(1);
+        assertThat(storedRows.get(2L)).isSameAs(staleRow);
+        assertThat(staleRow.getDid()).isEqualTo(CLIENT_DID);
+        verify(memberDidRepository, never()).delete(any());
+    }
+
+    @Test
+    void shouldFollowStaleMemberDidReplacementWithUnchangedEqualResend() {
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, OLD_CLIENT_DID));
+        store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.UNCHANGED);
+        verify(memberDidRepository, times(1)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldReplaceMemberDidInPlaceOnAdminReplace() {
+        var row = new MemberDidEntity(server, clientEntity, CLIENT_DID);
+        storedRows.put(2L, row);
+
+        var results = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, OTHER_CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.STORED);
+        assertThat(storedRows).hasSize(1);
+        assertThat(storedRows.get(2L)).isSameAs(row);
+        assertThat(row.getDid()).isEqualTo(OTHER_CLIENT_DID);
+        verify(memberDidRepository, never()).delete(any());
+    }
+
+    @Test
+    void shouldRefuseMemberDidWithNoStoredRowOnAdminReplace() {
+        storedRows.put(1L, new MemberDidEntity(server, ownerEntity, OWNER_DID));
+
+        var results = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(NO_STORED_VALUE));
+        assertThat(storedRows).containsOnlyKeys(1L);
+        verify(memberDidRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRefuseNoStoredRowBeforeTheHostCheckOnAdminReplace() {
+        var results = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, WRONG_HOST_CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(NO_STORED_VALUE));
+        assertThat(storedRows).isEmpty();
+        verify(memberDidRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRefuseNoStoredRowBeforeTheHostCheckOnTheReplacementDryRun() {
+        var results = store.checkMemberDidReplacements(SERVER_ID, Map.of(CLIENT, WRONG_HOST_CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(NO_STORED_VALUE));
+        verify(memberDidRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditLogging, entityManager);
+    }
+
+    @Test
+    void shouldStillCheckTheHostWhenTheMemberHasAStoredRowOnAdminReplace() {
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, CLIENT_DID));
+
+        var results = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, WRONG_HOST_CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(HOST_DIFFERS));
+    }
+
+    @ParameterizedTest
+    @MethodSource("memberDidReplacementCases")
+    void shouldAnswerTheMemberDidReplacementCheckTheWayTheReplaceOperationDecides(MemberDidCase memberCase) {
+        memberCase.storedDid().ifPresent(did -> storedRows.put(2L, new MemberDidEntity(server, clientEntity, did)));
+        if (memberCase.heldByAnother()) {
+            didsOfOtherServers.add(memberCase.did());
+        }
+        var entry = new LinkedHashMap<ClientId, String>();
+        entry.put(memberCase.member(), memberCase.did());
+
+        var check = store.checkMemberDidReplacements(SERVER_ID, entry);
+        var replaced = store.replaceMemberDids(SERVER_ID, entry);
+
+        assertThat(check).containsExactly(Map.entry(memberCase.member(), memberCase.expected()));
+        assertThat(replaced).isEqualTo(check);
+    }
+
+    private static Stream<MemberDidCase> memberDidReplacementCases() {
+        return Stream.of(
+                new MemberDidCase("no stored row", CLIENT, CLIENT_DID, null, false,
+                        ParticipantValueResult.rejected(NO_STORED_VALUE)),
+                new MemberDidCase("no stored row, wrong host", CLIENT, WRONG_HOST_CLIENT_DID, null, false,
+                        ParticipantValueResult.rejected(NO_STORED_VALUE)),
+                new MemberDidCase("stored equal DID", CLIENT, CLIENT_DID, CLIENT_DID, false, ParticipantValueResult.UNCHANGED),
+                new MemberDidCase("stored different valid DID", CLIENT, OTHER_CLIENT_DID, CLIENT_DID, false,
+                        ParticipantValueResult.STORED),
+                new MemberDidCase("did of other member", CLIENT, OWNER_DID, CLIENT_DID, false,
+                        ParticipantValueResult.rejected(DID_OF_OTHER_MEMBER)),
+                new MemberDidCase("held by another server", CLIENT, OTHER_CLIENT_DID, CLIENT_DID, true,
+                        ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER)),
+                new MemberDidCase("member not served", UNRELATED, "did:web:ss0.example.org%3A7183:v1:DEV:COM:999", null,
+                        false, ParticipantValueResult.rejected(MEMBER_NOT_SERVED)));
+    }
+
+    @Test
+    void shouldLockServerRowBeforeReadingOrReplacingAnyDidRow() {
+        storedRows.put(1L, new MemberDidEntity(server, ownerEntity, OLD_OWNER_DID));
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, OLD_CLIENT_DID));
+
+        store.replaceMemberDids(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        InOrder order = inOrder(securityServerRepository, entityManager, memberDidRepository);
+        order.verify(securityServerRepository).lockForUpdateById(SERVER_ID);
+        order.verify(securityServerRepository).findById(SERVER_ID);
+        order.verify(entityManager).refresh(server);
+        order.verify(securityServerRepository).findServedMembers(SERVER_ID);
+        order.verify(memberDidRepository).findBySecurityServerIdAndMemberIdIn(eq(SERVER_ID), any());
+        order.verify(memberDidRepository).findDidsHeldByOtherServers(any(), eq(SERVER_ID));
+        order.verify(memberDidRepository, times(2)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectMemberDidResendAfterAdminReplace() {
+        store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+        var replaced = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, OTHER_CLIENT_DID));
+
+        var resend = store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(replaced).containsEntry(CLIENT, ParticipantValueResult.STORED);
+        assertThat(resend).containsEntry(CLIENT, ParticipantValueResult.rejected(VALUE_DIFFERS));
+        assertThat(storedRows.get(2L).getDid()).isEqualTo(OTHER_CLIENT_DID);
+    }
+
+    @Test
+    void shouldRejectMemberDidHeldByAnotherServerStoreTheRestAndAudit() {
+        didsOfOtherServers.add(CLIENT_DID);
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        assertThat(results).containsEntry(OWNER, ParticipantValueResult.STORED)
+                .containsEntry(CLIENT, ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER));
+        assertThat(storedRows).containsOnlyKeys(1L);
+        verify(auditLogging, times(1)).auditLogFailWithData(REJECT_CONNECTOR_PUBLISHED_VALUE, HELD_REASON, Map.of(
+                SERVER_CODE, "SS0",
+                OWNER_CLASS, "COM",
+                OWNER_CODE, "222",
+                MEMBER_CLASS, "COM",
+                MEMBER_CODE, "333"));
+    }
+
+    @Test
+    void shouldRejectMemberDidHeldByAnotherServerOnAdminReplaceWithoutConnectorAudit() {
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, OTHER_CLIENT_DID));
+        didsOfOtherServers.add(CLIENT_DID);
+
+        var results = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER));
+        assertThat(storedRows.get(2L).getDid()).isEqualTo(OTHER_CLIENT_DID);
+        verifyNoInteractions(auditLogging);
+    }
+
+    @Test
+    void shouldPropagateRepositoryExceptionOnMemberDidWriteWithoutPartialResult() {
+        var failure = new DataIntegrityViolationException("duplicate");
+        doThrow(failure).when(memberDidRepository)
+                .saveAndFlush(argThat((MemberDidEntity row) -> row.getMember() == clientEntity));
+
+        assertThatThrownBy(() -> store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID))).isSameAs(failure);
+        verifyNoInteractions(auditLogging);
+    }
+
+    @Test
+    void shouldPropagateRepositoryExceptionOnMemberDidUpdate() {
+        var row = new MemberDidEntity(server, clientEntity, OLD_CLIENT_DID);
+        storedRows.put(2L, row);
+        var failure = new DataIntegrityViolationException("duplicate");
+        doThrow(failure).when(memberDidRepository).saveAndFlush(row);
+
+        assertThatThrownBy(() -> store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID))).isSameAs(failure);
+    }
+
+    @Test
+    void shouldLockServerRowBeforeReadingOrWritingAnyDidRow() {
+        store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        InOrder order = inOrder(securityServerRepository, entityManager, memberDidRepository);
+        order.verify(securityServerRepository).lockForUpdateById(SERVER_ID);
+        order.verify(securityServerRepository).findById(SERVER_ID);
+        order.verify(entityManager).refresh(server);
+        order.verify(securityServerRepository).findServedMembers(SERVER_ID);
+        order.verify(memberDidRepository).findBySecurityServerIdAndMemberIdIn(eq(SERVER_ID), any());
+        order.verify(memberDidRepository).findDidsHeldByOtherServers(any(), eq(SERVER_ID));
+        order.verify(memberDidRepository, times(2)).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldLockServerRowBeforeCheckingSystemDidUniqueness() {
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        InOrder order = inOrder(securityServerRepository, entityManager);
+        order.verify(securityServerRepository).lockForUpdateById(SERVER_ID);
+        order.verify(securityServerRepository).findById(SERVER_ID);
+        order.verify(entityManager).refresh(server);
+        order.verify(securityServerRepository).existsBySystemDidAndIdNot(SYSTEM_DID, SERVER_ID);
+        order.verify(securityServerRepository).saveAndFlush(server);
+    }
+
+    @Test
+    void shouldTouchNoValueWhenServerRowIsGone() {
+        when(securityServerRepository.lockForUpdateById(SERVER_ID)).thenReturn(Optional.empty());
+        var memberDids = Map.of(CLIENT, CLIENT_DID);
+
+        assertThatThrownBy(() -> store.writeMemberDidsOnce(SERVER_ID, memberDids))
+                .isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL))
+                .isInstanceOf(NotFoundException.class);
+
+        verifyNoInteractions(memberDidRepository);
+        verify(securityServerRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldValidateAgainstClientsAsCommittedUnderTheLock() {
+        doAnswer(invocation -> {
+            servedMembers.clear();
+            return null;
+        }).when(entityManager).refresh(server);
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(results).containsEntry(CLIENT, ParticipantValueResult.rejected(MEMBER_NOT_SERVED));
+        verify(memberDidRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldCompareSystemPairWithTheValueCommittedUnderTheLock() {
+        doAnswer(invocation -> {
+            server.setSystemDid(SYSTEM_DID);
+            server.setDspBaseUrl(DSP_URL);
+            return null;
+        }).when(entityManager).refresh(server);
+
+        var result = store.writeSystemPairOnce(SERVER_ID, OTHER_SYSTEM_DID, OTHER_DSP_URL);
+
+        assertThat(result).isEqualTo(ParticipantValueResult.rejected(VALUE_DIFFERS));
+        assertThat(server.getSystemDid()).isEqualTo(SYSTEM_DID);
+        verify(securityServerRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldRejectMemberDidWhenClientWasRemovedBeforeTheStoreCall() {
+        servedMembers.clear();
+
+        var results = store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        assertThat(results).containsEntry(OWNER, ParticipantValueResult.STORED)
+                .containsEntry(CLIENT, ParticipantValueResult.rejected(MEMBER_NOT_SERVED));
+        assertThat(storedRows).containsOnlyKeys(1L);
+    }
+
+    @Test
+    void shouldRefuseUnservedMemberAsNotServedOnAdminReplace() {
+        var results = store.replaceMemberDids(SERVER_ID,
+                Map.of(UNRELATED, "did:web:ss0.example.org%3A7183:v1:DEV:COM:999"));
+
+        assertThat(results).containsEntry(UNRELATED, ParticipantValueResult.rejected(MEMBER_NOT_SERVED));
+        assertThat(storedRows).isEmpty();
+    }
+
+    @Test
+    void shouldRejectMemberDidForMemberThatIsNeitherOwnerNorClient() {
+        var results = store.writeMemberDidsOnce(SERVER_ID,
+                Map.of(UNRELATED, "did:web:ss0.example.org%3A7183:v1:DEV:COM:999"));
+
+        assertThat(results).containsEntry(UNRELATED, ParticipantValueResult.rejected(MEMBER_NOT_SERVED));
+        assertThat(storedRows).isEmpty();
+    }
+
+    @Test
+    void shouldRejectMemberDidOfAnotherMemberAndKeepInputOrder() {
+        var results = store.writeMemberDidsOnce(SERVER_ID, batch(CLIENT_DID, CLIENT_DID));
+
+        assertThat(results).containsExactly(
+                Map.entry(OWNER, ParticipantValueResult.rejected(DID_OF_OTHER_MEMBER)),
+                Map.entry(CLIENT, ParticipantValueResult.STORED));
+        assertThat(storedRows).containsOnlyKeys(2L);
+    }
+
+    @ParameterizedTest
+    @MethodSource("memberDidCases")
+    void shouldAnswerTheMemberDidCheckTheWayTheWriteOnceOperationDecides(MemberDidCase memberCase) {
+        memberCase.storedDid().ifPresent(did -> storedRows.put(2L, new MemberDidEntity(server, clientEntity, did)));
+        if (memberCase.heldByAnother()) {
+            didsOfOtherServers.add(memberCase.did());
+        }
+        var entry = new LinkedHashMap<ClientId, String>();
+        entry.put(memberCase.member(), memberCase.did());
+
+        var check = store.checkMemberDids(SERVER_ID, entry);
+        var written = store.writeMemberDidsOnce(SERVER_ID, entry);
+
+        assertThat(check).containsExactly(Map.entry(memberCase.member(), memberCase.expected()));
+        assertThat(written).isEqualTo(check);
+    }
+
+    private static Stream<MemberDidCase> memberDidCases() {
+        var held = ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER);
+        var differs = ParticipantValueResult.rejected(VALUE_DIFFERS);
+        return Stream.of(
+                new MemberDidCase("absent", CLIENT, CLIENT_DID, null, false, ParticipantValueResult.STORED),
+                new MemberDidCase("equal", CLIENT, CLIENT_DID, CLIENT_DID, false, ParticipantValueResult.UNCHANGED),
+                new MemberDidCase("stale", CLIENT, CLIENT_DID, OLD_CLIENT_DID, false, ParticipantValueResult.STORED),
+                new MemberDidCase("value differs", CLIENT, OTHER_CLIENT_DID, CLIENT_DID, false, differs),
+                new MemberDidCase("did of other member", CLIENT, OWNER_DID, null, false,
+                        ParticipantValueResult.rejected(DID_OF_OTHER_MEMBER)),
+                new MemberDidCase("member not served", UNRELATED, "did:web:ss0.example.org%3A7183:v1:DEV:COM:999", null,
+                        false, ParticipantValueResult.rejected(MEMBER_NOT_SERVED)),
+                new MemberDidCase("validator rejection", CLIENT, null, null, false,
+                        ParticipantValueResult.rejected(WRONG_SCHEME)),
+                new MemberDidCase("held, absent", CLIENT, CLIENT_DID, null, true, held),
+                new MemberDidCase("held, stale", CLIENT, CLIENT_DID, OLD_CLIENT_DID, true, held),
+                new MemberDidCase("held, equal", CLIENT, CLIENT_DID, CLIENT_DID, true, ParticipantValueResult.UNCHANGED),
+                new MemberDidCase("held, value differs", CLIENT, OTHER_CLIENT_DID, CLIENT_DID, true, differs));
+    }
+
+    private record MemberDidCase(String name, ClientId member, String did, String storedDidOrNull, boolean heldByAnother,
+                                 ParticipantValueResult expected) {
+
+        Optional<String> storedDid() {
+            return Optional.ofNullable(storedDidOrNull);
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    @Test
+    void shouldCheckMemberDidsWithoutWritingLockingOrAuditing() {
+        didsOfOtherServers.add(CLIENT_DID);
+
+        var results = store.checkMemberDids(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        assertThat(results).containsExactly(
+                Map.entry(OWNER, ParticipantValueResult.STORED),
+                Map.entry(CLIENT, ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER)));
+        assertThat(storedRows).isEmpty();
+        verify(memberDidRepository, never()).saveAndFlush(any());
+        verify(securityServerRepository, never()).lockForUpdateById(anyInt());
+        verify(securityServerRepository, never()).lockForUpdateBy(any());
+        verifyNoInteractions(auditLogging, entityManager);
+    }
+
+    @Test
+    void shouldAnswerTheSameOnARepeatedMemberDidCheck() {
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, OLD_CLIENT_DID));
+        var input = batch(OWNER_DID, CLIENT_DID);
+
+        var first = store.checkMemberDids(SERVER_ID, input);
+        var second = store.checkMemberDids(SERVER_ID, input);
+
+        assertThat(first).containsExactly(
+                Map.entry(OWNER, ParticipantValueResult.STORED),
+                Map.entry(CLIENT, ParticipantValueResult.STORED));
+        assertThat(second).isEqualTo(first);
+    }
+
+    @Test
+    void shouldIssueNoHeldQueryOrWriteWhenEveryEntryIsRejected() {
+        var entries = new LinkedHashMap<ClientId, String>();
+        entries.put(UNRELATED, "did:web:ss0.example.org%3A7183:v1:DEV:COM:999");
+        entries.put(CLIENT, "not-a-did");
+
+        var checked = store.checkMemberDids(SERVER_ID, entries);
+        var written = store.writeMemberDidsOnce(SERVER_ID, entries);
+
+        assertThat(checked.values()).doesNotContain(ParticipantValueResult.STORED);
+        assertThat(written).isEqualTo(checked);
+        verify(securityServerRepository, times(2)).findServedMembers(SERVER_ID);
+        verify(memberDidRepository, never()).findDidsHeldByOtherServers(any(), anyInt());
+        verify(memberDidRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void shouldAskTheHeldQueryOnlyForTheDidsThatWouldBeWritten() {
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, CLIENT_DID));
+        var entries = new LinkedHashMap<ClientId, String>();
+        entries.put(OWNER, OWNER_DID);
+        entries.put(CLIENT, CLIENT_DID);
+        entries.put(UNRELATED, "did:web:ss0.example.org%3A7183:v1:DEV:COM:999");
+
+        store.checkMemberDids(SERVER_ID, entries);
+        store.writeMemberDidsOnce(SERVER_ID, entries);
+
+        verify(memberDidRepository, times(2)).findDidsHeldByOtherServers(
+                argThat(dids -> Set.copyOf(dids).equals(Set.of(OWNER_DID))), eq(SERVER_ID));
+        verify(memberDidRepository, times(2)).findBySecurityServerIdAndMemberIdIn(
+                eq(SERVER_ID), argThat(ids -> Set.copyOf(ids).equals(Set.of(1L, 2L))));
+    }
+
+    @Test
+    void shouldReadTheServedMembersOncePerMemberBatchCall() {
+        store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        verify(securityServerRepository, times(1)).findServedMembers(SERVER_ID);
+    }
+
+    @Test
+    void shouldNotReadTheServedMembersForTheSystemPairCheckOrWrite() {
+        store.checkSystemPair(SERVER_ID, SYSTEM_DID, DSP_URL);
+        store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+
+        verify(securityServerRepository, never()).findServedMembers(anyInt());
+    }
+
+    @Test
+    void shouldAskNoHeldQueryWhenEveryAcceptedEntryIsAnEqualResend() {
+        storedRows.put(1L, new MemberDidEntity(server, ownerEntity, OWNER_DID));
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, CLIENT_DID));
+
+        var checked = store.checkMemberDids(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+        var written = store.writeMemberDidsOnce(SERVER_ID, batch(OWNER_DID, CLIENT_DID));
+
+        assertThat(checked.values()).containsOnly(ParticipantValueResult.UNCHANGED);
+        assertThat(written).isEqualTo(checked);
+        verify(memberDidRepository, never()).findDidsHeldByOtherServers(any(), anyInt());
+    }
+
+    @Test
+    void shouldFailTheMemberDidCheckForUnknownServer() {
+        when(securityServerRepository.findById(99)).thenReturn(Optional.empty());
+
+        var members = batch(OWNER_DID, CLIENT_DID);
+
+        assertThatThrownBy(() -> store.checkMemberDids(99, members)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void shouldRejectValuesWhenAddressChangedBeforeTheStoreCall() {
+        server.setAddress("moved.example.org");
+        storedRows.put(2L, new MemberDidEntity(server, clientEntity, CLIENT_DID));
+
+        var pair = store.writeSystemPairOnce(SERVER_ID, SYSTEM_DID, DSP_URL);
+        var members = store.replaceMemberDids(SERVER_ID, Map.of(CLIENT, CLIENT_DID));
+
+        assertThat(pair).isEqualTo(ParticipantValueResult.rejected(HOST_DIFFERS));
+        assertThat(members).containsEntry(CLIENT, ParticipantValueResult.rejected(HOST_DIFFERS));
+        assertThat(server.getSystemDid()).isNull();
+        verify(securityServerRepository, never()).saveAndFlush(any());
+        verify(memberDidRepository, never()).saveAndFlush(any());
+    }
+
+    private static Map<ClientId, String> batch(String ownerDid, String clientDid) {
+        var batch = new LinkedHashMap<ClientId, String>();
+        batch.put(OWNER, ownerDid);
+        batch.put(CLIENT, clientDid);
+        return batch;
+    }
+
+    private static ClientId member(String code) {
+        return ClientId.Conf.create("DEV", "COM", code);
+    }
+
+    private static XRoadMemberEntity memberEntity(MemberClassEntity memberClass, ClientId identifier, long id) {
+        var entity = new XRoadMemberEntity("Member " + identifier.getMemberCode(), identifier, memberClass);
+        ReflectionTestUtils.setField(entity, "id", id);
+        return entity;
+    }
+}

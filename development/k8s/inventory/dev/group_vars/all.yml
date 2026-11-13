@@ -64,10 +64,6 @@ external_service_host: host.docker.internal
 # No cross-substrate bridges, no hybrid ss2 (LXD) — fully self-contained, in-cluster topology.
 external_service_bridges: []
 
-# The Issuer Service is co-located in the Central Server dev image (port 6183), reached
-# cross-namespace — same as e2e.
-trusted_issuer_host: central-server.cs
-
 # Two Security Server chart releases in separate namespaces, mirroring e2e's ss0/ss1 topology.
 # ss0 enables the softtoken-signer split (security_server role's softtoken_signer_enabled var)
 # and ss1 enables the signer image override toggle (signer_hsm_enabled): the shared hurl
@@ -75,11 +71,9 @@ trusted_issuer_host: central-server.cs
 # which inventory runs it. Mirrors e2e's split so dev and e2e stay converged.
 security_server_instances:
   - namespace: ss0
-    dsp_participant_context_id: xrd-ss0
     openbao_tls_dir: "{{ playbook_dir }}/../.state/openbao-tls-ss0"
     softtoken_signer_enabled: true
   - namespace: ss1
-    dsp_participant_context_id: xrd-ss1
     openbao_tls_dir: "{{ playbook_dir }}/../.state/openbao-tls-ss1"
     signer_hsm_enabled: true
 
@@ -97,8 +91,14 @@ port_forwards:
   - {name: proxy-ocsp, namespace: ss0, resource: svc/proxy, ports: "5577:5577"}
   - {name: proxy-8080, namespace: ss0, resource: svc/proxy, ports: "8080:8080"}
   - {name: proxy-8443, namespace: ss0, resource: svc/proxy, ports: "8443:8443"}
+  - {name: ds-identity-hub-did, namespace: ss0, resource: svc/ds-identity-hub, ports: "7183:7183"}
   - {name: ss1-proxy-ui-api, namespace: ss1, resource: svc/proxy-ui-api, ports: "4001:4000"}
   - {name: ss1-proxy-http, namespace: ss1, resource: svc/proxy, ports: "5501:5500"}
   - {name: ss1-proxy-ocsp, namespace: ss1, resource: svc/proxy, ports: "5578:5577"}
   - {name: ss1-proxy-8080, namespace: ss1, resource: svc/proxy, ports: "8081:8080"}
   - {name: ss1-proxy-8443, namespace: ss1, resource: svc/proxy, ports: "8444:8443"}
+  # Central Server admin API and test CA, both in the "cs" namespace (see central_server_namespace/
+  # e2e_fixtures_namespace above) — needed for the runtime-member e2e scenario, which approves a
+  # registration request against the CS and provisions its own sign certificate through the CA.
+  - {name: cs-ui-api, namespace: cs, resource: svc/central-server, ports: "4002:4000"}
+  - {name: cs-testca, namespace: cs, resource: svc/testca, ports: "8888:8888"}

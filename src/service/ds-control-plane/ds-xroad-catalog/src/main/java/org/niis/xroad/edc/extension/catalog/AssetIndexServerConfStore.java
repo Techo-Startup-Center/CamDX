@@ -26,7 +26,6 @@
  */
 package org.niis.xroad.edc.extension.catalog;
 
-import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.ServiceId;
 
 import jakarta.annotation.Nullable;
@@ -34,52 +33,37 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.AssetIndex;
-import org.eclipse.edc.connector.dataplane.http.spi.HttpDataAddress;
+import org.eclipse.edc.controlplane.DataAddress;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
-import org.eclipse.edc.spi.types.domain.DataAddress;
-import org.niis.xroad.globalconf.GlobalConfProvider;
+import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
 import org.niis.xroad.serverconf.ServerConfProvider;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
+
 /**
  * Read-only {@link AssetIndex} backed by live {@link ServerConfProvider} reads. Also serves
- * as {@code DataAddressResolver} since EDC 0.16 folds it into the {@code AssetIndex} contract.
+ * as {@code DataAddressResolver}, which the {@code AssetIndex} contract folds in. Lookups and deletes
+ * are scoped to the participant context EDC passes; a null context resolves nothing.
  */
 @Slf4j
 @RequiredArgsConstructor
 class AssetIndexServerConfStore implements AssetIndex {
 
     private static final String READ_ONLY_MESSAGE = "Read-only: managed by ServerConf";
+    private static final String HTTP_DATA_TYPE = "HttpData";
+    private static final String BASE_URL_PROPERTY = EDC_NAMESPACE + "baseUrl";
 
     private final ServerConfProvider serverConfProvider;
-    private final GlobalConfProvider globalConfProvider;
-    private final String participantContextId;
-    private final String managementParticipantContextId;
     private final BuiltinServiceCatalog builtinServiceCatalog;
     private final StoreEnumerationCache<Asset> cache;
+    private final ServiceContextResolver serviceContextResolver;
     private final QueryEvaluator<Asset> queryEvaluator = new QueryEvaluator<>(Asset::getId, Asset::getParticipantContextId);
-
-    /** MANAGEMENT subsystem uses a distinct DSP identity to avoid self-negotiation constraint violations. */
-    private String resolveContextId(ServiceId serviceId) {
-        var mgmtService = globalConfProvider.getManagementRequestService();
-        return (mgmtService != null && mgmtService.equals(serviceId.getClientId()))
-                ? managementParticipantContextId
-                : participantContextId;
-    }
-
-    private boolean isOwnerOnly(ServiceId serviceId) {
-        try {
-            return serverConfProvider.getServiceAccessRights(serviceId).isEmpty();
-        } catch (Exception e) {
-            log.warn("Failed to read access rights for service '{}': {}", serviceId, e.getMessage());
-            return false;
-        }
-    }
 
     @Override
     public Stream<Asset> queryAssets(QuerySpec querySpec) {
@@ -96,35 +80,71 @@ class AssetIndexServerConfStore implements AssetIndex {
 
     private List<Asset> buildAssetList() {
         var assets = new ArrayList<Asset>();
+        var provisionedMemberContextIds = serviceContextResolver.provisionedMemberContextIds();
         for (var member : serverConfProvider.getMembers()) {
             for (var serviceId : serverConfProvider.getAllServices(member)) {
-                assets.add(AssetMapper.toAsset(serviceId, managementParticipantContextId));
-                if (serverConfProvider.getDisabledNotice(serviceId) == null) {
-                    assets.add(AssetMapper.toAsset(serviceId, resolveContextId(serviceId)));
+                var contexts = serviceContextResolver.resolveContexts(serviceId, provisionedMemberContextIds);
+                for (var ctxId : contexts) {
+                    assets.add(AssetMapper.toAsset(serviceId, ctxId));
+                }
+                if (shouldPublishSystemAsset(serviceId)) {
+                    assets.add(AssetMapper.toAsset(serviceId, ParticipantIdentifierScheme.SYSTEM_SEGMENT));
                 }
             }
         }
         for (var serviceId : builtinServiceCatalog.activeServiceIds()) {
-            assets.add(AssetMapper.toAsset(serviceId, managementParticipantContextId));
+            assets.add(AssetMapper.toAsset(serviceId, ParticipantIdentifierScheme.SYSTEM_SEGMENT));
         }
-        ManagementServiceCatalog.resolveSyntheticServices(globalConfProvider, serverConfProvider)
-                .forEach(serviceId -> assets.add(AssetMapper.toAsset(serviceId, managementParticipantContextId)));
+        serviceContextResolver.resolveSyntheticServices()
+                .forEach(serviceId -> assets.add(AssetMapper.toAsset(serviceId, ParticipantIdentifierScheme.SYSTEM_SEGMENT)));
         return assets;
+    }
+
+    /**
+     * Whether an enumerated, system-eligible service should get a SYSTEM-context Asset: any
+     * enabled service, or a disabled one that still has admin-configured access rights — matching
+     * {@code ContractDefinitionServerConfStore}/{@code PolicyDefinitionServerConfStore}, which keep
+     * publishing a per-subject Contract/Policy under SYSTEM for an ACL-authorized subject
+     * regardless of disabled state. The services this is called for come from
+     * {@link ServerConfProvider#getAllServices}, so existence is already guaranteed and is not
+     * re-checked here.
+     */
+    private boolean shouldPublishSystemAsset(ServiceId serviceId) {
+        if (!serviceContextResolver.isSystemEligible(serviceId)) {
+            return false;
+        }
+        if (serverConfProvider.getDisabledNotice(serviceId) == null) {
+            return true;
+        }
+        return !serverConfProvider.getServiceAccessRights(serviceId).isEmpty();
     }
 
     @Override
     @Nullable
-    public Asset findById(String assetId) {
-        return cache.findById(assetId, () -> findByIdInternal(assetId));
+    public Asset findById(@Nullable String participantContextId, String assetId) {
+        if (participantContextId == null) {
+            log.trace("findById assetId={} has no participant context, returning null", assetId);
+            return null;
+        }
+        return cache.findById(participantContextId, assetId,
+                serviceContextResolver.isCacheableRequestedContext(participantContextId),
+                () -> findByIdInternal(participantContextId, assetId));
     }
 
     @Nullable
-    private Asset findByIdInternal(String assetId) {
+    private Asset findByIdInternal(String participantContextId, String assetId) {
         log.trace("findById assetId={}", assetId);
         var builtinServiceId = builtinServiceCatalog.findServiceId(assetId);
         if (builtinServiceId != null) {
             log.trace("findById assetId={} matched builtin", assetId);
-            return AssetMapper.toAsset(builtinServiceId, managementParticipantContextId);
+            return AssetMapper.toAsset(builtinServiceId, ParticipantIdentifierScheme.SYSTEM_SEGMENT);
+        }
+        if (serviceContextResolver.isSystemAddressed(participantContextId)) {
+            var systemServiceId = serviceContextResolver.resolveSystemService(assetId);
+            if (systemServiceId == null || !serviceContextResolver.isSystemPublished(systemServiceId)) {
+                return null;
+            }
+            return AssetMapper.toAsset(systemServiceId, ParticipantIdentifierScheme.SYSTEM_SEGMENT);
         }
         var serviceId = AssetMapper.decodeAssetId(assetId);
         if (serviceId == null) {
@@ -135,47 +155,37 @@ class AssetIndexServerConfStore implements AssetIndex {
             log.trace("findById decoded serviceId={}", serviceId.asEncodedId());
         }
         if (!serverConfProvider.serviceExists(serviceId)) {
-            if (isLocallyRegisteredSubsystem(serviceId.getClientId())) {
-                log.trace("findById assetId={} synthesizing owner-only asset for locally registered subsystem", assetId);
-                return AssetMapper.toAsset(serviceId, managementParticipantContextId);
-            }
             log.trace("findById assetId={} service does not exist, returning null", assetId);
             return null;
         }
-        var ctxId = serverConfProvider.getDisabledNotice(serviceId) != null
-                ? managementParticipantContextId
-                : resolveContextId(serviceId);
+        var resolvedContexts = serviceContextResolver.resolveContextsByIdWithSystem(serviceId);
+        var ctxId = ServiceContextResolver.select(resolvedContexts, participantContextId);
+        if (ctxId == null) {
+            log.trace("findById assetId={} has no provisioned context, returning null", assetId);
+            return null;
+        }
         return AssetMapper.toAsset(serviceId, ctxId);
-    }
-
-    private boolean isLocallyRegisteredSubsystem(ClientId clientId) {
-        if (clientId == null || clientId.getSubsystemCode() == null) {
-            return false;
-        }
-        try {
-            var thisServer = serverConfProvider.getIdentifier();
-            return thisServer != null && globalConfProvider.isSecurityServerClient(clientId, thisServer);
-        } catch (Exception e) {
-            log.warn("Failed to read global-conf for synthetic asset check '{}': {}", clientId, e.getMessage());
-            return false;
-        }
     }
 
     @Override
     @Nullable
-    public DataAddress resolveForAsset(String assetId) {
+    public DataAddress resolveForAsset(@Nullable String participantContextId, String assetId) {
+        if (participantContextId == null) {
+            log.trace("resolveForAsset assetId={} has no participant context, returning null", assetId);
+            return null;
+        }
         log.trace("resolveForAsset assetId={}", assetId);
         var builtinServiceId = builtinServiceCatalog.findServiceId(assetId);
         if (builtinServiceId != null) {
             log.trace("resolveForAsset assetId={} matched builtin, baseUrl={}", assetId, builtinServiceCatalog.serverProxyUrl());
-            return buildHttpDataAddress(builtinServiceCatalog.serverProxyUrl());
+            return buildHttpDataTypeAddress(builtinServiceCatalog.serverProxyUrl());
         }
-        var cached = cache.getDataAddress(assetId);
+        var cached = cache.getDataAddress(participantContextId, assetId);
         if (cached != null) {
             return cached;
         }
         var result = resolveForAssetInternal(assetId);
-        cache.cacheDataAddress(assetId, result);
+        cache.cacheDataAddress(participantContextId, assetId, result);
         return result;
     }
 
@@ -184,10 +194,6 @@ class AssetIndexServerConfStore implements AssetIndex {
         var serviceId = AssetMapper.decodeAssetId(assetId);
         if (serviceId == null) {
             log.trace("resolveForAsset assetId={} decode failed, returning null", assetId);
-            return null;
-        }
-        if (serverConfProvider.getDisabledNotice(serviceId) != null) {
-            log.trace("resolveForAsset assetId={} service disabled, returning null", assetId);
             return null;
         }
         String serviceAddress;
@@ -202,17 +208,17 @@ class AssetIndexServerConfStore implements AssetIndex {
             return null;
         }
         log.trace("resolveForAsset assetId={} resolved baseUrl={}", assetId, serviceAddress);
-        return buildHttpDataAddress(serviceAddress);
+        return buildHttpDataTypeAddress(serviceAddress);
     }
 
-    @SuppressWarnings("deprecation")
-    private static DataAddress buildHttpDataAddress(String baseUrl) {
-        return HttpDataAddress.Builder.newInstance()
-                .baseUrl(baseUrl)
-                .proxyPath("true")
-                .proxyMethod("true")
-                .proxyBody("true")
-                .proxyQueryParams("true")
+    private static DataAddress buildHttpDataTypeAddress(String baseUrl) {
+        return DataAddress.Builder.newInstance()
+                .type(HTTP_DATA_TYPE)
+                .property(BASE_URL_PROPERTY, baseUrl)
+                .property("proxyPath", "true")
+                .property("proxyMethod", "true")
+                .property("proxyBody", "true")
+                .property("proxyQueryParams", "true")
                 .build();
     }
 
@@ -237,7 +243,7 @@ class AssetIndexServerConfStore implements AssetIndex {
     }
 
     @Override
-    public StoreResult<Asset> deleteById(String assetId) {
+    public StoreResult<Asset> deleteById(String participantContextId, String assetId) {
         log.trace("deleteById assetId={} read-only, returning notFound", assetId);
         return StoreResult.notFound(READ_ONLY_MESSAGE);
     }

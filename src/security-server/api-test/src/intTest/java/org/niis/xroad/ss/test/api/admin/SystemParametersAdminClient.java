@@ -29,7 +29,6 @@ package org.niis.xroad.ss.test.api.admin;
 import io.restassured.http.ContentType;
 import io.restassured.response.ValidatableResponse;
 import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerAddressDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerPropertyUpdateDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.TimestampingServiceDto;
 
 import java.util.List;
@@ -174,13 +173,23 @@ public class SystemParametersAdminClient {
     }
 
     /**
+     * Updates a configurable property without naming a scope; the server derives the scope from the key.
+     */
+    public ValidatableResponse updateConfigurableProperty(String propertyName, String propertyValue) {
+        return session.given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("property_name", propertyName, "property_value", propertyValue))
+                .patch("/system/property")
+                .then();
+    }
+
+    /**
      * Updates a configurable property.
      */
     public ValidatableResponse updateConfigurableProperty(String propertyName, String propertyValue, String scope) {
-        var body = new SecurityServerPropertyUpdateDto(propertyName, propertyValue).scope(scope);
         return session.given()
                 .contentType(ContentType.JSON)
-                .body(body)
+                .body(Map.of("property_name", propertyName, "property_value", propertyValue, "scope", scope))
                 .patch("/system/property")
                 .then();
     }

@@ -56,6 +56,7 @@ public class SsApiTestContainerSetup extends BaseComposeSetup {
     public static final String DS_CONTROL_PLANE = "ds-control-plane";
     public static final String DS_IDENTITY_HUB = "ds-identity-hub";
     public static final String DS_ISSUER_SERVICE = "ds-issuer-service";
+    public static final String DS_GATEWAY = "ds-gateway";
 
     private static final String COMPOSE_SS_FILE = "compose.main.yaml";
     private static final String COMPOSE_API_FILE = "compose.api.yaml";
@@ -86,9 +87,6 @@ public class SsApiTestContainerSetup extends BaseComposeSetup {
                 .withExposedService(DB_SERVERCONF, Port.DB, forListeningPort())
                 .withExposedService(DB_MESSAGELOG, Port.DB, forListeningPort())
                 .withExposedService(TESTCA, Port.TEST_CA, forListeningPort())
-                // No start-time waits on the ds-* services: they block at startup on the
-                // empty tls/ds-https vault slot until the baseline seeder provisions the
-                // certificate through the admin API, which runs after `up`.
                 .withLogConsumer(UI, createLogConsumer(UI))
                 .withLogConsumer(PROXY, createLogConsumer(PROXY))
                 .withLogConsumer(SIGNER, createLogConsumer(SIGNER))
@@ -101,7 +99,8 @@ public class SsApiTestContainerSetup extends BaseComposeSetup {
                 .withLogConsumer(TESTCA, createLogConsumer(TESTCA))
                 .withLogConsumer(DS_CONTROL_PLANE, createLogConsumer(DS_CONTROL_PLANE))
                 .withLogConsumer(DS_IDENTITY_HUB, createLogConsumer(DS_IDENTITY_HUB))
-                .withLogConsumer(DS_ISSUER_SERVICE, createLogConsumer(DS_ISSUER_SERVICE));
+                .withLogConsumer(DS_ISSUER_SERVICE, createLogConsumer(DS_ISSUER_SERVICE))
+                .withLogConsumer(DS_GATEWAY, createLogConsumer(DS_GATEWAY));
     }
 
     @Override
@@ -122,6 +121,15 @@ public class SsApiTestContainerSetup extends BaseComposeSetup {
         log.info("Stopping service container: {} ({})", serviceName, containerId);
         container.getDockerClient().stopContainerCmd(containerId).exec();
         log.info("Service container stopped: {}", serviceName);
+    }
+
+    /**
+     * Returns everything the named service container has written to stdout and stderr, including output from
+     * before its restarts.
+     */
+    public String containerLogs(String serviceName) {
+        return env.getContainerByServiceName(serviceName).orElseThrow(
+                () -> new IllegalStateException("Container not found: " + serviceName)).getLogs();
     }
 
     /**

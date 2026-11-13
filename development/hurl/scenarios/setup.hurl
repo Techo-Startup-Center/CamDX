@@ -6,8 +6,8 @@ HTTP 200
 # Log in to the Central Server
 POST https://{{cs_host}}:4000/login
 [FormParams]
-username: xrd
-password: secret123!
+username: {{ui_username}}
+password: {{ui_password}}
 
 HTTP 200
 [Captures]
@@ -18,8 +18,8 @@ POST https://{{cs_host}}:4000/api/v1/initialization
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 Content-Type: application/json
 {
-  "software_token_pin": "Secret1234",
-  "instance_identifier": "DEV",
+  "software_token_pin": "{{token_pin}}",
+  "instance_identifier": "{{xroad_instance}}",
   "central_server_address": "{{cs_host}}"
 }
 
@@ -27,13 +27,22 @@ Content-Type: application/json
 # https://github.com/nordic-institute/X-Road/blob/6ef2d9e83287ccb281b0cc27ba663a5ae8c4aa16/src/central-server/openapi-model/src/main/resources/openapi-definition.yaml#L1344
 HTTP 200
 
+# Set the Issuer Service host; the initialize call below refuses until it is set.
+PUT https://{{cs_host}}:4000/api/v1/issuer-service/host
+X-XSRF-TOKEN: {{cs_xsrf_token}}
+Content-Type: application/json
+{
+  "host": "{{is_host}}"
+}
+
+HTTP 200
 
 # Add member classes to Central Server
 POST https://{{cs_host}}:4000/api/v1/member-classes
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 Content-Type: application/json
 {
-  "code": "COM",
+  "code": "{{member_class}}",
   "description": "Commercial"
 }
 
@@ -60,7 +69,7 @@ PUT https://{{cs_host}}:4000/api/v1/tokens/0/login
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 Content-Type: application/json
 {
-  "password": "Secret1234"
+  "password": "{{token_pin}}"
 }
 
 HTTP *
@@ -100,8 +109,8 @@ Content-Type: application/json
 #XSRF-TOKEN: {{cs_xsrf_token}}
 {
   "member_id": {
-    "member_class": "COM",
-    "member_code": "1234"
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss0_member_code}}"
   },
   "member_name": "Test member"
 }
@@ -114,15 +123,15 @@ X-XSRF-TOKEN: {{cs_xsrf_token}}
 Content-Type: application/json
 {
   "member_id": {
-    "member_class": "COM",
-    "member_code": "4321"
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss1_member_code}}"
   },
   "member_name": "Test client"
 }
 
 HTTP 201
 
-# Add management subsystem for member 1234 to Central Server
+# Add management subsystem for the SS0 member to Central Server
 POST https://{{cs_host}}:4000/api/v1/subsystems
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 Content-Type: application/json
@@ -131,8 +140,8 @@ Content-Type: application/json
 #XSRF-TOKEN: {{cs_xsrf_token}}
 {
   "subsystem_id": {
-    "member_class": "COM",
-    "member_code": "1234",
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss0_member_code}}",
     "subsystem_code": "MANAGEMENT"
   }
 }
@@ -140,7 +149,7 @@ Content-Type: application/json
 HTTP 201
 
 
-# Set management subsystem for member 1234 as the management service for the Central Server
+# Set management subsystem for the SS0 member as the management service for the Central Server
 PATCH https://{{cs_host}}:4000/api/v1/management-services-configuration
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 Content-Type: application/json
@@ -148,7 +157,7 @@ Content-Type: application/json
 #JSESSIONID: {{cssessid}}
 #XSRF-TOKEN: {{cs_xsrf_token}}
 {
-  "service_provider_id": "DEV:COM:1234:MANAGEMENT"
+  "service_provider_id": "{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}:MANAGEMENT"
 }
 
 HTTP 200
@@ -187,7 +196,7 @@ cost_type: FREE
 certificate: file,ca/tsa.pem;
 
 
-# Register the DataSpace TLS CA in globalconf's approvedDsTlsCa — a list separate from the
+# Register the DataSpace TLS CA in globalconf's approvedConnectorTlsCA — a list separate from the
 # certification-services (member approvedCA) registration above; ds-* outbound HTTPS trust is never
 # derived from the member CA list. `ds_tls_ca_file` is environment-supplied (compose/ansible variable)
 # since the right trust anchor differs per environment: a self-signed leaf in Docker e2e, the shared
@@ -205,8 +214,8 @@ HTTP 201
 # co-located Issuer Service serves from OpenBao): generate the server-side key, fetch a
 # DN-only CSR, sign it at the test CA with this environment's SAN list (the CA attaches
 # SANs from order metadata — the CSR carries none by design), and upload the certificate.
-# The ds-* processes wait at startup on the empty vault slot until this lands; every
-# ds-* convergence gate below runs after it.
+# The ds-* processes boot without HTTPS while the vault slot is empty and open their
+# HTTPS endpoints once this lands; every ds-* convergence gate below runs after it.
 POST https://{{cs_host}}:4000/api/v1/ds-tls-certificate/key
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 
@@ -255,6 +264,26 @@ certificate: file,cs_ds_tls_cert.pem;
 
 HTTP 200
 
+# Initialize the Issuer Service now that the connector TLS certificate is in place, then wait
+# until the issuer identity is bound. Bounded by retries so a broken Issuer Service fails this
+# script instead of hanging it. 409 ("already initialized" or "already running") is accepted too, so a
+# re-run against an already-bound issuer stays idempotent.
+POST https://{{cs_host}}:4000/api/v1/issuer-service/initialize
+X-XSRF-TOKEN: {{cs_xsrf_token}}
+
+HTTP *
+[Asserts]
+status toString matches "^(202|409)$"
+
+GET https://{{cs_host}}:4000/api/v1/issuer-service
+X-XSRF-TOKEN: {{cs_xsrf_token}}
+[Options]
+retry: 30
+retry-interval: 5000
+
+HTTP 200
+[Asserts]
+jsonpath "$.bound" == true
 
 # Download global configuration anchor from Central Server
 GET https://{{cs_host}}:4000/api/v1/configuration-sources/INTERNAL/anchor/download
@@ -266,16 +295,21 @@ HTTP 200
 
 # Initialize management Security Server
 
-# Check that the Security Server UI is up and running
+# Check that the Security Server UI is up and running. The ss0 stack is
+# created by the test harness after this script is already running, so retry
+# through the window where the host does not yet resolve.
 GET https://{{ss0_host}}:4000
+[Options]
+retry: 90
+retry-interval: 10000
 HTTP 200
 
 # Bootstrap the initial admin user (no-op once one exists)
 POST https://{{ss0_host}}:4000/api/v1/initialization/admin-user
 Content-Type: application/json
 {
-  "username": "xrd",
-  "password": "secret123!"
+  "username": "{{ui_username}}",
+  "password": "{{ui_password}}"
 }
 HTTP *
 [Asserts]
@@ -284,8 +318,8 @@ status toString matches "^(201|409)$"
 # Log in to the Security Server
 POST https://{{ss0_host}}:4000/login
 [FormParams]
-username: xrd
-password: secret123!
+username: {{ui_username}}
+password: {{ui_password}}
 
 HTTP 200
 [Captures]
@@ -304,10 +338,10 @@ POST https://{{ss0_host}}:4000/api/v1/initialization
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
 Content-Type: application/json
 {
-  "owner_member_class": "COM",
-  "owner_member_code": "1234",
+  "owner_member_class": "{{member_class}}",
+  "owner_member_code": "{{ss0_member_code}}",
   "security_server_code": "SS0",
-  "software_token_pin": "Secret1234",
+  "software_token_pin": "{{token_pin}}",
   "ignore_warnings": true
 }
 
@@ -318,14 +352,14 @@ PUT https://{{ss0_host}}:4000/api/v1/tokens/0/login
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
 Content-Type: application/json
 {
-  "password": "Secret1234"
+  "password": "{{token_pin}}"
 }
 
 HTTP *
 
 # Provision SS0's DS TLS certificate through the admin API — same key/CSR/sign/upload flow
 # as the Central Server block above; the SAN list is this server's environment-supplied
-# ds-* host names. Runs as early as possible so the waiting ds-* services converge
+# ds-* host names. Runs as early as possible so the ds-* services open HTTPS
 # well before the DSP readiness gates at the end.
 POST https://{{ss0_host}}:4000/api/v1/ds-tls-certificate/key
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
@@ -397,7 +431,7 @@ Content-Type: application/json
       "C": "FI",
       "O": "Test member",
       "subjectAltName": "{{ss0_proxy}}",
-      "serialNumber": "DEV/SS0/COM"
+      "serialNumber": "{{xroad_instance}}/SS0/{{member_class}}"
     }
   }
 }
@@ -459,13 +493,13 @@ Content-Type: application/json
     "key_usage_type": "SIGNING",
     "ca_name": "{{ca_name}}",
     "csr_format": "DER",
-    "member_id": "DEV:COM:1234",
+    "member_id": "{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}",
     "subject_field_values": {
-      "CN": "1234",
+      "CN": "{{ss0_member_code}}",
       "C": "FI",
       "O": "Test member",
       "subjectAltName": "{{ss0_proxy}}",
-      "serialNumber": "DEV/SS0/COM"
+      "serialNumber": "{{xroad_instance}}/SS0/{{member_class}}"
     }
   }
 }
@@ -557,7 +591,7 @@ HTTP 200
 POST https://{{cs_host}}:4000/api/v1/management-services-configuration/register-provider
 X-XSRF-TOKEN: {{cs_xsrf_token}}
 {
-  "security_server_id": "DEV:COM:1234:SS0"
+  "security_server_id": "{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}:SS0"
 }
 
 HTTP 200
@@ -568,8 +602,8 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
 {
   "ignore_warnings": true,
   "client": {
-    "member_class": "COM",
-    "member_code": "1234",
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss0_member_code}}",
     "subsystem_code": "MANAGEMENT",
     "connection_type": "HTTP"
   }
@@ -619,7 +653,7 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
 }
 
 # Add security server owners group access to management services
-POST https://{{ss0_host}}:4000/api/v1/clients/{{ss0_management_client_id}}/service-clients/DEV:security-server-owners/access-rights
+POST https://{{ss0_host}}:4000/api/v1/clients/{{ss0_management_client_id}}/service-clients/{{xroad_instance}}:security-server-owners/access-rights
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
 {
   "items": [
@@ -652,6 +686,9 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
     },
     {
        "service_code": "maintenanceModeDisable"
+    },
+    {
+      "service_code": "memberDidReg"
     }
   ]
 }
@@ -693,16 +730,21 @@ HTTP 201
 
 # Initialize Security Server 1 (SS1)
 
-# Check that the Security Server UI is up and running
+# Check that the Security Server UI is up and running. The ss1 stack is
+# created by the test harness only after ss0 is fully up, so retry through
+# the window where the host does not yet resolve.
 GET https://{{ss1_host}}:4000
+[Options]
+retry: 90
+retry-interval: 10000
 HTTP 200
 
 # Bootstrap the initial admin user (no-op once one exists)
 POST https://{{ss1_host}}:4000/api/v1/initialization/admin-user
 Content-Type: application/json
 {
-  "username": "xrd",
-  "password": "secret123!"
+  "username": "{{ui_username}}",
+  "password": "{{ui_password}}"
 }
 HTTP *
 [Asserts]
@@ -711,8 +753,8 @@ status toString matches "^(201|409)$"
 # Log in to the Security Server
 POST https://{{ss1_host}}:4000/login
 [FormParams]
-username: xrd
-password: secret123!
+username: {{ui_username}}
+password: {{ui_password}}
 
 HTTP 200
 [Captures]
@@ -731,10 +773,10 @@ POST https://{{ss1_host}}:4000/api/v1/initialization
 X-XSRF-TOKEN: {{ss1_xsrf_token}}
 Content-Type: application/json
 {
-  "owner_member_class": "COM",
-  "owner_member_code": "4321",
+  "owner_member_class": "{{member_class}}",
+  "owner_member_code": "{{ss1_member_code}}",
   "security_server_code": "SS1",
-  "software_token_pin": "Secret1234",
+  "software_token_pin": "{{token_pin}}",
   "ignore_warnings": true
 }
 
@@ -745,7 +787,7 @@ PUT https://{{ss1_host}}:4000/api/v1/tokens/0/login
 X-XSRF-TOKEN: {{ss1_xsrf_token}}
 Content-Type: application/json
 {
-  "password": "Secret1234"
+  "password": "{{token_pin}}"
 }
 
 HTTP *
@@ -812,7 +854,7 @@ Content-Type: application/json
       "C": "FI",
       "O": "Test client",
       "subjectAltName": "{{ss1_proxy}}",
-      "serialNumber": "DEV/SS1/COM"
+      "serialNumber": "{{xroad_instance}}/SS1/{{member_class}}"
     }
   }
 }
@@ -864,23 +906,23 @@ HTTP 201
 [Captures]
 ss1_auth_key_cert_hash: jsonpath "$.certificate_details.hash"
 
-# ss1's sign key is deliberately provisioned on its SoftHSM-backed token, selected explicitly
-# by type so list order never matters and a missing HARDWARE token fails this capture loudly
-# instead of silently landing the key on the wrong token.
+# ss1's sign key is deliberately provisioned on the token of type ss1_sign_token_type (HARDWARE by default,
+# SoftHSM-backed), selected explicitly by type so list order never matters and a missing token of that type
+# fails this capture loudly instead of silently landing the key on the wrong token.
 GET https://{{ss1_host}}:4000/api/v1/tokens
 X-XSRF-TOKEN: {{ss1_xsrf_token}}
 
 HTTP 200
 
 [Captures]
-ss1_token_id: jsonpath "$[?(@.type == 'HARDWARE')].id"
+ss1_token_id: jsonpath "$[?(@.type == '{{ss1_sign_token_type}}')].id"
 
 # Log in to the Security Servers token
 PUT https://{{ss1_host}}:4000/api/v1/tokens/{{ss1_token_id}}/login
 X-XSRF-TOKEN: {{ss1_xsrf_token}}
 Content-Type: application/json
 {
-  "password": "Secret1234"
+  "password": "{{ss1_sign_token_pin}}"
 }
 
 HTTP *
@@ -895,13 +937,13 @@ Content-Type: application/json
     "key_usage_type": "SIGNING",
     "ca_name": "{{ca_name}}",
     "csr_format": "DER",
-    "member_id": "DEV:COM:4321",
+    "member_id": "{{xroad_instance}}:{{member_class}}:{{ss1_member_code}}",
     "subject_field_values": {
-      "CN": "4321",
+      "CN": "{{ss1_member_code}}",
       "C": "FI",
       "O": "Test client",
       "subjectAltName": "{{ss1_proxy}}",
-      "serialNumber": "DEV/SS1/COM"
+      "serialNumber": "{{xroad_instance}}/SS1/{{member_class}}"
     }
   }
 }
@@ -1009,8 +1051,8 @@ X-XSRF-TOKEN: {{ss1_xsrf_token}}
 {
   "ignore_warnings": true,
   "client": {
-    "member_class": "COM",
-    "member_code": "4321",
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss1_member_code}}",
     "subsystem_code": "TestClient",
     "connection_type": "HTTP"
   }
@@ -1047,8 +1089,8 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
 {
   "ignore_warnings": true,
   "client": {
-    "member_class": "COM",
-    "member_code": "1234",
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss0_member_code}}",
     "subsystem_code": "TestService",
     "connection_type": "HTTP"
   }
@@ -1085,8 +1127,8 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
 {
   "ignore_warnings": true,
   "client": {
-    "member_class": "COM",
-    "member_code": "1234",
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss0_member_code}}",
     "subsystem_code": "TestSaved",
     "connection_type": "HTTP"
   }
@@ -1123,8 +1165,8 @@ X-XSRF-TOKEN: {{ss1_xsrf_token}}
 {
   "ignore_warnings": true,
   "client": {
-    "member_class": "COM",
-    "member_code": "1234",
+    "member_class": "{{member_class}}",
+    "member_code": "{{ss0_member_code}}",
     "subsystem_code": "test-consumer",
     "connection_type": "HTTP"
   }
@@ -1145,13 +1187,13 @@ Content-Type: application/json
     "key_usage_type": "SIGNING",
     "ca_name": "{{ca_name}}",
     "csr_format": "DER",
-    "member_id": "DEV:COM:1234",
+    "member_id": "{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}",
     "subject_field_values": {
-      "CN": "1234",
+      "CN": "{{ss0_member_code}}",
       "C": "FI",
       "O": "Test Consumer",
       "subjectAltName": "{{ss1_proxy}}",
-      "serialNumber": "DEV/SS1/COM"
+      "serialNumber": "{{xroad_instance}}/SS1/{{member_class}}"
     }
   }
 }
@@ -1337,7 +1379,7 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
 # Grant TestService access to itself, for the same-SS self-call scenario: SS0 acts as both
 # consumer and provider of its own service. Tolerates 409 so this stays safe to run against
 # a substrate where the grant already exists.
-POST https://{{ss0_host}}:4000/api/v1/clients/{{ss0_test_service_id}}/service-clients/DEV:COM:1234:TestService/access-rights
+POST https://{{ss0_host}}:4000/api/v1/clients/{{ss0_test_service_id}}/service-clients/{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}:TestService/access-rights
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
 {
   "items": [
@@ -1382,7 +1424,7 @@ X-XSRF-TOKEN: {{ss0_xsrf_token}}
 {
   "items": [
     {
-      "id": "DEV:COM:4321:TestClient",
+      "id": "{{xroad_instance}}:{{member_class}}:{{ss1_member_code}}:TestClient",
       "name": "Test client",
       "service_client_type": "SUBSYSTEM"
     }
@@ -1396,13 +1438,160 @@ PUT https://{{ss0_host}}:4000/api/v1/service-descriptions/{{ss0_test_rest_openap
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
 
 # =============================================================================
-# DSP readiness gates (LAST): block until each SS's HOST participant context
-# membership credential reaches ISSUED. Placed at the end so all core X-Road
-# setup (both SSes, certs, clients, services) completes first — proxy readiness
-# does not depend on DSP convergence. The credential converges asynchronously
-# (auth cert REGISTERED via GlobalConfChecker -> reconciler submits -> issuer
-# issues); both SSes' auth certs are already registered by now, so they converge
-# in parallel across these two polls.
+# Reverse-direction fixture: gives ss1-hosted TestClient a provider role (on top of its existing
+# consumer role in the forward-direction scenarios above) and grants ss0-hosted TestSaved access to
+# it, so the suite can also assert an ss0-initiated cross-server exchange (every scenario above
+# only ever initiates at ss1 against an ss0-hosted service). Both subsystems are already registered
+# members of the SS that hosts them, so this only adds service-descriptions and access grants —
+# no new client registration, CS approval, or CSR/signing-key ceremony, and no new management-
+# request traffic that would shift the messagelog counts asserted later in the suite.
+# =============================================================================
+
+# Register SOAP service description for TestClient's new provider role
+POST https://{{ss1_host}}:4000/api/v1/clients/{{ss1_test_client_id}}/service-descriptions
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+{
+  "url": "{{example_service_wsdl}}",
+  "type": "WSDL",
+  "ignore_warnings": true
+}
+
+HTTP 201
+
+[Captures]
+ss1_test_client_wsdl_service_id: jsonpath "$.id"
+ss1_test_client_get_random_id: jsonpath "$.services[0].id"
+
+# Set TestClient's SOAP backend URL
+PATCH https://{{ss1_host}}:4000/api/v1/services/{{ss1_test_client_get_random_id}}
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+{
+  "ignore_warnings": true,
+  "ssl_auth": false,
+  "ssl_auth_all": true,
+  "timeout": 60,
+  "timeout_all": true,
+  "url": "{{example_service_address}}",
+  "url_all": true
+}
+
+HTTP 200
+
+# Add TestSaved access to TestClient's getRandom
+POST https://{{ss1_host}}:4000/api/v1/clients/{{ss1_test_client_id}}/service-clients/{{ss0_test_saved_id}}/access-rights
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+{
+  "items": [
+    {
+      "service_code": "getRandom"
+    }
+  ]
+}
+
+HTTP 201
+
+# Enable SOAP service on TestClient
+PUT https://{{ss1_host}}:4000/api/v1/service-descriptions/{{ss1_test_client_wsdl_service_id}}/enable
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+
+HTTP 200
+
+# Register REST service description for TestClient's new provider role
+POST https://{{ss1_host}}:4000/api/v1/clients/{{ss1_test_client_id}}/service-descriptions
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+{
+  "url": "{{is_rest_url}}",
+  "type": "REST",
+  "rest_service_code": "{{is_rest_service_code}}"
+}
+
+HTTP 201
+
+[Captures]
+ss1_test_client_rest_service_id: jsonpath "$.id"
+
+# Enable REST service on TestClient
+PUT https://{{ss1_host}}:4000/api/v1/service-descriptions/{{ss1_test_client_rest_service_id}}/enable
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+
+HTTP 200
+
+# Grant TestSaved access to TestClient's REST service
+POST https://{{ss1_host}}:4000/api/v1/clients/{{ss1_test_client_id}}/service-clients/{{ss0_test_saved_id}}/access-rights
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+{
+  "items": [
+    {
+      "service_code": "{{is_rest_service_code}}"
+    }
+  ]
+}
+
+HTTP 201
+
+# =============================================================================
+# Central monitoring client: names DEV:COM:1234:TestService in the MONITORING
+# configuration part. TestService is hosted on SS0 and is neither SS0's owner
+# (member 1234) nor the regular client (1234:TestSaved) the monitoring e2e
+# scenarios use. Uploading replaces the part, so a re-run leaves exactly one.
+# The multipart body is one line with explicit CRLF: the Central Server's multipart
+# parser rejects the bare LF a multi-line hurl body would send.
+# =============================================================================
+POST https://{{cs_host}}:4000/api/v1/configuration-sources/INTERNAL/configuration-parts
+X-XSRF-TOKEN: {{cs_xsrf_token}}
+Content-Type: multipart/form-data; boundary=monitoringboundary
+`--monitoringboundary\r\nContent-Disposition: form-data; name="content_identifier"\r\n\r\nMONITORING\r\n--monitoringboundary\r\nContent-Disposition: form-data; name="file"; filename="monitoring-params.xml"\r\nContent-Type: text/xml\r\n\r\n<tns:conf xmlns:id="http://x-road.eu/xsd/identifiers" xmlns:tns="http://x-road.eu/xsd/xroad.xsd"><monitoringClient><monitoringClientId id:objectType="SUBSYSTEM"><id:xRoadInstance>DEV</id:xRoadInstance><id:memberClass>COM</id:memberClass><id:memberCode>1234</id:memberCode><id:subsystemCode>TestService</id:subsystemCode></monitoringClientId></monitoringClient></tns:conf>\r\n--monitoringboundary--\r\n`
+
+HTTP 204
+
+# Wait for the Central Server to publish the MONITORING part, then for each
+# Security Server to complete a global configuration update after that moment.
+GET http://{{cs_host}}/internalconf
+[Options]
+retry: 60
+retry-interval: 5000
+
+HTTP 200
+[Captures]
+monitoring_published_at: header "Date" toDate "%a, %d %b %Y %H:%M:%S GMT"
+[Asserts]
+body contains "Content-identifier: MONITORING"
+
+GET https://{{ss0_host}}:4000/api/v1/diagnostics/globalconf
+X-XSRF-TOKEN: {{ss0_xsrf_token}}
+[Options]
+retry: 60
+retry-interval: 5000
+
+HTTP 200
+[Asserts]
+jsonpath "$.status_class" == "OK"
+jsonpath "$.prev_update_at" toDate "%Y-%m-%dT%H:%M:%S%.fZ" > {{monitoring_published_at}}
+
+GET https://{{ss1_host}}:4000/api/v1/diagnostics/globalconf
+X-XSRF-TOKEN: {{ss1_xsrf_token}}
+[Options]
+retry: 60
+retry-interval: 5000
+
+HTTP 200
+[Asserts]
+jsonpath "$.status_class" == "OK"
+jsonpath "$.prev_update_at" toDate "%Y-%m-%dT%H:%M:%S%.fZ" > {{monitoring_published_at}}
+
+# =============================================================================
+# DSP readiness gates (LAST): block until each SS's MEMBER participant
+# context membership credentials reach ISSUED. Placed at the end so all core
+# X-Road setup (both SSes, certs, clients, services) completes first — proxy
+# readiness does not depend on DSP convergence. The credentials converge
+# asynchronously (auth cert REGISTERED via GlobalConfChecker -> reconciler
+# submits -> issuer issues); both SSes' auth certs are already registered by
+# now, so they converge in parallel across these two polls. Member contexts are
+# gated because outgoing DSP requests negotiate as the sender member's derived
+# context (ctx-id "instance:class:code"): SS0 hosts clients of the SS0 member only;
+# SS1 hosts clients of the SS1 member (owner, TestClient) and the SS0 member (test-consumer).
+# The provisioning worker batches all pending contexts per tick, so each SS's
+# asserts converge together; retry is a cap, not a wait.
 # =============================================================================
 GET https://{{ss0_host}}:4000/api/v1/dataspace/provisioning-status
 X-XSRF-TOKEN: {{ss0_xsrf_token}}
@@ -1412,7 +1601,8 @@ retry-interval: 5000
 
 HTTP 200
 [Asserts]
-jsonpath "$.participant_contexts[?(@.kind == 'HOST')].credential_status" == "ISSUED"
+jsonpath "$.participant_contexts[?(@.participant_id == '{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}')].credential_status" == "ISSUED"
+jsonpath "$.participant_contexts[?(@.kind == 'SYSTEM')].credential_status" == "ISSUED"
 
 GET https://{{ss1_host}}:4000/api/v1/dataspace/provisioning-status
 X-XSRF-TOKEN: {{ss1_xsrf_token}}
@@ -1422,4 +1612,6 @@ retry-interval: 5000
 
 HTTP 200
 [Asserts]
-jsonpath "$.participant_contexts[?(@.kind == 'HOST')].credential_status" == "ISSUED"
+jsonpath "$.participant_contexts[?(@.participant_id == '{{xroad_instance}}:{{member_class}}:{{ss1_member_code}}')].credential_status" == "ISSUED"
+jsonpath "$.participant_contexts[?(@.participant_id == '{{xroad_instance}}:{{member_class}}:{{ss0_member_code}}')].credential_status" == "ISSUED"
+jsonpath "$.participant_contexts[?(@.kind == 'SYSTEM')].credential_status" == "ISSUED"

@@ -31,10 +31,12 @@ import org.niis.xroad.common.properties.config.XRoadConfig;
 
 import java.time.Duration;
 
+import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_ACQUISITION_DEADLINE;
+import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_ACQUISITION_DEADLINE_MARGIN;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_CACHE_DEFAULT_TTL;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_CACHE_ENABLED;
+import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_CACHE_MARGIN;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_CACHE_MAXIMUM_SIZE;
-import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_PARTICIPANT_CONTEXT_ID;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.DSP_PROTOCOL;
 
 /** Business configuration for DSP asset access requests ({@code xroad.proxy.dsp.*}). */
@@ -43,17 +45,19 @@ public class AssetAccessClientProperties {
 
     private final XRoadConfig xRoadConfig;
 
-    /**
-     * @return participant context ID used when calling the control plane asset access endpoint.
-     * No default — must be set explicitly per SS.
-     */
-    public String participantContextId() {
-        return xRoadConfig.value(DSP_PARTICIPANT_CONTEXT_ID);
-    }
-
     /** @return DSP protocol identifier for negotiation */
     public String protocol() {
         return xRoadConfig.value(DSP_PROTOCOL);
+    }
+
+    /** @return the time limit for one acquisition of asset access, shared by all its steps and candidates */
+    public Duration acquisitionDeadline() {
+        return xRoadConfig.value(DSP_ACQUISITION_DEADLINE);
+    }
+
+    /** @return how long past the time handed to the control plane the proxy waits for its answer */
+    public Duration acquisitionDeadlineMargin() {
+        return xRoadConfig.value(DSP_ACQUISITION_DEADLINE_MARGIN);
     }
 
     /** @return asset access response cache configuration */
@@ -80,6 +84,14 @@ public class AssetAccessClientProperties {
         /** @return maximum number of entries in the cache */
         public long maximumSize() {
             return xRoadConfig.value(DSP_CACHE_MAXIMUM_SIZE);
+        }
+
+        /**
+         * @return how long before a cached entry's real expiry it is treated as expired, so a token is
+         *         reloaded before it can run out in flight
+         */
+        public Duration margin() {
+            return xRoadConfig.value(DSP_CACHE_MARGIN);
         }
     }
 }

@@ -26,27 +26,48 @@
  */
 package org.niis.xroad.common.vault.spring;
 
+import ee.ria.xroad.common.conf.InternalSSLKey;
+
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.common.core.node.NodeIdentity;
 import org.niis.xroad.common.vault.AcmeAccountKey;
 import org.niis.xroad.common.vault.DsTlsEnrollmentMethod;
 import org.niis.xroad.common.vault.DsTlsEnrollmentStatus;
+import org.niis.xroad.common.vault.VaultClient;
+import org.springframework.vault.VaultException;
 import org.springframework.vault.core.VaultKeyValueOperations;
 import org.springframework.vault.support.VaultResponse;
 
+import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SpringVaultClientTest {
@@ -60,7 +81,7 @@ class SpringVaultClientTest {
 
     @BeforeEach
     void setUp() {
-        vaultClient = new SpringVaultClient(vaultKeyValueOperations);
+        vaultClient = new SpringVaultClient(vaultKeyValueOperations, null);
 
         lenient().doAnswer(invocation -> {
             String path = invocation.getArgument(0);
@@ -79,6 +100,20 @@ class SpringVaultClientTest {
             var response = new VaultResponse();
             response.setData(data);
             return response;
+        });
+
+        lenient().doAnswer(invocation -> {
+            secretsByPath.remove(invocation.<String>getArgument(0));
+            return null;
+        }).when(vaultKeyValueOperations).delete(any());
+
+        lenient().when(vaultKeyValueOperations.list(any())).thenAnswer(invocation -> {
+            String basePath = invocation.getArgument(0);
+            String prefix = basePath + "/";
+            return secretsByPath.keySet().stream()
+                    .filter(path -> path.startsWith(prefix))
+                    .map(path -> path.substring(prefix.length()))
+                    .toList();
         });
     }
 
@@ -158,6 +193,228 @@ class SpringVaultClientTest {
         var retrieved = vaultClient.getDsTlsEnrollmentStatus();
 
         assertThat(retrieved).isEmpty();
+    }
+
+    @Test
+    void shouldStoreAndRetrieveADsTlsEnrollmentStatusWithNoMethodRecorded() {
+        var stored = new DsTlsEnrollmentStatus(null, null, null);
+
+        vaultClient.createDsTlsEnrollmentStatus(stored);
+        var retrieved = vaultClient.getDsTlsEnrollmentStatus().orElseThrow();
+
+        assertThat(retrieved).isEqualTo(stored);
+        assertThat(retrieved.method()).isNull();
+    }
+
+    @Test
+    void shouldStoreAndRetrieveAgreementTokenSigningKeys() {
+        String keyPairOne = "{\"kty\":\"EC\",\"kid\":\"1\"}";
+        String keyPairTwo = "{\"kty\":\"EC\",\"kid\":\"2\"}";
+
+        vaultClient.createAgreementTokenSigningKey("1", keyPairOne);
+        vaultClient.createAgreementTokenSigningKey("2", keyPairTwo);
+
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).containsExactlyInAnyOrderEntriesOf(Map.of("1", keyPairOne, "2", keyPairTwo));
+    }
+
+    @Test
+    void shouldReturnEmptyMapWhenNoAgreementTokenSigningKeyHasEverBeenStored() {
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).isEmpty();
+    }
+
+    @Test
+    void shouldStoreAndRetrieveOpMonitorCaWithExactlyTheCertificateField() throws Exception {
+        var ca = selfSignedCa("CN=Op-monitor CA");
+
+        vaultClient.createOpMonitorCa(ca);
+
+        assertThat(vaultClient.getOpMonitorCa()).contains(ca);
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH)).containsOnlyKeys(VaultClient.CERTIFICATE_KEY);
+        assertThat(VaultClient.OPMONITOR_CA_PATH).isEqualTo("tls/opmonitor-ca");
+    }
+
+    @Test
+    void shouldReplaceTheStoredOpMonitorCa() throws Exception {
+        var first = selfSignedCa("CN=First CA");
+        var second = selfSignedCa("CN=Second CA");
+
+        vaultClient.createOpMonitorCa(first);
+        vaultClient.createOpMonitorCa(second);
+
+        assertThat(vaultClient.getOpMonitorCa()).contains(second);
+    }
+
+    @Test
+    void shouldReturnEmptyWhenNoOpMonitorCaIsStored() {
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldReadAMissingOpMonitorCaRecordAsAbsentWhenTheKvReadReturnsNull() {
+        when(vaultKeyValueOperations.get(VaultClient.OPMONITOR_CA_PATH)).thenReturn(null);
+
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldPropagateAnOpMonitorCaReadFailure() {
+        when(vaultKeyValueOperations.get(VaultClient.OPMONITOR_CA_PATH)).thenThrow(new VaultException("vault sealed"));
+
+        assertThatThrownBy(() -> vaultClient.getOpMonitorCa())
+                .isInstanceOf(VaultException.class);
+    }
+
+    @Test
+    void shouldReadABlankOpMonitorCaRecordAsAbsent() {
+        secretsByPath.put(VaultClient.OPMONITOR_CA_PATH, Map.of(VaultClient.CERTIFICATE_KEY, ""));
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+
+        secretsByPath.put(VaultClient.OPMONITOR_CA_PATH, Map.of(VaultClient.CERTIFICATE_KEY, " \n"));
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldSkipAnAgreementTokenSigningKeyDeletedBetweenListingAndReading() {
+        vaultClient.createAgreementTokenSigningKey("1", "jwk-one");
+        when(vaultKeyValueOperations.list(any())).thenReturn(List.of("1", "2"));
+
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).containsExactlyEntriesOf(Map.of("1", "jwk-one"));
+    }
+
+    @Test
+    void shouldPropagateAgreementTokenSigningKeyListingFailureRatherThanReturningEmpty() {
+        when(vaultKeyValueOperations.list(any())).thenThrow(new VaultException("vault sealed"));
+
+        assertThatThrownBy(() -> vaultClient.getAgreementTokenSigningKeys())
+                .isInstanceOf(VaultException.class);
+    }
+
+    @Test
+    void shouldWriteAgreementTokenSigningKeyToTheKvV1PathWithNoDataOrCasWrapping() {
+        vaultClient.createAgreementTokenSigningKey("1", "some-key-pair-jwk");
+
+        var expectedPath = VaultClient.AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH + "/1";
+        assertThat(secretsByPath).containsKey(expectedPath);
+        assertThat(expectedPath).doesNotContain("/data/").doesNotContain("cas");
+
+        var written = secretsByPath.get(expectedPath);
+        assertThat(written).isNotEmpty().containsEntry(VaultClient.PAYLOAD_KEY, "some-key-pair-jwk");
+    }
+
+    @Test
+    void shouldNotDeleteAnythingWhenStoringOrReadingAgreementTokenSigningKeys() {
+        vaultClient.createAgreementTokenSigningKey("1", "some-key-pair-jwk");
+        vaultClient.getAgreementTokenSigningKeys();
+
+        verify(vaultKeyValueOperations, never()).delete(anyString());
+    }
+
+    @Test
+    void shouldDeleteOnlyTheNamedAgreementTokenSigningKey() {
+        vaultClient.createAgreementTokenSigningKey("1", "jwk-one");
+        vaultClient.createAgreementTokenSigningKey("2", "jwk-two");
+
+        vaultClient.deleteAgreementTokenSigningKey("1");
+
+        verify(vaultKeyValueOperations).delete(VaultClient.AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH + "/1");
+        verify(vaultKeyValueOperations, never()).delete(VaultClient.AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH + "/2");
+        assertThat(vaultClient.getAgreementTokenSigningKeys()).containsExactlyEntriesOf(Map.of("2", "jwk-two"));
+    }
+
+    @Test
+    void shouldPropagateAgreementTokenSigningKeyDeleteFailure() {
+        doThrow(new VaultException("permission denied")).when(vaultKeyValueOperations).delete(any());
+
+        assertThatThrownBy(() -> vaultClient.deleteAgreementTokenSigningKey("1"))
+                .isInstanceOf(VaultException.class);
+    }
+
+    @Test
+    void shouldClearTheOpMonitorCaByWritingABlankCertificateField() throws Exception {
+        vaultClient.createOpMonitorCa(selfSignedCa("CN=Op-monitor CA"));
+        vaultClient.clearOpMonitorCa();
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH)).containsOnlyKeys(VaultClient.CERTIFICATE_KEY);
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH).get(VaultClient.CERTIFICATE_KEY)).isEqualTo("");
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldNeverDeleteTheOpMonitorCaSecretWhenClearing() throws Exception {
+        vaultClient.createOpMonitorCa(selfSignedCa("CN=Op-monitor CA"));
+        vaultClient.clearOpMonitorCa();
+        vaultClient.clearOpMonitorCa();
+        verify(vaultKeyValueOperations, never()).delete(anyString());
+    }
+
+    @Test
+    void shouldClearAnOpMonitorCaThatWasNeverStored() {
+        vaultClient.clearOpMonitorCa();
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH)).containsOnlyKeys(VaultClient.CERTIFICATE_KEY);
+    }
+
+    @Test
+    void shouldStoreAnOpMonitorCaAgainAfterItWasCleared() throws Exception {
+        var first = selfSignedCa("CN=First CA");
+        var second = selfSignedCa("CN=Second CA");
+        vaultClient.createOpMonitorCa(first);
+        vaultClient.clearOpMonitorCa();
+        vaultClient.createOpMonitorCa(second);
+        assertThat(vaultClient.getOpMonitorCa()).contains(second);
+    }
+
+    @Test
+    void shouldKeepAdminAndManagementTlsKeysOfTwoNodesOnSeparatePaths() throws Exception {
+        var nodeA = new SpringVaultClient(vaultKeyValueOperations, NodeIdentity.resolve("node_a"));
+        var nodeB = new SpringVaultClient(vaultKeyValueOperations, NodeIdentity.resolve("node_b"));
+        var keyA = tlsKey("CN=node-a");
+        var keyB = tlsKey("CN=node-b");
+        nodeA.createAdminServiceTlsCredentials(keyA);
+        nodeA.createManagementServiceTlsCredentials(keyA);
+        nodeB.createAdminServiceTlsCredentials(keyB);
+        nodeB.createManagementServiceTlsCredentials(keyB);
+        assertThat(secretsByPath).containsOnlyKeys(
+                "tls/admin-service/node_a", "tls/management-service/node_a",
+                "tls/admin-service/node_b", "tls/management-service/node_b");
+        assertThat(nodeA.getAdminServiceTlsCredentials().getKey()).isEqualTo(keyA.getKey());
+        assertThat(nodeA.getManagementServicesTlsCredentials().getKey()).isEqualTo(keyA.getKey());
+        assertThat(nodeB.getAdminServiceTlsCredentials().getKey()).isEqualTo(keyB.getKey());
+        assertThat(nodeB.getManagementServicesTlsCredentials().getKey()).isEqualTo(keyB.getKey());
+    }
+
+    @Test
+    void shouldKeepAdminAndManagementTlsKeysAtPlainPathsWithoutNodeName() throws Exception {
+        var key = tlsKey("CN=plain");
+        vaultClient.createAdminServiceTlsCredentials(key);
+        vaultClient.createManagementServiceTlsCredentials(key);
+        assertThat(secretsByPath).containsOnlyKeys("tls/admin-service", "tls/management-service");
+        assertThat(vaultClient.getAdminServiceTlsCredentials().getKey()).isEqualTo(key.getKey());
+    }
+
+    private static InternalSSLKey tlsKey(String subjectName) throws Exception {
+        var keyPair = generateRsaKeyPair();
+        var subject = new X500Name(subjectName);
+        var builder = new JcaX509v3CertificateBuilder(subject, BigInteger.ONE, Date.from(Instant.now().minus(1, ChronoUnit.DAYS)),
+                Date.from(Instant.now().plus(365, ChronoUnit.DAYS)), subject, keyPair.getPublic());
+        var signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
+        var certificate = new JcaX509CertificateConverter().getCertificate(builder.build(signer));
+        return new InternalSSLKey(keyPair.getPrivate(), new X509Certificate[] {certificate});
+    }
+
+    private static X509Certificate selfSignedCa(String subjectName) throws Exception {
+        var keyPair = generateRsaKeyPair();
+        var subject = new X500Name(subjectName);
+        var builder = new JcaX509v3CertificateBuilder(subject, BigInteger.ONE, Date.from(Instant.now().minus(1, ChronoUnit.DAYS)),
+                Date.from(Instant.now().plus(365, ChronoUnit.DAYS)), subject, keyPair.getPublic())
+                .addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+        var signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
+        return new JcaX509CertificateConverter().getCertificate(builder.build(signer));
     }
 
     private static KeyPair generateRsaKeyPair() throws Exception {

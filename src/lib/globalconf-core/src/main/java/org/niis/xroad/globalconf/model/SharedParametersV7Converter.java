@@ -28,17 +28,24 @@ package org.niis.xroad.globalconf.model;
 
 import ee.ria.xroad.common.crypto.identifier.DigestAlgorithm;
 import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.SecurityServerId;
 
 import jakarta.xml.bind.JAXBElement;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.niis.xroad.common.core.exception.ErrorCode;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.AcmeServer;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.ApprovedCATypeV4;
-import org.niis.xroad.globalconf.schema.sharedparameters.v7.ApprovedDsTlsCaType;
+import org.niis.xroad.globalconf.schema.sharedparameters.v7.ApprovedConnectorTlsCAType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.ApprovedTSAType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.CaInfoType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.ConfigurationSourceType;
+import org.niis.xroad.globalconf.schema.sharedparameters.v7.CredentialIssuerType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.GlobalGroupType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.GlobalSettingsType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.MemberClassType;
+import org.niis.xroad.globalconf.schema.sharedparameters.v7.MemberDidType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.MemberType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.OcspInfoType;
 import org.niis.xroad.globalconf.schema.sharedparameters.v7.SecurityServerType;
@@ -47,10 +54,12 @@ import org.niis.xroad.globalconf.schema.sharedparameters.v7.SubsystemType;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+@Slf4j
 public class SharedParametersV7Converter {
 
     SharedParameters convert(SharedParametersTypeV7 source) {
@@ -61,13 +70,15 @@ public class SharedParametersV7Converter {
         List<SharedParameters.ConfigurationSource> configurationSources = getConfigurationSources(source.getSource());
         List<SharedParameters.ApprovedCA> approvedCAs = getApprovedCAs(source.getApprovedCA());
         List<SharedParameters.ApprovedTSA> approvedTSAs = getApprovedTSAs(source.getApprovedTSA());
-        List<SharedParameters.ApprovedDsTlsCa> approvedDsTlsCas = getApprovedDsTlsCas(source.getApprovedDsTlsCa());
+        List<SharedParameters.ApprovedConnectorTlsCA> approvedConnectorTlsCAs =
+                getApprovedConnectorTlsCAs(source.getApprovedConnectorTlsCA());
+        List<String> credentialIssuerDids = getCredentialIssuerDids(source.getCredentialIssuer());
         List<SharedParameters.Member> members = getMembers(instanceIdentifier, source.getMember());
         List<SharedParameters.SecurityServer> securityServers = getSecurityServers(source);
         List<SharedParameters.GlobalGroup> globalGroups = getGlobalGroups(source.getGlobalGroup());
         SharedParameters.GlobalSettings globalSettings = getGlobalSettings(source.getGlobalSettings());
-        return new SharedParameters(instanceIdentifier, configurationSources, approvedCAs, approvedTSAs, approvedDsTlsCas,
-                members, securityServers, globalGroups, globalSettings);
+        return new SharedParameters(instanceIdentifier, configurationSources, approvedCAs, approvedTSAs,
+                approvedConnectorTlsCAs, credentialIssuerDids, members, securityServers, globalGroups, globalSettings);
     }
 
     private List<SharedParameters.ConfigurationSource> getConfigurationSources(List<ConfigurationSourceType> sources) {
@@ -95,12 +106,21 @@ public class SharedParametersV7Converter {
         return approvedTSAs;
     }
 
-    private List<SharedParameters.ApprovedDsTlsCa> getApprovedDsTlsCas(List<ApprovedDsTlsCaType> approvedDsTlsCaTypes) {
-        List<SharedParameters.ApprovedDsTlsCa> approvedDsTlsCas = new ArrayList<>();
-        if (approvedDsTlsCaTypes != null) {
-            approvedDsTlsCas.addAll(approvedDsTlsCaTypes.stream().map(this::toApprovedDsTlsCa).toList());
+    private List<SharedParameters.ApprovedConnectorTlsCA> getApprovedConnectorTlsCAs(
+            List<ApprovedConnectorTlsCAType> approvedConnectorTlsCATypes) {
+        List<SharedParameters.ApprovedConnectorTlsCA> approvedConnectorTlsCAs = new ArrayList<>();
+        if (approvedConnectorTlsCATypes != null) {
+            approvedConnectorTlsCAs.addAll(
+                    approvedConnectorTlsCATypes.stream().map(this::toApprovedConnectorTlsCA).toList());
         }
-        return approvedDsTlsCas;
+        return approvedConnectorTlsCAs;
+    }
+
+    private List<String> getCredentialIssuerDids(List<CredentialIssuerType> credentialIssuers) {
+        if (credentialIssuers == null) {
+            return List.of();
+        }
+        return credentialIssuers.stream().map(CredentialIssuerType::getDid).toList();
     }
 
     private List<SharedParameters.Member> getMembers(String instanceIdentifier, List<MemberType> memberTypes) {
@@ -174,8 +194,8 @@ public class SharedParametersV7Converter {
         return target;
     }
 
-    private SharedParameters.ApprovedDsTlsCa toApprovedDsTlsCa(ApprovedDsTlsCaType source) {
-        var target = new SharedParameters.ApprovedDsTlsCa();
+    private SharedParameters.ApprovedConnectorTlsCA toApprovedConnectorTlsCA(ApprovedConnectorTlsCAType source) {
+        var target = new SharedParameters.ApprovedConnectorTlsCA();
         target.setName(source.getName());
         if (source.getTopCA() != null) {
             target.setTopCA(toCaInfo(source.getTopCA()));
@@ -195,7 +215,7 @@ public class SharedParametersV7Converter {
         acmeServer.setIpAddress(source.getIpAddress());
         acmeServer.setAuthenticationCertificateProfileId(source.getAuthenticationCertificateProfileId());
         acmeServer.setSigningCertificateProfileId(source.getSigningCertificateProfileId());
-        acmeServer.setDsTlsCertificateProfileId(source.getDsTlsCertificateProfileId());
+        acmeServer.setConnectorTlsCertificateProfileId(source.getConnectorTlsCertificateProfileId());
         return acmeServer;
     }
 
@@ -235,7 +255,78 @@ public class SharedParametersV7Converter {
             target.setSubsystems(source.getSubsystem().stream().map(subsystem ->
                     toSubsystem(instanceIdentifier, source, subsystem)).toList());
         }
+        target.setDids(toMemberDids(instanceIdentifier, target.getId(), source.getDid()));
         return target;
+    }
+
+    private Map<SecurityServerId, String> toMemberDids(String instanceIdentifier, ClientId memberId,
+                                                       List<MemberDidType> sources) {
+        Map<SecurityServerId, List<String>> didsByServer = new LinkedHashMap<>();
+        for (var source : sources) {
+            var serverId = toReferencedServerId(instanceIdentifier, source);
+            var did = StringUtils.trimToNull(source.getValue());
+            if (did != null) {
+                didsByServer.computeIfAbsent(serverId, id -> new ArrayList<>()).add(did);
+            } else if (source.getValue() != null) {
+                log.warn("Member {} has a blank did entry for security server {}, treating it as not published",
+                        memberId, serverId);
+            }
+        }
+        Map<SecurityServerId, String> dids = new LinkedHashMap<>();
+        didsByServer.forEach((serverId, serverDids) -> {
+            if (serverDids.size() > 1) {
+                log.warn("Member {} has {} did entries for security server {}, treating them as not published",
+                        memberId, serverDids.size(), serverId);
+            } else {
+                dids.put(serverId, serverDids.getFirst());
+            }
+        });
+        return dids;
+    }
+
+    private SecurityServerId toReferencedServerId(String instanceIdentifier, MemberDidType source) {
+        var referenced = requireResolved("did", source.getSecurityServer());
+        if (!(referenced instanceof SecurityServerType server)) {
+            throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_MEMBER_DID_REFERENCES_NON_SERVER)
+                    .details("Element did references %s, which is not a security server".formatted(idOf(referenced)))
+                    .metadataItems("did", idOf(referenced))
+                    .build();
+        }
+        return toServerId(instanceIdentifier, server);
+    }
+
+    private SecurityServerId toServerId(String instanceIdentifier, SecurityServerType source) {
+        return SecurityServerId.Conf.create(toOwnerId(instanceIdentifier, source), source.getServerCode());
+    }
+
+    private ClientId toOwnerId(String instanceIdentifier, SecurityServerType source) {
+        var referenced = requireResolved("owner", source.getOwner());
+        if (!(referenced instanceof MemberType owner)) {
+            throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_OWNER_REFERENCES_NON_MEMBER)
+                    .details("Element owner references %s, which is not a member".formatted(idOf(referenced)))
+                    .metadataItems("owner", idOf(referenced))
+                    .build();
+        }
+        return toClientId(instanceIdentifier, owner);
+    }
+
+    private static Object requireResolved(String element, Object referenced) {
+        if (referenced == null) {
+            throw XrdRuntimeException.systemException(ErrorCode.MALFORMED_GLOBALCONF)
+                    .details("Element %s references an unknown id".formatted(element))
+                    .metadataItems(element)
+                    .build();
+        }
+        return referenced;
+    }
+
+    private static String idOf(Object referenced) {
+        return switch (referenced) {
+            case MemberType member -> member.getId();
+            case SubsystemType subsystem -> subsystem.getId();
+            case SecurityServerType server -> server.getId();
+            default -> String.valueOf(referenced);
+        };
     }
 
     private SharedParameters.MemberClass toMemberClass(MemberClassType source) {
@@ -254,18 +345,23 @@ public class SharedParametersV7Converter {
     private SharedParameters.SecurityServer toSecurityServer(
             Map<String, ClientId> clientIds, SecurityServerType source, String instanceIdentifier) {
         var target = new SharedParameters.SecurityServer();
-        target.setOwner(toClientId(instanceIdentifier, (MemberType) source.getOwner()));
+        target.setOwner(toOwnerId(instanceIdentifier, source));
         target.setServerCode(source.getServerCode());
         target.setAddress(source.getAddress());
+        target.setSystemValues(toSystemValues(SecurityServerId.Conf.create(target.getOwner(), target.getServerCode()),
+                source.getSystemDid(), source.getDspBaseUrl()));
         target.setAuthCertHashes(source.getAuthCertHash().stream().map(hash -> new CertHash(DigestAlgorithm.SHA256, hash)).toList());
 
         if (source.getClient() != null) {
             List<ClientId> clients = new ArrayList<>();
             for (JAXBElement<?> client : source.getClient()) {
-                if (client.getValue() instanceof MemberType) {
-                    clients.add(toClientId(instanceIdentifier, (MemberType) client.getValue()));
-                } else if (client.getValue() instanceof SubsystemType) {
-                    clients.add(clientIds.get(((SubsystemType) client.getValue()).getId()));
+                switch (requireResolved("client", client.getValue())) {
+                    case MemberType member -> clients.add(toClientId(instanceIdentifier, member));
+                    case SubsystemType subsystem -> clients.add(clientIds.get(subsystem.getId()));
+                    default -> throw XrdRuntimeException.systemException(ErrorCode.GLOBAL_CONF_CLIENT_REFERENCES_SERVER)
+                            .details("Element client references security server %s".formatted(idOf(client.getValue())))
+                            .metadataItems("client", idOf(client.getValue()))
+                            .build();
                 }
             }
             target.setClients(clients);
@@ -275,6 +371,19 @@ public class SharedParametersV7Converter {
                 .or(() -> Optional.of(SharedParameters.MaintenanceMode.disabled()))
                 .ifPresent(target::setMaintenanceMode);
         return target;
+    }
+
+    private ServerSystemValues toSystemValues(SecurityServerId serverId, String systemDid, String dspBaseUrl) {
+        var did = StringUtils.trimToNull(systemDid);
+        var url = StringUtils.trimToNull(dspBaseUrl);
+        if (did == null || url == null) {
+            if (systemDid != null || dspBaseUrl != null) {
+                log.warn("Security server {} has an incomplete systemDid and dspBaseUrl pair, treating both as not published",
+                        serverId);
+            }
+            return null;
+        }
+        return new ServerSystemValues(did, url);
     }
 
     private ClientId toClientId(String instanceIdentifier, MemberType source) {
@@ -301,6 +410,7 @@ public class SharedParametersV7Converter {
     private SharedParameters.GlobalSettings toGlobalSettings(GlobalSettingsType source) {
         var target = new SharedParameters.GlobalSettings();
         target.setOcspFreshnessSeconds(source.getOcspFreshnessSeconds().intValue());
+        target.setLegacyProtocolDisabled(Boolean.TRUE.equals(source.isLegacyProtocolDisabled()));
         if (source.getMemberClass() != null) {
             target.setMemberClasses(source.getMemberClass().stream().map(this::toMemberClass).toList());
         }

@@ -26,50 +26,103 @@
  */
 package org.niis.xroad.proxy.dataplane;
 
+import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.LocalGroupId;
 import ee.ria.xroad.common.identifier.SecurityServerId;
+import ee.ria.xroad.common.identifier.ServiceId;
 
-import org.eclipse.edc.connector.dataplane.spi.DataFlowStates;
 import org.eclipse.edc.signaling.domain.DataFlowPrepareMessage;
 import org.eclipse.edc.signaling.domain.DataFlowStartMessage;
+import org.eclipse.edc.signaling.domain.DspDataAddress;
+import org.eclipse.edc.spi.constants.CoreConstants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.common.agreementtoken.AgreementTokenGroup;
+import org.niis.xroad.common.agreementtoken.AgreementTokenRequestContext;
+import org.niis.xroad.common.agreementtoken.AgreementTokenScope;
+import org.niis.xroad.common.agreementtoken.AgreementTokenVerificationResult;
+import org.niis.xroad.common.agreementtoken.AgreementTokenVerifier;
+import org.niis.xroad.common.core.BuiltinServiceCodes;
+import org.niis.xroad.common.core.exception.ErrorCode;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
-import org.niis.xroad.globalconf.GlobalConfProvider;
+import org.niis.xroad.ds.identity.DspConventions;
+import org.niis.xroad.proxy.controlplane.AgreementGrant;
+import org.niis.xroad.proxy.controlplane.AgreementGrantRpcClient;
+import org.niis.xroad.proxy.controlplane.AgreementGroupGrant;
+import org.niis.xroad.proxy.controlplane.AgreementServiceGrant;
+import org.niis.xroad.proxy.core.configuration.AgreementTokenKeyMaterial;
 import org.niis.xroad.proxy.core.configuration.ProxyProperties;
 import org.niis.xroad.serverconf.ServerConfProvider;
+import org.niis.xroad.serverconf.impl.ownserver.OwnAddress;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
+import org.niis.xroad.serverconf.impl.ownserver.OwnerNotInitialised;
+import org.niis.xroad.serverconf.model.DataFlowLifecycleState;
+import org.niis.xroad.serverconf.model.Endpoint;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class XRoadDataPlaneManagerTest {
 
+    private static final SecurityServerId.Conf OWN_ID = SecurityServerId.Conf.create("DEV", "COM", "1234", "SS0");
     private static final String OWN_ADDRESS = "provider.example.org";
     private static final String SERVERPROXY_ENDPOINT = "https://provider.example.org:5500";
+    private static final String FALLBACK_ENDPOINT = "https://fallback.example.org:5500";
+
+    private static final ClientId CONSUMER = ClientId.Conf.create("DEV", "COM", "222", "TESTCLIENT");
+    private static final ServiceId SERVICE = ServiceId.Conf.create("DEV", "COM", "333", "PROVIDER", "getData", "v1");
+    private static final TestAgreementTokenProtocolProperties TOKEN_PROPERTIES =
+            new TestAgreementTokenProtocolProperties("x-road-provider-data-plane", "x-road-server-proxy", Duration.ofSeconds(60));
 
     @Mock
     private DataPlaneServerProperties properties;
     @Mock
-    private GlobalConfProvider globalConfProvider;
+    private OwnSecurityServerResolver ownSecurityServerResolver;
     @Mock
     private ServerConfProvider serverConfProvider;
     @Mock
     private ProxyProperties proxyProperties;
+    @Mock
+    private AgreementGrantRpcClient grantRpcClient;
 
+    private AgreementTokenKeyMaterial keyMaterial;
+    private TestAgreementTokenKeyProvider keyProvider;
+    private DataFlowStateStore flowStateStore;
+    private AgreementTokenIssuer agreementTokenIssuer;
     private XRoadDataPlaneManager manager;
 
     @BeforeEach
     void setUp() {
-        var ownId = SecurityServerId.Conf.create("DEV", "COM", "1234", "SS0");
-        lenient().when(serverConfProvider.getIdentifier()).thenReturn(ownId);
-        lenient().when(globalConfProvider.getSecurityServerAddress(ownId)).thenReturn(OWN_ADDRESS);
+        lenient().when(serverConfProvider.getIdentifier()).thenReturn(OWN_ID);
+        lenient().when(ownSecurityServerResolver.address()).thenReturn(new OwnAddress.Registered(OWN_ID, OWN_ADDRESS));
         lenient().when(proxyProperties.sslEnabled()).thenReturn(true);
         lenient().when(proxyProperties.serverProxyPort()).thenReturn(5500);
-        manager = new XRoadDataPlaneManager(properties, globalConfProvider, serverConfProvider, proxyProperties);
+
+        keyProvider = new TestAgreementTokenKeyProvider();
+        keyProvider.addKey("1");
+        keyMaterial = mock(AgreementTokenKeyMaterial.class);
+        lenient().when(keyMaterial.provider()).thenReturn(Optional.of(keyProvider));
+
+        agreementTokenIssuer = new AgreementTokenIssuer(grantRpcClient, serverConfProvider, keyMaterial, TOKEN_PROPERTIES);
+        flowStateStore = new InMemoryDataFlowStateStore();
+        manager = new XRoadDataPlaneManager(properties, ownSecurityServerResolver, proxyProperties, flowStateStore,
+                agreementTokenIssuer);
     }
 
     @Test
@@ -97,28 +150,44 @@ class XRoadDataPlaneManagerTest {
 
         var result = manager.start(message);
 
-        assertThat(result.getState()).isEqualTo(DataFlowStates.STARTED.toString());
+        assertThat(result.getState()).isEqualTo(DataFlowLifecycleState.STARTED.toString());
     }
 
     @Test
-    void prepareAdvertisesServerproxyEndpoint() {
-        var message = DataFlowPrepareMessage.Builder.newInstance()
-                .processId("flow-4")
-                .transferType("Xrd-PULL")
-                .build();
+    void prepareReturnsProvisionedStateWithoutDataAddressAndIssuesNoToken() {
+        var result = manager.prepare(buildPrepareMessage("flow-4"));
 
-        var result = manager.prepare(message);
+        assertThat(result.getDataAddress()).isNull();
+        assertThat(result.getState()).isEqualTo(DataFlowLifecycleState.PROVISIONED.toString());
+        assertThat(manager.state("flow-4")).isEqualTo(DataFlowLifecycleState.PROVISIONED);
+        verifyNoInteractions(grantRpcClient);
+    }
 
-        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(SERVERPROXY_ENDPOINT);
-        assertThat(result.getDataAddress().getEndpointType()).isEqualTo("https");
-        assertThat(result.getState()).isEqualTo(DataFlowStates.PROVISIONED.toString());
+    @ParameterizedTest
+    @MethodSource("unavailableOwnAddresses")
+    void startAdvertisesFallbackEndpointWhenOwnAddressIsNotAvailable(OwnAddress ownAddress) {
+        when(ownSecurityServerResolver.address()).thenReturn(ownAddress);
+        when(properties.serverproxyEndpoint()).thenReturn(FALLBACK_ENDPOINT);
+        var result = manager.start(buildStartMessage("flow-fallback-start"));
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(FALLBACK_ENDPOINT);
+        assertThat(result.getState()).isEqualTo(DataFlowLifecycleState.STARTED.toString());
+    }
+
+    @Test
+    void startAdvertisesFallbackEndpointWhenOwnAddressLookupFailsOnDatabase() {
+        when(ownSecurityServerResolver.address())
+                .thenThrow(XrdRuntimeException.systemException(ErrorCode.DATABASE_ERROR, "database down"));
+        when(properties.serverproxyEndpoint()).thenReturn(FALLBACK_ENDPOINT);
+        var result = manager.start(buildStartMessage("flow-fallback-db"));
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(FALLBACK_ENDPOINT);
+        assertThat(result.getState()).isEqualTo(DataFlowLifecycleState.STARTED.toString());
     }
 
     @Test
     void startRejectsNonXrdPullTransferType() {
         var message = DataFlowStartMessage.Builder.newInstance()
-                .processId("flow-5")
-                .transferType("Http-PUSH")
+                .dataFlowId("flow-5")
+                .profile("Http-PUSH")
                 .agreementId("agreement-1")
                 .datasetId("dataset-1")
                 .build();
@@ -131,15 +200,15 @@ class XRoadDataPlaneManagerTest {
     @Test
     void startedTransitionsFlowToStartedAndReturnsStateOnlyStatus() {
         manager.prepare(DataFlowPrepareMessage.Builder.newInstance()
-                .processId("flow-9")
-                .transferType("Xrd-PULL")
+                .dataFlowId("flow-9")
+                .profile("Xrd-PULL")
                 .build());
 
         var result = manager.started("flow-9");
 
-        assertThat(result.getState()).isEqualTo(DataFlowStates.STARTED.toString());
+        assertThat(result.getState()).isEqualTo(DataFlowLifecycleState.STARTED.toString());
         assertThat(result.getDataAddress()).isNull();
-        assertThat(manager.state("flow-9")).isEqualTo(DataFlowStates.STARTED);
+        assertThat(manager.state("flow-9")).isEqualTo(DataFlowLifecycleState.STARTED);
     }
 
     @Test
@@ -148,7 +217,7 @@ class XRoadDataPlaneManagerTest {
 
         manager.completed("flow-10");
 
-        assertThat(manager.state("flow-10")).isEqualTo(DataFlowStates.COMPLETED);
+        assertThat(manager.state("flow-10")).isEqualTo(DataFlowLifecycleState.COMPLETED);
     }
 
     @Test
@@ -157,7 +226,7 @@ class XRoadDataPlaneManagerTest {
 
         manager.terminate("flow-6");
 
-        assertThat(manager.state("flow-6")).isEqualTo(DataFlowStates.TERMINATED);
+        assertThat(manager.state("flow-6")).isEqualTo(DataFlowLifecycleState.TERMINATED);
     }
 
     @Test
@@ -166,20 +235,329 @@ class XRoadDataPlaneManagerTest {
 
         manager.suspend("flow-7", "maintenance");
 
-        assertThat(manager.state("flow-7")).isEqualTo(DataFlowStates.SUSPENDED);
+        assertThat(manager.state("flow-7")).isEqualTo(DataFlowLifecycleState.SUSPENDED);
+    }
+
+    @Test
+    void startOnASuspendedFlowResumesIt() {
+        manager.start(buildStartMessage("flow-resume"));
+        manager.suspend("flow-resume", "maintenance");
+
+        var result = manager.start(buildStartMessage("flow-resume"));
+
+        assertThat(result.getState()).isEqualTo(DataFlowLifecycleState.STARTED.toString());
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(SERVERPROXY_ENDPOINT);
+        assertThat(manager.state("flow-resume")).isEqualTo(DataFlowLifecycleState.STARTED);
+    }
+
+    @Test
+    void suspendOnANonStartedFlowIsRejected() {
+        manager.prepare(buildPrepareMessage("flow-illegal-suspend"));
+
+        assertThatThrownBy(() -> manager.suspend("flow-illegal-suspend", null))
+                .isInstanceOf(XrdRuntimeException.class);
+    }
+
+    @Test
+    void suspendOnUnknownFlowIsRejected() {
+        assertThatThrownBy(() -> manager.suspend("never-seen-flow", null))
+                .isInstanceOf(XrdRuntimeException.class);
+    }
+
+    @Test
+    void startOnTerminalFlowIsRejected() {
+        manager.start(buildStartMessage("flow-illegal-start"));
+        manager.completed("flow-illegal-start");
+
+        assertThatThrownBy(() -> manager.start(buildStartMessage("flow-illegal-start")))
+                .isInstanceOf(XrdRuntimeException.class);
     }
 
     @Test
     void stateReturnsFailedForUnknownFlow() {
-        assertThat(manager.state("unknown")).isEqualTo(DataFlowStates.FAILED);
+        assertThat(manager.state("unknown")).isEqualTo(DataFlowLifecycleState.FAILED);
+    }
+
+
+
+
+
+    @Test
+    void repeatedStartIsAnsweredLikeTheOriginal() {
+        var first = manager.start(buildStartMessage("flow-retry-start"));
+
+        var retry = manager.start(buildStartMessage("flow-retry-start"));
+
+        assertThat(retry.getState()).isEqualTo(first.getState());
+        assertThat(retry.getDataAddress().getEndpoint()).isEqualTo(first.getDataAddress().getEndpoint());
+        assertThat(manager.state("flow-retry-start")).isEqualTo(DataFlowLifecycleState.STARTED);
+    }
+
+    @Test
+    void repeatedPrepareIsAnsweredLikeTheOriginal() {
+        var first = manager.prepare(buildPrepareMessage("flow-retry-prepare"));
+
+        var retry = manager.prepare(buildPrepareMessage("flow-retry-prepare"));
+
+        assertThat(retry.getState()).isEqualTo(first.getState());
+        assertThat(retry.getDataAddress()).isNull();
+        assertThat(manager.state("flow-retry-prepare")).isEqualTo(DataFlowLifecycleState.PROVISIONED);
+    }
+
+    @Test
+    void repeatedCompletedAndTerminateAreAccepted() {
+        manager.start(buildStartMessage("flow-retry-complete"));
+        manager.completed("flow-retry-complete");
+        manager.start(buildStartMessage("flow-retry-terminate"));
+        manager.terminate("flow-retry-terminate");
+
+        manager.completed("flow-retry-complete");
+        manager.terminate("flow-retry-terminate");
+
+        assertThat(manager.state("flow-retry-complete")).isEqualTo(DataFlowLifecycleState.COMPLETED);
+        assertThat(manager.state("flow-retry-terminate")).isEqualTo(DataFlowLifecycleState.TERMINATED);
+    }
+
+    @Test
+    void startRejectedByTheStoreFailsTheSignal() {
+        var racedStore = mock(DataFlowStateStore.class);
+        when(racedStore.apply("flow-raced", DataFlowTransition.START))
+                .thenThrow(DataFlowTransition.START.illegalFrom(Optional.of(DataFlowLifecycleState.TERMINATED)));
+        var racedManager = new XRoadDataPlaneManager(properties, ownSecurityServerResolver, proxyProperties,
+                racedStore, agreementTokenIssuer);
+
+        assertThatThrownBy(() -> racedManager.start(buildStartMessage("flow-raced")))
+                .isInstanceOf(XrdRuntimeException.class);
+    }
+
+
+
+
+
+    @Test
+    void startCarriesAuthorizationTokenWhenGrantAndLiveAclMatch() {
+        var scope = List.of(new AgreementTokenScope("GET", "/foo/*"));
+        when(grantRpcClient.resolveAgreementGrant("agreement-1"))
+                .thenReturn(Optional.of(new AgreementGrant(CONSUMER, SERVICE, scope)));
+        when(serverConfProvider.getAclEndpoints(CONSUMER, SERVICE))
+                .thenReturn(List.of(new Endpoint("getData", "GET", "/foo/*", false)));
+
+        var startResult = manager.start(buildStartMessage("flow-token-start"));
+
+        assertTokenPresentAndValid(startResult.getDataAddress(), scope);
+    }
+
+    @Test
+    void noTokenWhenNoGrant() {
+        when(grantRpcClient.resolveAgreementGrant("agreement-1")).thenReturn(Optional.empty());
+
+        var result = manager.start(buildStartMessage("flow-no-grant"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isEmpty();
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(SERVERPROXY_ENDPOINT);
+    }
+
+    @Test
+    void noTokenWhenGrantLookupThrows() {
+        when(grantRpcClient.resolveAgreementGrant("agreement-1")).thenThrow(new RuntimeException("boom"));
+
+        var result = manager.start(buildStartMessage("flow-grant-throws"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isEmpty();
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(SERVERPROXY_ENDPOINT);
+    }
+
+    @Test
+    void tokenCarriesOnlyTheScopeEntryStillGrantedByTheLiveAclWhenTheOtherIsMissing() {
+        var scope = List.of(new AgreementTokenScope("GET", "/foo/*"), new AgreementTokenScope("POST", "/bar"));
+        when(grantRpcClient.resolveAgreementGrant("agreement-1"))
+                .thenReturn(Optional.of(new AgreementGrant(CONSUMER, SERVICE, scope)));
+        when(serverConfProvider.getAclEndpoints(CONSUMER, SERVICE))
+                .thenReturn(List.of(new Endpoint("getData", "GET", "/foo/*", false)));
+
+        var result = manager.start(buildStartMessage("flow-partial-acl"));
+
+        assertTokenPresentAndValid(result.getDataAddress(), List.of(new AgreementTokenScope("GET", "/foo/*")));
+    }
+
+    @Test
+    void marksTheDataAddressRefusedWhenTheLiveAclGrantsNoEndpoint() {
+        var scope = List.of(new AgreementTokenScope("GET", "/foo/*"), new AgreementTokenScope("POST", "/bar"));
+        when(grantRpcClient.resolveAgreementGrant("agreement-1"))
+                .thenReturn(Optional.of(new AgreementGrant(CONSUMER, SERVICE, scope)));
+        when(serverConfProvider.getAclEndpoints(CONSUMER, SERVICE)).thenReturn(List.of());
+
+        var result = manager.start(buildStartMessage("flow-empty-acl"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isEmpty();
+        assertThat(refusedProperty(result.getDataAddress())).contains("true");
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(SERVERPROXY_ENDPOINT);
+    }
+
+    @Test
+    void doesNotMarkTheDataAddressRefusedWhenTheLiveAclGrantsAnEndpoint() {
+        var scope = List.of(new AgreementTokenScope("GET", "/foo/*"));
+        when(grantRpcClient.resolveAgreementGrant("agreement-1"))
+                .thenReturn(Optional.of(new AgreementGrant(CONSUMER, SERVICE, scope)));
+        when(serverConfProvider.getAclEndpoints(CONSUMER, SERVICE))
+                .thenReturn(List.of(new Endpoint("getData", "GET", "/foo/*", false)));
+
+        var result = manager.start(buildStartMessage("flow-granted-acl"));
+
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+    }
+
+    @Test
+    void doesNotMarkTheDataAddressRefusedForAGroupGrant() {
+        when(grantRpcClient.resolveAgreementGrant("agreement-1"))
+                .thenReturn(Optional.of(new AgreementGroupGrant(
+                        new AgreementTokenGroup.Local(ClientId.Conf.create("DEV", "COM", "333", "PROVIDER"),
+                                LocalGroupId.Conf.create("readers")), SERVICE)));
+
+        var result = manager.start(buildStartMessage("flow-group"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isPresent();
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+    }
+
+    @Test
+    void doesNotMarkTheDataAddressRefusedForAServiceOnlyGrant() {
+        when(grantRpcClient.resolveAgreementGrant("agreement-1")).thenReturn(Optional.of(new AgreementServiceGrant(SERVICE)));
+
+        var result = manager.start(buildStartMessage("flow-service-only"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isPresent();
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+    }
+
+    @Test
+    void doesNotMarkTheDataAddressRefusedForABuiltinService() {
+        var builtin = ServiceId.Conf.create("DEV", "COM", "333", null, BuiltinServiceCodes.LIST_METHODS);
+        when(grantRpcClient.resolveAgreementGrant("agreement-1")).thenReturn(Optional.of(new AgreementServiceGrant(builtin)));
+
+        var result = manager.start(buildStartMessage("flow-builtin"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isEmpty();
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+    }
+
+    @Test
+    void noTokenWhenKeyMaterialUnavailable() {
+        when(keyMaterial.provider()).thenReturn(Optional.empty());
+
+        var result = manager.start(buildStartMessage("flow-no-key-material"));
+
+        assertThat(authorizationProperty(result.getDataAddress())).isEmpty();
+        assertThat(refusedProperty(result.getDataAddress())).isEmpty();
+        assertThat(result.getDataAddress().getEndpoint()).isEqualTo(SERVERPROXY_ENDPOINT);
+        verifyNoInteractions(grantRpcClient);
+    }
+
+    @Test
+    void flowStartedOnOneNodeIsVisibleOnAnotherNodeSharingTheStore() {
+        var otherNodeManager = new XRoadDataPlaneManager(properties, ownSecurityServerResolver,
+                proxyProperties, flowStateStore, agreementTokenIssuer);
+
+        manager.start(buildStartMessage("flow-shared"));
+
+        assertThat(otherNodeManager.state("flow-shared")).isEqualTo(DataFlowLifecycleState.STARTED);
+    }
+
+    @Test
+    void lifecycleTransitionOnOneNodeUpdatesTheSharedRecordSeenByAnother() {
+        var nodeA = manager;
+        var nodeB = new XRoadDataPlaneManager(properties, ownSecurityServerResolver,
+                proxyProperties, flowStateStore, agreementTokenIssuer);
+
+        nodeA.start(buildStartMessage("flow-cluster"));
+        assertThat(nodeB.state("flow-cluster")).isEqualTo(DataFlowLifecycleState.STARTED);
+
+        nodeB.suspend("flow-cluster", "maintenance");
+        assertThat(nodeA.state("flow-cluster")).isEqualTo(DataFlowLifecycleState.SUSPENDED);
+
+        nodeA.terminate("flow-cluster");
+        assertThat(nodeB.state("flow-cluster")).isEqualTo(DataFlowLifecycleState.TERMINATED);
+    }
+
+    private static Stream<OwnAddress> unavailableOwnAddresses() {
+        return Stream.of(
+                new OwnAddress.NotRegistered(OWN_ID),
+                new OwnAddress.GlobalConfUnavailable(new IllegalStateException("global conf unreadable")),
+                new OwnerNotInitialised());
     }
 
     private DataFlowStartMessage buildStartMessage(String processId) {
         return DataFlowStartMessage.Builder.newInstance()
-                .processId(processId)
-                .transferType("Xrd-PULL")
+                .dataFlowId(processId)
+                .profile("Xrd-PULL")
                 .agreementId("agreement-1")
                 .datasetId("dataset-1")
                 .build();
+    }
+
+    private DataFlowPrepareMessage buildPrepareMessage(String processId) {
+        return DataFlowPrepareMessage.Builder.newInstance()
+                .dataFlowId(processId)
+                .profile("Xrd-PULL")
+                .agreementId("agreement-1")
+                .datasetId("dataset-1")
+                .build();
+    }
+
+    private void assertTokenPresentAndValid(DspDataAddress dataAddress, List<AgreementTokenScope> expectedScope) {
+        var token = authorizationProperty(dataAddress);
+        assertThat(token).isPresent();
+        assertThat(authTypeProperty(dataAddress)).contains("bearer");
+
+        var verifier = new AgreementTokenVerifier(keyProvider, TOKEN_PROPERTIES);
+        var result = verifier.verify(token.get(), AgreementTokenRequestContext.forSoap(CONSUMER, SERVICE));
+        assertThat(result).isInstanceOf(AgreementTokenVerificationResult.Valid.class);
+        var claims = ((AgreementTokenVerificationResult.Valid) result).claims();
+        assertThat(claims.agreementId()).isEqualTo("agreement-1");
+        assertThat(claims.client()).isEqualTo(CONSUMER);
+        assertThat(claims.service()).isEqualTo(SERVICE);
+        assertThat(claims.scope()).containsExactlyInAnyOrderElementsOf(expectedScope);
+    }
+
+    private static Optional<String> authorizationProperty(DspDataAddress dataAddress) {
+        return findProperty(dataAddress, CoreConstants.EDC_NAMESPACE + "authorization");
+    }
+
+    private static Optional<String> refusedProperty(DspDataAddress dataAddress) {
+        return findProperty(dataAddress, DspConventions.ACCESS_REFUSED_PROPERTY);
+    }
+
+    private static Optional<String> authTypeProperty(DspDataAddress dataAddress) {
+        return findProperty(dataAddress, CoreConstants.EDC_NAMESPACE + "authType");
+    }
+
+    private static Optional<String> findProperty(DspDataAddress dataAddress, String name) {
+        return dataAddress.getEndpointProperties().stream()
+                .filter(property -> property.getName().equals(name))
+                .map(DspDataAddress.EndpointProperty::getValue)
+                .findFirst();
+    }
+
+    /**
+     * A shared-map fake for {@link SharedDataFlowStateStore}, handed to every manager in a test so
+     * it models one record visible to every node. Single-threaded: it validates and writes in two steps.
+     */
+    private static final class InMemoryDataFlowStateStore implements DataFlowStateStore {
+
+        private final ConcurrentHashMap<String, DataFlowLifecycleState> states = new ConcurrentHashMap<>();
+
+        @Override
+        public DataFlowLifecycleState apply(String flowId, DataFlowTransition transition) {
+            var stateAfter = transition.apply(Optional.ofNullable(states.get(flowId)));
+            states.put(flowId, stateAfter);
+            return stateAfter;
+        }
+
+        @Override
+        public Optional<DataFlowLifecycleState> find(String flowId) {
+            return Optional.ofNullable(states.get(flowId));
+        }
     }
 }

@@ -27,6 +27,8 @@
 package org.niis.xroad.cs.admin.core.service.managementrequest;
 
 
+import ee.ria.xroad.common.identifier.ClientId;
+
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.niis.xroad.common.exception.NotFoundException;
@@ -38,15 +40,20 @@ import org.niis.xroad.cs.admin.core.entity.ClientDeletionRequestEntity;
 import org.niis.xroad.cs.admin.core.entity.ClientRegistrationRequestEntity;
 import org.niis.xroad.cs.admin.core.entity.SecurityServerClientEntity;
 import org.niis.xroad.cs.admin.core.entity.SecurityServerEntity;
+import org.niis.xroad.cs.admin.core.entity.XRoadMemberEntity;
 import org.niis.xroad.cs.admin.core.entity.mapper.RequestMapper;
 import org.niis.xroad.cs.admin.core.repository.ClientRegistrationRequestRepository;
 import org.niis.xroad.cs.admin.core.repository.IdentifierRepository;
+import org.niis.xroad.cs.admin.core.repository.MemberDidRepository;
 import org.niis.xroad.cs.admin.core.repository.RequestRepository;
 import org.niis.xroad.cs.admin.core.repository.SecurityServerClientRepository;
 import org.niis.xroad.cs.admin.core.repository.SecurityServerRepository;
 import org.niis.xroad.cs.admin.core.repository.ServerClientRepository;
+import org.niis.xroad.cs.admin.core.repository.XRoadMemberRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -67,6 +74,8 @@ public class ClientDeletionRequestHandler implements RequestHandler<ClientDeleti
     private final RequestRepository<ClientDeletionRequestEntity> deletionRequests;
     private final ClientRegistrationRequestRepository registrationRequests;
     private final ServerClientRepository serverClientRepository;
+    private final XRoadMemberRepository members;
+    private final MemberDidRepository memberDids;
     private final RequestMapper requestMapper;
 
     @Override
@@ -79,7 +88,8 @@ public class ClientDeletionRequestHandler implements RequestHandler<ClientDeleti
         final SecurityServerIdEntity serverId = serverIds.findOne(SecurityServerIdEntity.create(request.getSecurityServerId()));
         final ClientIdEntity clientId = clientIds.findOne(ClientIdEntityFactory.ensure(request.getClientId()));
 
-        final Optional<SecurityServerEntity> securityServerOpt = servers.findBy(serverId, clientId);
+        final Optional<SecurityServerEntity> securityServerOpt = servers.lockForUpdateBy(serverId)
+                .flatMap(lockedServerRowId -> servers.findBy(serverId, clientId));
 
         securityServerOpt
                 .ifPresentOrElse(
@@ -112,11 +122,30 @@ public class ClientDeletionRequestHandler implements RequestHandler<ClientDeleti
 
     private void deleteSecurityServerClient(final SecurityServerEntity securityServer, final ClientIdEntity clientId) {
         clients.findOneBy(clientId)
-                .ifPresentOrElse(client -> securityServer.getServerClients().stream()
-                                .filter(serverClient -> client.getId() == serverClient.getSecurityServerClient().getId())
-                                .forEach(serverClientRepository::delete),
+                .ifPresentOrElse(client -> {
+                            securityServer.getServerClients().stream()
+                                    .filter(serverClient -> Objects.equals(client.getId(), serverClient.getSecurityServerClient().getId()))
+                                    .forEach(serverClientRepository::delete);
+                            removeMemberDidWhenLastClientRemoved(securityServer, clientId.getMemberId());
+                        },
                         this::mrClientRegistrationNotFound
                 );
+    }
+
+    private void removeMemberDidWhenLastClientRemoved(final SecurityServerEntity securityServer, final ClientId memberId) {
+        if (ClientId.equals(securityServer.getOwner().getIdentifier(), memberId)) {
+            return;
+        }
+        members.findMember(memberId)
+                .filter(member -> countRemainingClientRows(securityServer, member) == 0)
+                .flatMap(member -> memberDids.findBySecurityServerIdAndMemberId(securityServer.getId(), member.getId()))
+                .ifPresent(memberDids::delete);
+    }
+
+    private long countRemainingClientRows(final SecurityServerEntity securityServer, final XRoadMemberEntity member) {
+        Set<SecurityServerClientEntity> memberAndSubsystems = new HashSet<>(member.getSubsystems());
+        memberAndSubsystems.add(member);
+        return serverClientRepository.countBySecurityServerAndSecurityServerClientIn(securityServer, memberAndSubsystems);
     }
 
     private void revokeRegistration(final ClientRegistrationRequestEntity requestEntity) {

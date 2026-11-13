@@ -50,26 +50,30 @@ class SharedParametersV7MarshallerTest {
         configurationSource.setAddress("cs");
         configurationSource.setInternalVerificationCerts(List.of("internal-conf-signing-cert".getBytes(StandardCharsets.UTF_8)));
         configurationSource.setExternalVerificationCerts(List.of("external-conf-signing-cert".getBytes(StandardCharsets.UTF_8)));
-        sharedParamsBuilder.globalSettings(new SharedParameters.GlobalSettings(null, 60));
+        sharedParamsBuilder.globalSettings(new SharedParameters.GlobalSettings(null, 60, false));
         sharedParamsBuilder.sources(List.of(configurationSource));
 
-        var approvedDsTlsCa = new SharedParameters.ApprovedDsTlsCa();
-        approvedDsTlsCa.setName("Test DS TLS CA");
-        approvedDsTlsCa.setTopCA(new SharedParameters.CaInfo("ds-tls-ca-cert".getBytes(UTF_8), List.of(
+        var approvedConnectorTlsCA = new SharedParameters.ApprovedConnectorTlsCA();
+        approvedConnectorTlsCA.setName("Test connector TLS CA");
+        approvedConnectorTlsCA.setTopCA(new SharedParameters.CaInfo("ds-tls-ca-cert".getBytes(UTF_8), List.of(
                 new SharedParameters.OcspInfo("ds-tls-ocsp:url", "ds-tls-ocsp-cert".getBytes(UTF_8), CostType.FREE))));
-        approvedDsTlsCa.setIntermediateCas(List.of(
+        approvedConnectorTlsCA.setIntermediateCas(List.of(
                 new SharedParameters.CaInfo("ds-tls-intermediate-ca-cert".getBytes(UTF_8), List.of(
                         new SharedParameters.OcspInfo("ds-tls-intermediate-ocsp:url", "ds-tls-intermediate-ocsp-cert".getBytes(UTF_8),
                                 CostType.UNDEFINED)
                 ))
         ));
-        approvedDsTlsCa.setAcmeServer(new SharedParameters.AcmeServer("http://testca.com/acme", "192.99.88.7", null, null,
+        approvedConnectorTlsCA.setAcmeServer(new SharedParameters.AcmeServer("http://testca.com/acme", "192.99.88.7", null, null,
                 "ds-tls-profile"));
-        sharedParamsBuilder.approvedDsTlsCas(List.of(approvedDsTlsCa));
+        sharedParamsBuilder.approvedConnectorTlsCAs(List.of(approvedConnectorTlsCA));
+
+        sharedParamsBuilder.credentialIssuerDids(List.of("did:web:cs1.example%3A443:issuer", "did:web:cs2.example%3A443:issuer"));
 
         final String result = marshaller.marshall(sharedParamsBuilder.build());
 
         assertThat(result).isNotBlank();
+        assertThat(result).contains("approvedConnectorTlsCA", "connectorTlsCertificateProfileId", "credentialIssuer",
+                "did:web:cs1.example%3A443:issuer", "did:web:cs2.example%3A443:issuer");
         System.out.println(result);
     }
 
@@ -78,7 +82,7 @@ class SharedParametersV7MarshallerTest {
         var sharedParamsBuilder = SharedParameters.builder();
         sharedParamsBuilder.instanceIdentifier("CS");
         sharedParamsBuilder.sources(List.of(new SharedParameters.ConfigurationSource())); // missing address or cert
-        sharedParamsBuilder.globalSettings(new SharedParameters.GlobalSettings(null, 60));
+        sharedParamsBuilder.globalSettings(new SharedParameters.GlobalSettings(null, 60, false));
         SharedParameters sharedParameters = sharedParamsBuilder.build();
         assertThrows(XrdRuntimeException.class, () -> marshaller.marshall(sharedParameters));
     }

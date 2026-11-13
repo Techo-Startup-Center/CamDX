@@ -29,13 +29,16 @@ package org.niis.xroad.common.vault.spring;
 import ee.ria.xroad.common.conf.InternalSSLKey;
 import ee.ria.xroad.common.util.CryptoUtils;
 
-import lombok.RequiredArgsConstructor;
+import jakarta.annotation.Nullable;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.NotImplementedException;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
+import org.niis.xroad.common.core.node.NodeIdentity;
 import org.niis.xroad.common.vault.AcmeAccountKey;
+import org.niis.xroad.common.vault.AgreementTokenVaultDataUtils;
 import org.niis.xroad.common.vault.DsTlsEnrollmentStatus;
 import org.niis.xroad.common.vault.MessageLogVaultDataUtils;
+import org.niis.xroad.common.vault.NodeScopedSecretPaths;
 import org.niis.xroad.common.vault.VaultClient;
 import org.springframework.vault.core.VaultKeyValueOperations;
 
@@ -49,15 +52,34 @@ import java.security.cert.X509Certificate;
 import java.security.spec.InvalidKeySpecException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import static org.niis.xroad.common.core.exception.ErrorCode.MISSING_SECRET;
 
 @Slf4j
-@RequiredArgsConstructor
 public class SpringVaultClient implements VaultClient {
     private final VaultKeyValueOperations vaultClient;
+    private final String adminServiceTlsPath;
+    private final String managementServiceTlsPath;
+
+    /**
+     * @param vaultClient  the key-value operations of the secret store
+     * @param nodeIdentity the identity of the node whose name scopes the admin and management service TLS keys,
+     *                     or {@code null} to keep them at the plain, node-independent paths
+     */
+    public SpringVaultClient(VaultKeyValueOperations vaultClient, @Nullable NodeIdentity nodeIdentity) {
+        this.vaultClient = vaultClient;
+        if (nodeIdentity == null) {
+            this.adminServiceTlsPath = ADMIN_SERVICE_TLS_CREDENTIALS_PATH;
+            this.managementServiceTlsPath = MANAGEMENT_SERVICE_TLS_CREDENTIALS_PATH;
+        } else {
+            var nodePaths = new NodeScopedSecretPaths(nodeIdentity);
+            this.adminServiceTlsPath = nodePaths.adminServiceTls();
+            this.managementServiceTlsPath = nodePaths.managementServiceTls();
+        }
+    }
 
     @Override
     public InternalSSLKey getInternalTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
@@ -65,18 +87,13 @@ public class SpringVaultClient implements VaultClient {
     }
 
     @Override
-    public InternalSSLKey getOpmonitorTlsCredentials() {
-        throw new NotImplementedException();
-    }
-
-    @Override
     public InternalSSLKey getAdminServiceTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
-        return getTlsCredentials(ADMIN_SERVICE_TLS_CREDENTIALS_PATH);
+        return getTlsCredentials(adminServiceTlsPath);
     }
 
     @Override
     public InternalSSLKey getManagementServicesTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
-        return getTlsCredentials(MANAGEMENT_SERVICE_TLS_CREDENTIALS_PATH);
+        return getTlsCredentials(managementServiceTlsPath);
     }
 
     @Override
@@ -85,18 +102,13 @@ public class SpringVaultClient implements VaultClient {
     }
 
     @Override
-    public void createOpmonitorTlsCredentials(InternalSSLKey internalSSLKey) {
-        throw new NotImplementedException();
-    }
-
-    @Override
     public void createAdminServiceTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException {
-        createTlsCredentials(ADMIN_SERVICE_TLS_CREDENTIALS_PATH, internalSSLKey);
+        createTlsCredentials(adminServiceTlsPath, internalSSLKey);
     }
 
     @Override
     public void createManagementServiceTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException {
-        createTlsCredentials(MANAGEMENT_SERVICE_TLS_CREDENTIALS_PATH, internalSSLKey);
+        createTlsCredentials(managementServiceTlsPath, internalSSLKey);
     }
 
     @Override
@@ -127,6 +139,21 @@ public class SpringVaultClient implements VaultClient {
     @Override
     public void createDsTlsEnrollmentStatus(DsTlsEnrollmentStatus status) {
         vaultClient.put(DS_HTTPS_ENROLLMENT_STATUS_PATH, toDsTlsEnrollmentStatusSecret(status));
+    }
+
+    @Override
+    public Optional<X509Certificate> getOpMonitorCa() {
+        return readSecret(OPMONITOR_CA_PATH).flatMap(this::toOpMonitorCa);
+    }
+
+    @Override
+    public void createOpMonitorCa(X509Certificate certificate) {
+        vaultClient.put(OPMONITOR_CA_PATH, toOpMonitorCaSecret(certificate));
+    }
+
+    @Override
+    public void clearOpMonitorCa() {
+        vaultClient.put(OPMONITOR_CA_PATH, toClearedOpMonitorCaSecret());
     }
 
     @Override
@@ -220,6 +247,38 @@ public class SpringVaultClient implements VaultClient {
         } catch (IOException | GeneralSecurityException e) {
             throw XrdRuntimeException.systemException(e);
         }
+    }
+
+    @Override
+    public void createAgreementTokenSigningKey(String keyId, String keyPairJwk) {
+        var secret = AgreementTokenVaultDataUtils.createSigningKeySecret(keyPairJwk);
+        String path = AgreementTokenVaultDataUtils.buildSigningKeyPath(keyId);
+        vaultClient.put(path, secret);
+        log.info("Stored agreement-token signing key in Vault at path: {}", path);
+    }
+
+    @Override
+    public Map<String, String> getAgreementTokenSigningKeys() {
+        return AgreementTokenVaultDataUtils.getAgreementTokenSigningKeys(
+                this::listAgreementTokenSigningKeyIds,
+                this::readSecret
+        );
+    }
+
+    @Override
+    public void deleteAgreementTokenSigningKey(String keyId) {
+        vaultClient.delete(AgreementTokenVaultDataUtils.buildSigningKeyPath(keyId));
+    }
+
+    /**
+     * Spring Vault's {@code list} already resolves a missing path to an empty list rather than throwing —
+     * matching {@link #readSecret(String)}'s contract where a missing secret comes back as {@code null}
+     * rather than an exception — so this only guards a possible {@code null} return; any exception it does
+     * raise is a genuine infrastructure failure and is left to propagate, never swallowed into "no keys yet".
+     */
+    private List<String> listAgreementTokenSigningKeyIds(String path) {
+        var keys = vaultClient.list(path);
+        return keys == null ? List.of() : keys;
     }
 
     private Optional<Map<String, Object>> readSecret(String path) {

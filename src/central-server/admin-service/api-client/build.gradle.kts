@@ -13,4 +13,8 @@ dependencies {
     api("org.springframework.cloud:spring-cloud-starter-openfeign")
     api(libs.feign.hc5)
     api(libs.commons.fileupload)
+
+    testImplementation(libs.assertj.core)
+    testImplementation(libs.springBoot.starterTest)
+    testImplementation(libs.systemStubs)
 }

@@ -25,12 +25,9 @@
  */
 package org.niis.xroad.common.rpc.client;
 
-import io.grpc.CallOptions;
-import io.grpc.Channel;
-import io.grpc.ClientCall;
+import io.grpc.ChannelCredentials;
 import io.grpc.ClientInterceptor;
 import io.grpc.ManagedChannel;
-import io.grpc.MethodDescriptor;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.channel.nio.NioEventLoopGroup;
 import io.grpc.netty.shaded.io.netty.channel.socket.nio.NioSocketChannel;
@@ -38,11 +35,11 @@ import io.grpc.netty.shaded.io.netty.util.concurrent.DefaultThreadFactory;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.niis.xroad.common.rpc.credentials.ChannelTrust;
 import org.niis.xroad.common.rpc.credentials.RpcCredentialsConfigurer;
 
 import java.util.concurrent.ForkJoinPool;
-
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import java.util.function.Supplier;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -51,8 +48,18 @@ public final class RpcChannelFactory {
     private final RpcCredentialsConfigurer rpcCredentialsConfigurer;
 
     public ManagedChannel createChannel(RpcChannelProperties channelProperties)  {
-        var credentials = rpcCredentialsConfigurer.createClientCredentials();
+        return openChannel(channelProperties, rpcCredentialsConfigurer::createClientCredentials);
+    }
 
+    /**
+     * Creates a channel whose server trust is set by {@code trust}: the shared trust anchors, or only one CA.
+     */
+    public ManagedChannel createChannel(RpcChannelProperties channelProperties, ChannelTrust trust) {
+        return openChannel(channelProperties, () -> rpcCredentialsConfigurer.createClientCredentials(trust));
+    }
+
+    private ManagedChannel openChannel(RpcChannelProperties channelProperties,
+                                       Supplier<ChannelCredentials> credentialsSupplier) {
         var host = channelProperties.host();
         var port = channelProperties.port();
 
@@ -60,27 +67,24 @@ public final class RpcChannelFactory {
             throw new IllegalArgumentException("Deadline must be greater than 0");
         }
 
+        var credentials = credentialsSupplier.get();
+
         log.info("Starting grpc client to {}:{}, deadline: [{}], credentials: [{}]", host, port,
                 channelProperties.deadlineAfter(),
                 credentials.getClass().getSimpleName());
 
-        final ClientInterceptor timeoutInterceptor = new ClientInterceptor() {
-            @Override
-            public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
-                    MethodDescriptor<ReqT, RespT> method, CallOptions callOptions, Channel next) {
-                return next.newCall(method, callOptions.withDeadlineAfter(channelProperties.deadlineAfter(), MILLISECONDS));
-            }
-        };
+        final ClientInterceptor timeoutInterceptor = new DeadlineInterceptor(channelProperties.deadlineAfter());
 
         final var workerGroupThreadFactory = new DefaultThreadFactory("rpc-client-" + port + "-nio-worker", true);
 
-        return NettyChannelBuilder.forAddress(host, port, credentials)
+        var builder = NettyChannelBuilder.forAddress(host, port, credentials)
                 .executor(ForkJoinPool.commonPool())
                 .channelType(NioSocketChannel.class)
                 .channelFactory(NioSocketChannel::new)
                 .eventLoopGroup(new NioEventLoopGroup(0, workerGroupThreadFactory))
-                .intercept(timeoutInterceptor)
-                .build();
+                .intercept(timeoutInterceptor);
+        channelProperties.maxInboundMessageSize().ifPresent(builder::maxInboundMessageSize);
+        return builder.build();
     }
 
 }

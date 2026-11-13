@@ -5,6 +5,11 @@ plugins {
   id("xroad.edc-owned-jetty-conventions")
 }
 
+configurations.named("runtimeClasspath") {
+  // jnats is unused, pulled in by EDC core-lib
+  exclude(group = "io.nats", module = "jnats")
+}
+
 dependencies {
   implementation(platform(libs.quarkus.bom))
 
@@ -39,12 +44,11 @@ dependencies {
   runtimeOnly(libs.edc.ih.version.api)
   runtimeOnly(libs.edc.ih.sts.account.service.local)
   runtimeOnly(libs.edc.ih.sts.core)
-  runtimeOnly(libs.edc.ih.sts.api)
   runtimeOnly(libs.edc.core.token)
-  runtimeOnly(libs.edc.lib.token)
+  runtimeOnly(libs.edc.lib.core)
   runtimeOnly(libs.edc.transaction.local)
   runtimeOnly(libs.edc.boot)
-  runtimeOnly(libs.edc.core.connector)
+  runtimeOnly(libs.edc.core.security)
   runtimeOnly(libs.edc.core.runtime)
   runtimeOnly(libs.edc.http)
   runtimeOnly(libs.edc.api.observability)
@@ -65,7 +69,6 @@ dependencies {
   runtimeOnly(libs.edc.sql.pool)
   runtimeOnly(libs.edc.core.sql.bootstrapper)
   runtimeOnly(libs.edc.sql.jti.validation)
-  runtimeOnly(libs.edc.sql.lease.core)
   runtimeOnly(libs.edc.sql.participantcontext.store)
   runtimeOnly(libs.edc.store.participantcontext.config.sql)
   runtimeOnly(libs.postgresql)
@@ -76,7 +79,12 @@ dependencies {
   runtimeOnly(project(":lib:rpc-quarkus"))
   implementation(project(":lib:globalconf-core"))
 
-  runtimeOnly(project(":service:ds-identity-hub:ds-identity-hub-customization"))
   runtimeOnly(project(":service:ds-issuer-service:ds-issuer-service-customization"))
   runtimeOnly(project(":service:ds-issuer-service:ds-issuer-service-provisioning-api"))
+
+  testImplementation(testFixtures(project(":lib:properties-core")))
+  testImplementation(testFixtures(project(":lib:bootstrap-edc-quarkus")))
+  testImplementation(libs.smallrye.config.yaml)
+  testImplementation(libs.assertj.core)
+  testImplementation(libs.edc.ih.common.lib)
 }

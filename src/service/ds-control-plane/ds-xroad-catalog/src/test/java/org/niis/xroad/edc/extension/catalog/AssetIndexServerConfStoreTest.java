@@ -31,13 +31,19 @@ import ee.ria.xroad.common.identifier.SecurityServerId;
 import ee.ria.xroad.common.identifier.ServiceId;
 
 import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
+import org.eclipse.edc.controlplane.DataAddress;
+import org.eclipse.edc.participantcontext.spi.service.ParticipantContextService;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
+import org.eclipse.edc.spi.result.ServiceResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.common.core.BuiltinServiceCodes;
+import org.niis.xroad.common.core.ManagementServiceCodes;
+import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.serverconf.ServerConfProvider;
 import org.niis.xroad.serverconf.model.AccessRight;
@@ -45,17 +51,20 @@ import org.niis.xroad.serverconf.model.Endpoint;
 
 import java.util.Date;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
+import static org.niis.xroad.edc.extension.catalog.ParticipantContextTestFixtures.participantContext;
 
 @ExtendWith(MockitoExtension.class)
 class AssetIndexServerConfStoreTest {
 
-    private static final String PARTICIPANT_CONTEXT_ID = "xroad-provider";
-    private static final String MGMT_PARTICIPANT_CONTEXT_ID = "xroad-provider-mgmt";
+    private static final String SYSTEM_PARTICIPANT_CONTEXT_ID = ParticipantIdentifierScheme.SYSTEM_SEGMENT;
     private static final StoreEnumerationCache<Asset> DISABLED_CACHE =
             new StoreEnumerationCache<>(false, 60, 1000, "test");
 
@@ -65,11 +74,19 @@ class AssetIndexServerConfStoreTest {
     @Mock
     private GlobalConfProvider globalConfProvider;
 
+    @Mock
+    private ParticipantContextService participantContextService;
+
+    private ServiceContextResolver serviceContextResolver;
+    private String participantContextId = MEMBER_1_CTX;
+
     private AssetIndexServerConfStore assetIndex;
 
-    // Test data: 2 members, member1 has 2 services (1 disabled), member2 has 1 service
+    // Test data: 2 members, member1 has 2 services, member2 has 1 service
     private static final ClientId.Conf MEMBER_1 = ClientId.Conf.create("DEV", "GOV", "1111", "SubsystemA");
     private static final ClientId.Conf MEMBER_2 = ClientId.Conf.create("DEV", "COM", "2222", "SubsystemB");
+    private static final String MEMBER_1_CTX = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "GOV", "1111"));
+    private static final String MEMBER_2_CTX = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "COM", "2222"));
     // MANAGEMENT subsystem client — matches globalConfProvider.getManagementRequestService()
     private static final ClientId.Conf MGMT_CLIENT = ClientId.Conf.create("DEV", "COM", "3333", "MANAGEMENT");
 
@@ -86,9 +103,12 @@ class AssetIndexServerConfStoreTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(participantContextService.search(any())).thenReturn(ServiceResult.success(List.of()));
+        lenient().when(participantContextService.getParticipantContext(any())).thenReturn(ServiceResult.notFound("no such context"));
+        serviceContextResolver = new ServiceContextResolver(
+                globalConfProvider, serverConfProvider, participantContextService);
         assetIndex = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                noBuiltins(), DISABLED_CACHE);
+                serverConfProvider, noBuiltins(), DISABLED_CACHE, serviceContextResolver);
     }
 
     private BuiltinServiceCatalog allBuiltins() {
@@ -103,19 +123,68 @@ class AssetIndexServerConfStoreTest {
     }
 
     @Test
-    void queryAssetsReturnsEnabledServicesAcrossMultipleMembers() {
+    void queryAssetsReturnsServicesAcrossMultipleMembers() {
         setupMembersAndServices();
 
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
-        assertThat(result).hasSize(5);
+        assertThat(result).hasSize(3);
         assertThat(result).extracting(Asset::getId)
                 .contains(SERVICE_1.asEncodedId(), SERVICE_2.asEncodedId(), SERVICE_3.asEncodedId());
     }
 
     @Test
-    void queryAssetsExcludesDisabledService() {
+    void queryAssetsFilteredByIdFindsAssetBeyondDefaultLimit() {
+        var services = IntStream.range(0, 60)
+                .mapToObj(i -> ServiceId.Conf.create("DEV", "GOV", "1111", "SubsystemA", "service" + i))
+                .toList();
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MEMBER_1));
+        when(serverConfProvider.getAllServices(MEMBER_1)).thenReturn(services);
+        when(globalConfProvider.getManagementRequestService()).thenReturn(null);
+        when(participantContextService.search(any())).thenReturn(ServiceResult.success(List.of(participantContext(MEMBER_1_CTX))));
+        var target = services.getLast().asEncodedId();
+        var defaultLimit = QuerySpec.none().getLimit();
+
+        assertThat(assetIndex.queryAssets(QuerySpec.none()).map(Asset::getId)).hasSize(defaultLimit).doesNotContain(target);
+
+        var filtered = QuerySpec.Builder.newInstance().filter(Criterion.criterion("id", "=", target)).build();
+        var result = assetIndex.queryAssets(filtered).toList();
+
+        assertThat(result).extracting(Asset::getId).containsExactly(target);
+    }
+
+    @Test
+    void queryAssetsPublishesServiceUnderMemberContextOnlyOnceProvisioned() {
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MEMBER_1));
+        when(serverConfProvider.getAllServices(MEMBER_1)).thenReturn(List.of(SERVICE_1));
+        when(globalConfProvider.getManagementRequestService()).thenReturn(null);
+        var memberCtx = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "GOV", "1111"));
+        when(participantContextService.search(any())).thenReturn(ServiceResult.success(List.of(participantContext(memberCtx))));
+
+        var result = assetIndex.queryAssets(QuerySpec.max()).toList();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getId()).isEqualTo(SERVICE_1.asEncodedId());
+        assertThat(result.getFirst().getParticipantContextId()).isEqualTo(memberCtx);
+    }
+
+    @Test
+    void findByIdResolvesServiceUnderMemberContextOnlyOnceProvisioned() {
+        when(serverConfProvider.serviceExists(SERVICE_1)).thenReturn(true);
+        var memberCtx = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "GOV", "1111"));
+        when(participantContextService.getParticipantContext(memberCtx))
+                .thenReturn(ServiceResult.success(participantContext(memberCtx)));
+
+        var result = assetIndex.findById(participantContextId, SERVICE_1.asEncodedId());
+
+        assertThat(result).isNotNull();
+        assertThat(result.getParticipantContextId()).isEqualTo(memberCtx);
+    }
+
+    @Test
+    void queryAssetsPublishesDisabledServiceUnderMemberContext() {
         setupMembersAndServices();
+        lenient().when(serverConfProvider.getDisabledNotice(SERVICE_2)).thenReturn("Maintenance");
 
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
@@ -123,11 +192,7 @@ class AssetIndexServerConfStoreTest {
                 .filter(a -> a.getId().equals(SERVICE_2.asEncodedId()))
                 .toList();
         assertThat(disabledAssets).hasSize(1);
-        assertThat(disabledAssets.getFirst().getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
-        assertThat(result).noneSatisfy(asset -> {
-            assertThat(asset.getId()).isEqualTo(SERVICE_2.asEncodedId());
-            assertThat(asset.getParticipantContextId()).isEqualTo(PARTICIPANT_CONTEXT_ID);
-        });
+        assertThat(disabledAssets.getFirst().getParticipantContextId()).isEqualTo(MEMBER_1_CTX);
     }
 
     @Test
@@ -138,12 +203,12 @@ class AssetIndexServerConfStoreTest {
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
         var asset = result.stream()
                 .filter(a -> a.getId().equals(SERVICE_1.asEncodedId())
-                        && PARTICIPANT_CONTEXT_ID.equals(a.getParticipantContextId()))
+                        && MEMBER_1_CTX.equals(a.getParticipantContextId()))
                 .findFirst()
                 .orElseThrow();
 
         assertThat(asset.getId()).isEqualTo(SERVICE_1.asEncodedId());
-        assertThat(asset.getParticipantContextId()).isEqualTo("xroad-provider");
+        assertThat(asset.getParticipantContextId()).isEqualTo(MEMBER_1_CTX);
         assertThat(asset.getProperty(EDC_NAMESPACE + "name")).isEqualTo("getRecords");
         assertThat(asset.getProperty("http://purl.org/dc/terms/title")).isEqualTo("getRecords:v1");
         assertThat((String) asset.getProperty("http://purl.org/dc/terms/description"))
@@ -158,21 +223,18 @@ class AssetIndexServerConfStoreTest {
 
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
+        assertThat(result).isNotEmpty();
         assertThat(result).allSatisfy(asset ->
-                assertThat(asset.getParticipantContextId())
-                        .isIn(PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID));
+                assertThat(asset.getParticipantContextId()).isIn(MEMBER_1_CTX, MEMBER_2_CTX));
     }
 
     @Test
-    void findByIdRoundtripsKnownServiceId() {
+    void findByIdReturnsNullForKnownServiceWithNoProvisionedContext() {
         when(serverConfProvider.serviceExists(SERVICE_1)).thenReturn(true);
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn(null);
 
-        var result = assetIndex.findById(SERVICE_1.asEncodedId());
+        var result = assetIndex.findById(participantContextId, SERVICE_1.asEncodedId());
 
-        assertThat(result).isNotNull();
-        assertThat(result.getId()).isEqualTo(SERVICE_1.asEncodedId());
-        assertThat(result.getParticipantContextId()).isEqualTo(PARTICIPANT_CONTEXT_ID);
+        assertThat(result).isNull();
     }
 
     @Test
@@ -180,30 +242,26 @@ class AssetIndexServerConfStoreTest {
         var unknownService = ServiceId.Conf.create("DEV", "GOV", "9999", "Unknown", "noSuchService");
         when(serverConfProvider.serviceExists(unknownService)).thenReturn(false);
 
-        var result = assetIndex.findById(unknownService.asEncodedId());
+        var result = assetIndex.findById(participantContextId, unknownService.asEncodedId());
 
         assertThat(result).isNull();
     }
 
     @Test
     void findByIdReturnsNullForMalformedId() {
-        var result = assetIndex.findById("garbage");
+        var result = assetIndex.findById(participantContextId, "garbage");
 
         assertThat(result).isNull();
     }
 
     @Test
-    void findByIdSynthesizesOwnerOnlyAssetForLocallyRegisteredSubsystemWithoutServiceDescription() {
+    void findByIdReturnsNullForLocallyRegisteredSubsystemWithoutServiceDescription() {
         var clientDisableService = ServiceId.Conf.create("DEV", "COM", "3333", "MANAGEMENT", "clientDisable");
         when(serverConfProvider.serviceExists(clientDisableService)).thenReturn(false);
-        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
-        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
 
-        var result = assetIndex.findById(clientDisableService.asEncodedId());
+        var result = assetIndex.findById(participantContextId, clientDisableService.asEncodedId());
 
-        assertThat(result).isNotNull();
-        assertThat(result.getId()).isEqualTo(clientDisableService.asEncodedId());
-        assertThat(result.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
+        assertThat(result).isNull();
     }
 
     @Test
@@ -211,10 +269,8 @@ class AssetIndexServerConfStoreTest {
         var foreignSubsystem = ClientId.Conf.create("DEV", "COM", "9999", "Foreign");
         var foreignService = ServiceId.Conf.create(foreignSubsystem, "noSuchService");
         when(serverConfProvider.serviceExists(foreignService)).thenReturn(false);
-        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
-        when(globalConfProvider.isSecurityServerClient(foreignSubsystem, SS_ID)).thenReturn(false);
 
-        var result = assetIndex.findById(foreignService.asEncodedId());
+        var result = assetIndex.findById(participantContextId, foreignService.asEncodedId());
 
         assertThat(result).isNull();
     }
@@ -237,37 +293,147 @@ class AssetIndexServerConfStoreTest {
 
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
-        assertThat(result).hasSize(ManagementServiceCatalog.SERVICE_CODES.size());
-        assertThat(result).allSatisfy(asset -> {
-            assertThat(asset.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
-            assertThat(asset.getId()).startsWith(MGMT_CLIENT.asEncodedId());
+        var systemCtx = result.stream().filter(a -> SYSTEM_PARTICIPANT_CONTEXT_ID.equals(a.getParticipantContextId())).toList();
+        assertThat(systemCtx).hasSize(ManagementServiceCodes.DSP_NEGOTIATED.size());
+        assertThat(result).allSatisfy(asset -> assertThat(asset.getId()).startsWith(MGMT_CLIENT.asEncodedId()));
+        assertThat(systemCtx).noneSatisfy(asset ->
+                assertThat(asset.getId()).endsWith("authCertReg"));
+    }
+
+    @Test
+    void queryAssetsPublishesRealManagementServiceUnderSystemContext() {
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MGMT_CLIENT));
+        when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE));
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn(null);
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+
+        var result = assetIndex.queryAssets(QuerySpec.max()).toList();
+
+        var systemEntry = result.stream()
+                .filter(a -> a.getId().equals(MGMT_SERVICE.asEncodedId())
+                        && SYSTEM_PARTICIPANT_CONTEXT_ID.equals(a.getParticipantContextId()))
+                .toList();
+        assertThat(systemEntry).hasSize(1);
+    }
+
+    @Test
+    void queryAssetsExcludesDisabledRealManagementServiceFromSystemContext() {
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MGMT_CLIENT));
+        when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE));
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn("Maintenance");
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+
+        var result = assetIndex.queryAssets(QuerySpec.max()).toList();
+
+        assertThat(result).noneSatisfy(asset -> {
+            assertThat(asset.getId()).isEqualTo(MGMT_SERVICE.asEncodedId());
+            assertThat(asset.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
         });
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    void resolveForAssetReturnsHttpDataAddress() {
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn(null);
-        when(serverConfProvider.getServiceAddress(SERVICE_1)).thenReturn(SERVICE_1_ADDRESS);
+    void queryAssetsIncludesDisabledRealManagementServiceWithConfiguredAccessRightsUnderSystemContext() {
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MGMT_CLIENT));
+        when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE));
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn("Maintenance");
+        when(serverConfProvider.getServiceAccessRights(MGMT_SERVICE)).thenReturn(nonEmptyAcl());
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
 
-        var result = assetIndex.resolveForAsset(SERVICE_1.asEncodedId());
+        var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
-        assertThat(result).isNotNull();
-        assertThat(result.getType()).isEqualTo("HttpData");
-        assertThat(result.getStringProperty("baseUrl")).isEqualTo(SERVICE_1_ADDRESS);
-        assertThat(result.getStringProperty("proxyPath")).isEqualTo("true");
-        assertThat(result.getStringProperty("proxyMethod")).isEqualTo("true");
-        assertThat(result.getStringProperty("proxyBody")).isEqualTo("true");
-        assertThat(result.getStringProperty("proxyQueryParams")).isEqualTo("true");
+        var systemEntry = result.stream()
+                .filter(a -> a.getId().equals(MGMT_SERVICE.asEncodedId())
+                        && SYSTEM_PARTICIPANT_CONTEXT_ID.equals(a.getParticipantContextId()))
+                .toList();
+        assertThat(systemEntry).hasSize(1);
     }
 
     @Test
-    void resolveForAssetReturnsNullForDisabledService() {
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn("Maintenance");
+    void queryAssetsExcludesRealAuthCertRegFromSystemContext() {
+        var authCertRegService = ServiceId.Conf.create("DEV", "COM", "3333", "MANAGEMENT", "authCertReg");
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MGMT_CLIENT));
+        when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE, authCertRegService));
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn(null);
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
 
-        var result = assetIndex.resolveForAsset(SERVICE_1.asEncodedId());
+        var result = assetIndex.queryAssets(QuerySpec.max()).toList();
+
+        var systemCtx = result.stream()
+                .filter(a -> SYSTEM_PARTICIPANT_CONTEXT_ID.equals(a.getParticipantContextId()))
+                .toList();
+        assertThat(systemCtx).extracting(Asset::getId).containsExactly(MGMT_SERVICE.asEncodedId());
+    }
+
+    @Test
+    void findByIdRealManagementServiceResolvesSystemContextWhenSystemRequested() {
+        when(serverConfProvider.serviceExists(MGMT_SERVICE)).thenReturn(true);
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn(null);
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, MGMT_SERVICE.asEncodedId());
+
+        assertThat(result).isNotNull();
+        assertThat(result.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
+    }
+
+    @Test
+    void findByIdDisabledRealManagementServiceNotFoundUnderSystemContext() {
+        when(serverConfProvider.serviceExists(MGMT_SERVICE)).thenReturn(true);
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn("Maintenance");
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, MGMT_SERVICE.asEncodedId());
 
         assertThat(result).isNull();
+    }
+
+    @Test
+    void findByIdDisabledRealManagementServiceWithConfiguredAccessRightsFoundUnderSystemContext() {
+        when(serverConfProvider.serviceExists(MGMT_SERVICE)).thenReturn(true);
+        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn("Maintenance");
+        when(serverConfProvider.getServiceAccessRights(MGMT_SERVICE)).thenReturn(nonEmptyAcl());
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, MGMT_SERVICE.asEncodedId());
+
+        assertThat(result).isNotNull();
+        assertThat(result.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void resolveForAssetReturnsHttpDataTypeAddress() {
+        when(serverConfProvider.getServiceAddress(SERVICE_1)).thenReturn(SERVICE_1_ADDRESS);
+
+        var result = assetIndex.resolveForAsset(participantContextId, SERVICE_1.asEncodedId());
+
+        assertThat(result).isNotNull();
+        assertThat(result.getClass()).isEqualTo(DataAddress.class);
+        assertThat(result.getType()).isEqualTo("HttpData");
+        assertThat(result.getProperties()).containsOnly(
+                entry(EDC_NAMESPACE + "type", "HttpData"),
+                entry(EDC_NAMESPACE + "baseUrl", SERVICE_1_ADDRESS),
+                entry("proxyPath", "true"),
+                entry("proxyMethod", "true"),
+                entry("proxyBody", "true"),
+                entry("proxyQueryParams", "true"));
     }
 
     @Test
@@ -282,7 +448,7 @@ class AssetIndexServerConfStoreTest {
 
     @Test
     void deleteByIdReturnsNotFound() {
-        var result = assetIndex.deleteById("test-id");
+        var result = assetIndex.deleteById(participantContextId, "test-id");
 
         assertThat(result.failed()).isTrue();
         assertThat(result.getFailureDetail()).contains("Read-only");
@@ -302,12 +468,11 @@ class AssetIndexServerConfStoreTest {
         when(serverConfProvider.getMembers()).thenReturn(List.of(MEMBER_1, MEMBER_2));
         when(serverConfProvider.getAllServices(MEMBER_1)).thenReturn(List.of(SERVICE_1, SERVICE_2));
         when(serverConfProvider.getAllServices(MEMBER_2)).thenReturn(List.of(SERVICE_3));
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn(null);
-        when(serverConfProvider.getDisabledNotice(SERVICE_2)).thenReturn("Maintenance");
-        when(serverConfProvider.getDisabledNotice(SERVICE_3)).thenReturn(null);
         lenient().when(serverConfProvider.getServiceAccessRights(SERVICE_1)).thenReturn(nonEmptyAcl());
         lenient().when(serverConfProvider.getServiceAccessRights(SERVICE_3)).thenReturn(nonEmptyAcl());
         when(globalConfProvider.getManagementRequestService()).thenReturn(null);
+        when(participantContextService.search(any())).thenReturn(ServiceResult.success(List.of(
+                participantContext(MEMBER_1_CTX), participantContext(MEMBER_2_CTX))));
     }
 
     private static List<AccessRight> nonEmptyAcl() {
@@ -319,68 +484,59 @@ class AssetIndexServerConfStoreTest {
     }
 
     @Test
-    void queryAssetsMgmtServiceTaggedWithMgmtCtx() {
+    void queryAssetsManagementOwnServiceNotPublishedWhenMemberContextNotProvisioned() {
         when(serverConfProvider.getMembers()).thenReturn(List.of(MEMBER_1, MGMT_CLIENT));
         when(serverConfProvider.getAllServices(MEMBER_1)).thenReturn(List.of(SERVICE_1));
         when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE));
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn(null);
-        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn(null);
         when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
 
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
-        var regularHost = result.stream()
-                .filter(a -> a.getId().equals(SERVICE_1.asEncodedId())
-                        && PARTICIPANT_CONTEXT_ID.equals(a.getParticipantContextId()))
-                .findFirst().orElseThrow();
-        var mgmt = result.stream()
-                .filter(a -> a.getId().equals(MGMT_SERVICE.asEncodedId()))
-                .findFirst().orElseThrow();
-        assertThat(regularHost.getParticipantContextId()).isEqualTo(PARTICIPANT_CONTEXT_ID);
-        assertThat(mgmt.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
+        assertThat(result).noneMatch(a -> a.getId().equals(SERVICE_1.asEncodedId()));
+        assertThat(result).noneMatch(a -> a.getId().equals(MGMT_SERVICE.asEncodedId()));
     }
 
     @Test
-    void queryAssetsWithMgmtCtxFilterReturnsMgmtServicesOnly() {
-        when(serverConfProvider.getMembers()).thenReturn(List.of(MEMBER_1, MGMT_CLIENT));
-        when(serverConfProvider.getAllServices(MEMBER_1)).thenReturn(List.of(SERVICE_1));
+    void queryAssetsManagementOwnServicePublishedUnderMemberContextLikeAnyOtherServiceOnceProvisioned() {
+        when(serverConfProvider.getMembers()).thenReturn(List.of(MGMT_CLIENT));
         when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE));
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn(null);
-        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn(null);
         when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        var mgmtMemberCtx = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "COM", "3333"));
+        when(participantContextService.search(any()))
+                .thenReturn(ServiceResult.success(List.of(participantContext(mgmtMemberCtx))));
 
-        var mgmtSpec = QuerySpec.Builder.newInstance()
-                .filter(new Criterion("participantContextId", "=", MGMT_PARTICIPANT_CONTEXT_ID))
-                .build();
-        var mgmtResult = assetIndex.queryAssets(mgmtSpec).toList();
-        assertThat(mgmtResult).extracting(Asset::getId)
-                .containsExactlyInAnyOrder(SERVICE_1.asEncodedId(), MGMT_SERVICE.asEncodedId(), MGMT_SERVICE.asEncodedId());
+        var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
-        var hostSpec = QuerySpec.Builder.newInstance()
-                .filter(new Criterion("participantContextId", "=", PARTICIPANT_CONTEXT_ID))
-                .build();
-        var hostResult = assetIndex.queryAssets(hostSpec).toList();
-        assertThat(hostResult).hasSize(1);
-        assertThat(hostResult.getFirst().getId()).isEqualTo(SERVICE_1.asEncodedId());
+        var mgmt = result.stream().filter(a -> a.getId().equals(MGMT_SERVICE.asEncodedId())).findFirst().orElseThrow();
+        assertThat(mgmt.getParticipantContextId()).isEqualTo(mgmtMemberCtx);
     }
 
     @Test
-    void findByIdMgmtServiceTaggedWithMgmtCtx() {
+    void findByIdManagementOwnServiceNotFoundWhenMemberContextNotProvisioned() {
         when(serverConfProvider.serviceExists(MGMT_SERVICE)).thenReturn(true);
-        when(serverConfProvider.getDisabledNotice(MGMT_SERVICE)).thenReturn(null);
-        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
 
-        var result = assetIndex.findById(MGMT_SERVICE.asEncodedId());
+        var result = assetIndex.findById(participantContextId, MGMT_SERVICE.asEncodedId());
 
-        assertThat(result).isNotNull();
-        assertThat(result.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void findByIdReturnsNullWhenRequestedContextIsNotAmongResolvedContexts() {
+        when(serverConfProvider.serviceExists(SERVICE_1)).thenReturn(true);
+        var memberCtx = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "GOV", "1111"));
+        when(participantContextService.getParticipantContext(memberCtx))
+                .thenReturn(ServiceResult.success(participantContext(memberCtx)));
+        participantContextId = "some-other-context";
+
+        var result = assetIndex.findById(participantContextId, SERVICE_1.asEncodedId());
+
+        assertThat(result).isNull();
     }
 
     @Test
     void queryAssetsIncludesBuiltinsWhenNoServerconfServices() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
         when(serverConfProvider.getMembers()).thenReturn(List.of());
 
         var result = store.queryAssets(QuerySpec.max()).toList();
@@ -391,68 +547,37 @@ class AssetIndexServerConfStoreTest {
     }
 
     @Test
-    void queryAssetsBuiltinsTaggedWithMgmtContext() {
+    void queryAssetsBuiltinsTaggedWithSystemContextOnly() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
         when(serverConfProvider.getMembers()).thenReturn(List.of());
 
         var result = store.queryAssets(QuerySpec.max()).toList();
 
         assertThat(result).allSatisfy(asset ->
-                assertThat(asset.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID));
-    }
-
-    @Test
-    void queryAssetsBuiltinsNeverTaggedWithHostContext() {
-        var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
-        when(serverConfProvider.getMembers()).thenReturn(List.of());
-
-        var result = store.queryAssets(QuerySpec.max()).toList();
-
-        assertThat(result).noneSatisfy(asset ->
-                assertThat(asset.getParticipantContextId()).isEqualTo(PARTICIPANT_CONTEXT_ID));
-    }
-
-    @Test
-    void queryAssetsHostCtxFilterExcludesBuiltins() {
-        var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
-        when(serverConfProvider.getMembers()).thenReturn(List.of());
-
-        var hostSpec = QuerySpec.Builder.newInstance()
-                .filter(new Criterion("participantContextId", "=", PARTICIPANT_CONTEXT_ID))
-                .build();
-
-        var result = store.queryAssets(hostSpec).toList();
-
-        assertThat(result).isEmpty();
+                assertThat(asset.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID));
+        assertThat(result).hasSize(7);
     }
 
     @Test
     void findByIdReturnsBuiltinAsset() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
-        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCatalog.PROXY_MONITOR_SERVICE_CODE;
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
+        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCodes.GET_SECURITY_SERVER_METRICS;
 
-        var result = store.findById(builtinAssetId);
+        var result = store.findById(participantContextId, builtinAssetId);
 
         assertThat(result).isNotNull();
         assertThat(result.getId()).isEqualTo(builtinAssetId);
-        assertThat(result.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
+        assertThat(result.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
     }
 
     @Test
     void findByIdReturnsNullForUnknownBuiltinServiceCode() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
 
-        var result = store.findById("DEV:GOV:1111:nonExistentService");
+        var result = store.findById(participantContextId, "DEV:GOV:1111:nonExistentService");
 
         assertThat(result).isNull();
     }
@@ -461,11 +586,10 @@ class AssetIndexServerConfStoreTest {
     @SuppressWarnings("deprecation")
     void resolveForAssetReturnsDataAddressForBuiltin() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
-        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCatalog.PROXY_MONITOR_SERVICE_CODE;
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
+        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCodes.GET_SECURITY_SERVER_METRICS;
 
-        var result = store.resolveForAsset(builtinAssetId);
+        var result = store.resolveForAsset(participantContextId, builtinAssetId);
 
         assertThat(result).isNotNull();
         assertThat(result.getType()).isEqualTo("HttpData");
@@ -480,51 +604,184 @@ class AssetIndexServerConfStoreTest {
     @SuppressWarnings("deprecation")
     void resolveForAssetReturnsNullForDisabledBuiltin() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                noBuiltins(), DISABLED_CACHE);
-        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCatalog.PROXY_MONITOR_SERVICE_CODE;
+                serverConfProvider, noBuiltins(), DISABLED_CACHE, serviceContextResolver);
+        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCodes.GET_SECURITY_SERVER_METRICS;
 
-        var result = store.resolveForAsset(builtinAssetId);
+        var result = store.resolveForAsset(participantContextId, builtinAssetId);
 
         assertThat(result).isNull();
     }
 
     @Test
-    void queryAssetsOwnerOnlyServiceEmittedUnderBothHostAndMgmtCtx() {
+    void queryAssetsOwnerOnlyServiceNotPublishedWhenMemberContextNotProvisioned() {
         when(serverConfProvider.getMembers()).thenReturn(List.of(MEMBER_1));
         when(serverConfProvider.getAllServices(MEMBER_1)).thenReturn(List.of(SERVICE_1));
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn(null);
         when(globalConfProvider.getManagementRequestService()).thenReturn(null);
 
         var result = assetIndex.queryAssets(QuerySpec.max()).toList();
 
-        assertThat(result).hasSize(2);
-        assertThat(result).extracting(Asset::getId)
-                .containsExactly(SERVICE_1.asEncodedId(), SERVICE_1.asEncodedId());
-        assertThat(result).extracting(Asset::getParticipantContextId)
-                .containsExactlyInAnyOrder(PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID);
-    }
-
-    @Test
-    void findByIdOwnerOnlyAssetReturnedUnderMgmtCtx() {
-        when(serverConfProvider.serviceExists(SERVICE_1)).thenReturn(true);
-        when(serverConfProvider.getDisabledNotice(SERVICE_1)).thenReturn("Maintenance");
-
-        var result = assetIndex.findById(SERVICE_1.asEncodedId());
-
-        assertThat(result).isNotNull();
-        assertThat(result.getParticipantContextId()).isEqualTo(MGMT_PARTICIPANT_CONTEXT_ID);
+        assertThat(result).isEmpty();
     }
 
     @Test
     void countAssetsIncludesBuiltins() {
         var store = new AssetIndexServerConfStore(
-                serverConfProvider, globalConfProvider, PARTICIPANT_CONTEXT_ID, MGMT_PARTICIPANT_CONTEXT_ID,
-                allBuiltins(), DISABLED_CACHE);
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
         when(serverConfProvider.getMembers()).thenReturn(List.of());
 
         var count = store.countAssets(List.of());
 
         assertThat(count).isEqualTo(7);
+    }
+
+    @Test
+    void countAssetsAppliesTheDefinitionSelectorAndTheTargetIdTogether() {
+        setupMembersAndServices();
+        var selectorForService1 = new Criterion(EDC_NAMESPACE + "id", "=", SERVICE_1.asEncodedId());
+
+        var sameAsset = assetIndex.countAssets(List.of(selectorForService1,
+                new Criterion(Asset.PROPERTY_ID, "=", SERVICE_1.asEncodedId())));
+        var otherAsset = assetIndex.countAssets(List.of(selectorForService1,
+                new Criterion(Asset.PROPERTY_ID, "=", SERVICE_2.asEncodedId())));
+
+        assertThat(sameAsset).isEqualTo(1);
+        assertThat(otherAsset).isZero();
+    }
+
+    @Test
+    void findByIdBuiltinResolvesSystemContextWhenSystemRequested() {
+        var store = new AssetIndexServerConfStore(
+                serverConfProvider, allBuiltins(), DISABLED_CACHE, serviceContextResolver);
+        var builtinAssetId = "DEV:GOV:1111:" + BuiltinServiceCodes.GET_SECURITY_SERVER_METRICS;
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = store.findById(participantContextId, builtinAssetId);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
+    }
+
+    @Test
+    void findByIdMgmtServiceResolvesSystemContextWhenSystemRequestedAndEligible() {
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, MGMT_SERVICE.asEncodedId());
+
+        assertThat(result).isNotNull();
+        assertThat(result.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
+    }
+
+    @Test
+    void findByIdMgmtServiceResolvesSystemContextWhenNoRealServiceConfigured() {
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        when(serverConfProvider.serviceExists(MGMT_SERVICE)).thenReturn(false);
+        when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of());
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, MGMT_SERVICE.asEncodedId());
+
+        assertThat(result).isNotNull();
+        assertThat(result.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
+    }
+
+    @Test
+    void findByIdUnconfiguredEligibleCodeNotFoundUnderSystemWhenSiblingCodeIsReal() {
+        // Partial migration: clientReg is real, so the whole subsystem no longer qualifies for the
+        // no-real-services synthetic fallback, but maintenanceModeEnable was never configured —
+        // buildAssetList never enumerates it either, so findById must agree.
+        var unconfiguredService = ServiceId.Conf.create("DEV", "COM", "3333", "MANAGEMENT", "maintenanceModeEnable");
+        when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        when(serverConfProvider.getAllServices(MGMT_CLIENT)).thenReturn(List.of(MGMT_SERVICE));
+        when(serverConfProvider.serviceExists(unconfiguredService)).thenReturn(false);
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, unconfiguredService.asEncodedId());
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void findByIdAuthCertRegNotFoundUnderSystemContext() {
+        // authCertReg fails the cheap SYSTEM_SERVICE_CODES check before any globalconf/serverconf
+        // lookup runs, so no management-subsystem resolution needs to be stubbed here.
+        var authCertRegService = ServiceId.Conf.create("DEV", "COM", "3333", "MANAGEMENT", "authCertReg");
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, authCertRegService.asEncodedId());
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void findByIdRealServiceNotFoundUnderSystemContext() {
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, SERVICE_1.asEncodedId());
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void findByIdArbitraryLocallyRegisteredSubsystemAssetNotFoundUnderSystemContext() {
+        var customService = ServiceId.Conf.create("DEV", "GOV", "1111", "SubsystemA", "customThing");
+        participantContextId = SYSTEM_PARTICIPANT_CONTEXT_ID;
+
+        var result = assetIndex.findById(participantContextId, customService.asEncodedId());
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void findByIdAndResolveForAssetResolveNothingForNullParticipantContext() {
+        lenient().when(serverConfProvider.serviceExists(SERVICE_1)).thenReturn(true);
+        lenient().when(serverConfProvider.getServiceAddress(SERVICE_1)).thenReturn(SERVICE_1_ADDRESS);
+        lenient().when(participantContextService.getParticipantContext(MEMBER_1_CTX))
+                .thenReturn(ServiceResult.success(participantContext(MEMBER_1_CTX)));
+
+        assertThat(assetIndex.findById(null, SERVICE_1.asEncodedId())).isNull();
+        assertThat(assetIndex.resolveForAsset(null, SERVICE_1.asEncodedId())).isNull();
+    }
+
+    @Test
+    void findByIdResolvesTheSameAssetIdToEachContextsOwnAsset() {
+        var mgmtMemberCtx = ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "COM", "3333"));
+        lenient().when(serverConfProvider.serviceExists(MGMT_SERVICE)).thenReturn(true);
+        lenient().when(globalConfProvider.getManagementRequestService()).thenReturn(MGMT_CLIENT);
+        lenient().when(serverConfProvider.getIdentifier()).thenReturn(SS_ID);
+        lenient().when(globalConfProvider.isSecurityServerClient(MGMT_CLIENT, SS_ID)).thenReturn(true);
+        lenient().when(participantContextService.getParticipantContext(mgmtMemberCtx))
+                .thenReturn(ServiceResult.success(participantContext(mgmtMemberCtx)));
+        var cachingAssetIndex = new AssetIndexServerConfStore(
+                serverConfProvider, noBuiltins(), new StoreEnumerationCache<>(true, 60, 1000, "test"), serviceContextResolver);
+        var assetId = MGMT_SERVICE.asEncodedId();
+
+        var memberAsset = cachingAssetIndex.findById(mgmtMemberCtx, assetId);
+        var systemAsset = cachingAssetIndex.findById(SYSTEM_PARTICIPANT_CONTEXT_ID, assetId);
+        var otherMemberAsset = cachingAssetIndex.findById(MEMBER_2_CTX, assetId);
+
+        assertThat(memberAsset).isNotNull();
+        assertThat(memberAsset.getParticipantContextId()).isEqualTo(mgmtMemberCtx);
+        assertThat(systemAsset).isNotNull();
+        assertThat(systemAsset.getParticipantContextId()).isEqualTo(SYSTEM_PARTICIPANT_CONTEXT_ID);
+        assertThat(otherMemberAsset).isNull();
+    }
+
+    @Test
+    void deleteByIdLeavesTheAssetResolvableInItsContext() {
+        when(serverConfProvider.serviceExists(SERVICE_1)).thenReturn(true);
+        when(participantContextService.getParticipantContext(MEMBER_1_CTX))
+                .thenReturn(ServiceResult.success(participantContext(MEMBER_1_CTX)));
+
+        var deleteResult = assetIndex.deleteById(MEMBER_1_CTX, SERVICE_1.asEncodedId());
+
+        assertThat(deleteResult.failed()).isTrue();
+        assertThat(assetIndex.findById(MEMBER_1_CTX, SERVICE_1.asEncodedId())).isNotNull();
     }
 }

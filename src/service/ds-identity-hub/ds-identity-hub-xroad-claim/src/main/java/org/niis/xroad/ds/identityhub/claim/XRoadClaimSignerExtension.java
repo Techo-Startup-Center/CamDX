@@ -27,34 +27,49 @@
 
 package org.niis.xroad.ds.identityhub.claim;
 
+import org.eclipse.edc.iam.decentralizedclaims.sts.service.StsClientTokenGeneratorServiceImpl;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.service.StsClientTokenGeneratorService;
 import org.eclipse.edc.identityhub.spi.authentication.ParticipantSecureTokenService;
 import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.participantcontext.spi.config.service.ParticipantContextConfigService;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
+import org.eclipse.edc.runtime.metamodel.annotation.Provider;
 import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.runtime.metamodel.annotation.Setting;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.niis.xroad.ds.identityhub.memberid.ParticipantMemberIdConfig;
 import org.niis.xroad.signer.client.SignerRpcClient;
 import org.niis.xroad.signer.client.SignerSignClient;
 
 import java.time.Clock;
+import java.util.concurrent.TimeUnit;
 
 import static org.niis.xroad.ds.identityhub.claim.XRoadClaimSignerExtension.NAME;
 
 /**
- * Installs the {@link XRoadClaimAwareSecureTokenService} wrapper that signs the X-Road
- * MemberId claim for every credential-request token issued by the IdentityHub, using the
- * member's X-Road sign key via the local signer service over gRPC.
+ * Wires the IdentityHub's token services so that only credential-request tokens carry the signed
+ * X-Road MemberId claim, using the member's X-Road sign key via the local signer service over gRPC.
  *
- * <p>Wrap mechanism: {@code @Provides(ParticipantSecureTokenService.class)} adds this
- * extension to the dependency graph as a provider of PSTS, so consumers that
- * {@code @Inject} it (notably {@code CoreServicesExtension} which builds
- * {@code CredentialRequestManagerImpl}) are topologically ordered after us. The
- * {@code @Inject ParticipantSecureTokenService delegate} field resolves to the upstream
- * {@code EmbeddedSecureTokenService} (the self-edge is filtered by the dependency graph).
- * We then {@code registerService} the wrapper during {@code initialize()}, before
- * downstream consumers' inject phase runs.
+ * <p>Two services are published:
+ * <ul>
+ *   <li>{@link ParticipantSecureTokenService}: the {@link XRoadClaimAwareSecureTokenService} wrapper
+ *   around the upstream {@code EmbeddedSecureTokenService}. Its consumers (notably
+ *   {@code CredentialRequestManagerImpl}, built by {@code CoreServicesExtension}) therefore send
+ *   the claim to the Issuer Service.</li>
+ *   <li>{@link StsClientTokenGeneratorService}: built over the plain, unwrapped embedded service, so
+ *   the self-issued tokens that the STS endpoint mints for DSP requests stay small and carry no claim.
+ *   Upstream {@code StsClientTokenGeneratorExtension} builds this service over
+ *   {@link ParticipantSecureTokenService}, which would resolve to the wrapper; it is excluded through
+ *   {@code xroad.edc.boot.excluded-service-extensions} and this extension takes its place.</li>
+ * </ul>
+ *
+ * <p>Wrap mechanism: {@code @Provides(ParticipantSecureTokenService.class)} adds this extension to the
+ * dependency graph as a provider of that service, so consumers that {@code @Inject} it are ordered after
+ * this extension. The {@code @Inject ParticipantSecureTokenService delegate} field resolves to the upstream
+ * {@code EmbeddedSecureTokenService} (the self-edge is filtered by the dependency graph). The wrapper is
+ * registered during {@code initialize()}, before downstream consumers' inject phase runs.
  */
 @Extension(NAME)
 @Provides(ParticipantSecureTokenService.class)
@@ -62,16 +77,26 @@ public class XRoadClaimSignerExtension implements ServiceExtension {
 
     static final String NAME = "X-Road Claim Signer Extension";
 
+    private static final String DEFAULT_STS_TOKEN_EXPIRATION_MIN = "5";
+
     @Setting(key = "xroad.identityhub.claim.lifetime-seconds",
             description = "Lifetime in seconds of the signed X-Road MemberId claim JWS (exp - iat).",
             defaultValue = "300")
     private long claimLifetimeSeconds;
+
+    @Setting(key = "edc.iam.sts.token.expiration",
+            description = "Self-issued ID Token expiration in minutes. By default is 5 minutes",
+            defaultValue = DEFAULT_STS_TOKEN_EXPIRATION_MIN)
+    private long stsTokenExpirationMin;
 
     @Inject
     private ParticipantSecureTokenService delegate;
 
     @Inject
     private IdentityHubParticipantContextService participantContextService;
+
+    @Inject
+    private ParticipantContextConfigService participantContextConfigService;
 
     @Inject
     private SignerRpcClient signerRpcClient;
@@ -93,9 +118,15 @@ public class XRoadClaimSignerExtension implements ServiceExtension {
                 signerRpcClient, signerSignClient,
                 new MemberClaimSignerProperties(claimLifetimeSeconds), clock);
         var wrapper = new XRoadClaimAwareSecureTokenService(
-                delegate, participantContextService, signer, context.getMonitor());
+                delegate, participantContextService, new ParticipantMemberIdConfig(participantContextConfigService),
+                signer, context.getMonitor());
         context.registerService(ParticipantSecureTokenService.class, wrapper);
         context.getMonitor().info("X-Road MemberId claim signer installed");
+    }
+
+    @Provider
+    public StsClientTokenGeneratorService clientTokenService() {
+        return new StsClientTokenGeneratorServiceImpl(TimeUnit.MINUTES.toSeconds(stsTokenExpirationMin), delegate);
     }
 
 }

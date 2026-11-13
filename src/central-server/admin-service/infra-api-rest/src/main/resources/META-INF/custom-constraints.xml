@@ -32,6 +32,18 @@
             <constraint annotation="org.niis.xroad.restapi.openapi.validator.OnlyAddressChars"/>
         </field>
     </bean>
+    <bean class="SecurityServerEditDto" ignore-annotations="false">
+        <field name="serverAddress">
+            <constraint annotation="org.niis.xroad.restapi.openapi.validator.ValidHostAddress"/>
+            <constraint annotation="org.niis.xroad.restapi.openapi.validator.OnlyAddressChars"/>
+        </field>
+    </bean>
+    <bean class="SystemDidCheckRequestDto" ignore-annotations="false">
+        <field name="serverAddress">
+            <constraint annotation="org.niis.xroad.restapi.openapi.validator.ValidHostAddress"/>
+            <constraint annotation="org.niis.xroad.restapi.openapi.validator.OnlyAddressChars"/>
+        </field>
+    </bean>
 
     <bean class="XRoadIdDto" ignore-annotations="false">
         <class ignore-annotations="false">
@@ -46,6 +58,18 @@
         <field name="serverAddress">
             <constraint annotation="org.niis.xroad.restapi.openapi.validator.ValidHostAddress"/>
             <constraint annotation="org.niis.xroad.restapi.openapi.validator.OnlyAddressChars"/>
+        </field>
+    </bean>
+
+    <bean class="SystemDidRegistrationRequestDto">
+        <field name="certificate">
+            <constraint annotation="org.niis.xroad.cs.admin.rest.api.openapi.validator.ValidX509Certificate"/>
+        </field>
+    </bean>
+
+    <bean class="MemberDidRegistrationEntryDto" ignore-annotations="false">
+        <field name="memberId">
+            <constraint annotation="org.niis.xroad.restapi.openapi.validator.NoControlChars"/>
         </field>
     </bean>
 

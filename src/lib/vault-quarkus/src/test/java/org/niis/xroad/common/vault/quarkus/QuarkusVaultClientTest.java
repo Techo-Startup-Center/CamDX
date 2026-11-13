@@ -27,25 +27,46 @@
 package org.niis.xroad.common.vault.quarkus;
 
 import io.quarkus.vault.VaultKVSecretEngine;
+import io.quarkus.vault.client.VaultClientException;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.common.core.node.NodeIdentity;
 import org.niis.xroad.common.vault.AcmeAccountKey;
 import org.niis.xroad.common.vault.DsTlsEnrollmentMethod;
 import org.niis.xroad.common.vault.DsTlsEnrollmentStatus;
+import org.niis.xroad.common.vault.VaultClient;
 
+import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class QuarkusVaultClientTest {
@@ -59,7 +80,7 @@ class QuarkusVaultClientTest {
 
     @BeforeEach
     void setUp() {
-        vaultClient = new QuarkusVaultClient(kvSecretEngine);
+        vaultClient = new QuarkusVaultClient(kvSecretEngine, NodeIdentity.resolve("node_0"));
 
         lenient().doAnswer(invocation -> {
             String path = invocation.getArgument(0);
@@ -71,6 +92,20 @@ class QuarkusVaultClientTest {
         lenient().when(kvSecretEngine.readSecret(any())).thenAnswer(invocation -> {
             String path = invocation.getArgument(0);
             return secretsByPath.get(path);
+        });
+
+        lenient().doAnswer(invocation -> {
+            secretsByPath.remove(invocation.<String>getArgument(0));
+            return null;
+        }).when(kvSecretEngine).deleteSecret(any());
+
+        lenient().when(kvSecretEngine.listSecrets(any())).thenAnswer(invocation -> {
+            String basePath = invocation.getArgument(0);
+            String prefix = basePath + "/";
+            return secretsByPath.keySet().stream()
+                    .filter(path -> path.startsWith(prefix))
+                    .map(path -> path.substring(prefix.length()))
+                    .toList();
         });
     }
 
@@ -150,6 +185,231 @@ class QuarkusVaultClientTest {
         var retrieved = vaultClient.getDsTlsEnrollmentStatus();
 
         assertThat(retrieved).isEmpty();
+    }
+
+    @Test
+    void shouldStoreAndRetrieveADsTlsEnrollmentStatusWithNoMethodRecorded() {
+        var stored = new DsTlsEnrollmentStatus(null, null, null);
+
+        vaultClient.createDsTlsEnrollmentStatus(stored);
+        var retrieved = vaultClient.getDsTlsEnrollmentStatus().orElseThrow();
+
+        assertThat(retrieved).isEqualTo(stored);
+        assertThat(retrieved.method()).isNull();
+    }
+
+    @Test
+    void shouldStoreAndRetrieveOpMonitorCaWithExactlyTheCertificateField() throws Exception {
+        var ca = selfSignedCa("CN=Op-monitor CA");
+
+        vaultClient.createOpMonitorCa(ca);
+
+        assertThat(vaultClient.getOpMonitorCa()).contains(ca);
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH)).containsOnlyKeys(VaultClient.CERTIFICATE_KEY);
+        assertThat(VaultClient.OPMONITOR_CA_PATH).isEqualTo("tls/opmonitor-ca");
+    }
+
+    @Test
+    void shouldReplaceTheStoredOpMonitorCa() throws Exception {
+        var first = selfSignedCa("CN=First CA");
+        var second = selfSignedCa("CN=Second CA");
+
+        vaultClient.createOpMonitorCa(first);
+        vaultClient.createOpMonitorCa(second);
+
+        assertThat(vaultClient.getOpMonitorCa()).contains(second);
+    }
+
+    @Test
+    void shouldReturnEmptyWhenNoOpMonitorCaIsStored() {
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldReadAMissingOpMonitorCaRecordAsAbsentWhenOpenBaoAnswers404() {
+        when(kvSecretEngine.readSecret(VaultClient.OPMONITOR_CA_PATH))
+                .thenThrow(new VaultClientException("read", VaultClient.OPMONITOR_CA_PATH, 404, "not found", null));
+
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {403, 500, 503})
+    void shouldPropagateAnOpMonitorCaReadFailureOtherThanNotFound(int status) {
+        when(kvSecretEngine.readSecret(VaultClient.OPMONITOR_CA_PATH))
+                .thenThrow(new VaultClientException("read", VaultClient.OPMONITOR_CA_PATH, status, "failure", null));
+
+        assertThatThrownBy(() -> vaultClient.getOpMonitorCa())
+                .isInstanceOfSatisfying(VaultClientException.class, e -> assertThat(e.getStatus()).isEqualTo(status));
+    }
+
+    @Test
+    void shouldReadABlankOpMonitorCaRecordAsAbsent() {
+        secretsByPath.put(VaultClient.OPMONITOR_CA_PATH, Map.of(VaultClient.CERTIFICATE_KEY, ""));
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+
+        secretsByPath.put(VaultClient.OPMONITOR_CA_PATH, Map.of(VaultClient.CERTIFICATE_KEY, " \n"));
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldStoreAndRetrieveAgreementTokenSigningKeys() {
+        String keyPairOne = "{\"kty\":\"EC\",\"kid\":\"1\"}";
+        String keyPairTwo = "{\"kty\":\"EC\",\"kid\":\"2\"}";
+
+        vaultClient.createAgreementTokenSigningKey("1", keyPairOne);
+        vaultClient.createAgreementTokenSigningKey("2", keyPairTwo);
+
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).containsExactlyInAnyOrderEntriesOf(Map.of("1", keyPairOne, "2", keyPairTwo));
+    }
+
+    @Test
+    void shouldReturnEmptyMapWhenNoAgreementTokenSigningKeyHasEverBeenStored() {
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).isEmpty();
+    }
+
+    @Test
+    void shouldTreatAMissingAgreementTokenSigningKeysPathAsEmptyNotAFailure() {
+        when(kvSecretEngine.listSecrets(any()))
+                .thenThrow(new VaultClientException("list", "agreement-token/signing-keys", 404, "not found", null));
+
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).isEmpty();
+    }
+
+    @Test
+    void shouldSkipAnAgreementTokenSigningKeyDeletedBetweenListingAndReading() {
+        vaultClient.createAgreementTokenSigningKey("1", "jwk-one");
+        when(kvSecretEngine.listSecrets(any())).thenReturn(List.of("1", "2"));
+
+        var retrieved = vaultClient.getAgreementTokenSigningKeys();
+
+        assertThat(retrieved).containsExactlyEntriesOf(Map.of("1", "jwk-one"));
+    }
+
+    @Test
+    void shouldPropagateAgreementTokenSigningKeyListingFailureRatherThanReturningEmpty() {
+        when(kvSecretEngine.listSecrets(any()))
+                .thenThrow(new VaultClientException("list", "agreement-token/signing-keys", 500, "sealed", null));
+
+        assertThatThrownBy(() -> vaultClient.getAgreementTokenSigningKeys())
+                .isInstanceOf(VaultClientException.class);
+    }
+
+    @Test
+    void shouldWriteAgreementTokenSigningKeyToTheKvV1PathWithNoDataOrCasWrapping() {
+        vaultClient.createAgreementTokenSigningKey("1", "some-key-pair-jwk");
+
+        var expectedPath = VaultClient.AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH + "/1";
+        assertThat(secretsByPath).containsKey(expectedPath);
+        assertThat(expectedPath).doesNotContain("/data/").doesNotContain("cas");
+
+        var written = secretsByPath.get(expectedPath);
+        assertThat(written).isNotEmpty().containsEntry(VaultClient.PAYLOAD_KEY, "some-key-pair-jwk");
+    }
+
+    @Test
+    void shouldNotDeleteAnythingWhenStoringOrReadingAgreementTokenSigningKeys() {
+        vaultClient.createAgreementTokenSigningKey("1", "some-key-pair-jwk");
+        vaultClient.getAgreementTokenSigningKeys();
+
+        verify(kvSecretEngine, never()).deleteSecret(anyString());
+    }
+
+    @Test
+    void shouldDeleteOnlyTheNamedAgreementTokenSigningKey() {
+        vaultClient.createAgreementTokenSigningKey("1", "jwk-one");
+        vaultClient.createAgreementTokenSigningKey("2", "jwk-two");
+
+        vaultClient.deleteAgreementTokenSigningKey("1");
+
+        verify(kvSecretEngine).deleteSecret(VaultClient.AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH + "/1");
+        verify(kvSecretEngine, never()).deleteSecret(VaultClient.AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH + "/2");
+        assertThat(vaultClient.getAgreementTokenSigningKeys()).containsExactlyEntriesOf(Map.of("2", "jwk-two"));
+    }
+
+    @Test
+    void shouldPropagateAgreementTokenSigningKeyDeleteFailure() {
+        doThrow(new VaultClientException("delete", "agreement-token/signing-keys/1", 403, "denied", null))
+                .when(kvSecretEngine).deleteSecret(any());
+
+        assertThatThrownBy(() -> vaultClient.deleteAgreementTokenSigningKey("1"))
+                .isInstanceOf(VaultClientException.class);
+    }
+
+    @Test
+    void shouldClearTheOpMonitorCaByWritingABlankCertificateField() throws Exception {
+        vaultClient.createOpMonitorCa(selfSignedCa("CN=Op-monitor CA"));
+        vaultClient.clearOpMonitorCa();
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH)).containsOnlyKeys(VaultClient.CERTIFICATE_KEY);
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH).get(VaultClient.CERTIFICATE_KEY)).isEqualTo("");
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+    }
+
+    @Test
+    void shouldNeverDeleteTheOpMonitorCaSecretWhenClearing() throws Exception {
+        vaultClient.createOpMonitorCa(selfSignedCa("CN=Op-monitor CA"));
+        vaultClient.clearOpMonitorCa();
+        vaultClient.clearOpMonitorCa();
+        verify(kvSecretEngine, never()).deleteSecret(anyString());
+    }
+
+    @Test
+    void shouldClearAnOpMonitorCaThatWasNeverStored() {
+        vaultClient.clearOpMonitorCa();
+        assertThat(vaultClient.getOpMonitorCa()).isEmpty();
+        assertThat(secretsByPath.get(VaultClient.OPMONITOR_CA_PATH)).containsOnlyKeys(VaultClient.CERTIFICATE_KEY);
+    }
+
+    @Test
+    void shouldStoreAnOpMonitorCaAgainAfterItWasCleared() throws Exception {
+        var first = selfSignedCa("CN=First CA");
+        var second = selfSignedCa("CN=Second CA");
+        vaultClient.createOpMonitorCa(first);
+        vaultClient.clearOpMonitorCa();
+        vaultClient.createOpMonitorCa(second);
+        assertThat(vaultClient.getOpMonitorCa()).contains(second);
+    }
+
+    @Test
+    void shouldStoreTokenPinUnderTheNodePath() {
+        vaultClient.setTokenPin("tok1", "1234".toCharArray());
+
+        assertThat(secretsByPath).containsOnlyKeys("signer/token-pins/node_0/tok1");
+        assertThat(vaultClient.getTokenPin("tok1")).hasValue("1234".toCharArray());
+    }
+
+    @Test
+    void shouldKeepTokenPinsOfDifferentNodesSeparate() {
+        var nodeA = new QuarkusVaultClient(kvSecretEngine, NodeIdentity.resolve("node_a"));
+        var nodeZero = new QuarkusVaultClient(kvSecretEngine, NodeIdentity.resolve("0"));
+
+        nodeA.setTokenPin("0", "1111".toCharArray());
+        nodeZero.setTokenPin("0", "2222".toCharArray());
+
+        assertThat(secretsByPath).containsOnlyKeys("signer/token-pins/node_a/0", "signer/token-pins/0/0");
+        assertThat(nodeA.getTokenPin("0")).hasValue("1111".toCharArray());
+        assertThat(nodeZero.getTokenPin("0")).hasValue("2222".toCharArray());
+
+        nodeA.deleteTokenPin("0");
+
+        assertThat(nodeA.getTokenPin("0")).isEmpty();
+        assertThat(nodeZero.getTokenPin("0")).hasValue("2222".toCharArray());
+    }
+
+    private static X509Certificate selfSignedCa(String subjectName) throws Exception {
+        var keyPair = generateRsaKeyPair();
+        var subject = new X500Name(subjectName);
+        var builder = new JcaX509v3CertificateBuilder(subject, BigInteger.ONE, Date.from(Instant.now().minus(1, ChronoUnit.DAYS)),
+                Date.from(Instant.now().plus(365, ChronoUnit.DAYS)), subject, keyPair.getPublic())
+                .addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+        var signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
+        return new JcaX509CertificateConverter().getCertificate(builder.build(signer));
     }
 
     private static KeyPair generateRsaKeyPair() throws Exception {

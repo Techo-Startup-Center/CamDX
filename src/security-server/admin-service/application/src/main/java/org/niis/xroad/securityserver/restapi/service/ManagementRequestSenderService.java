@@ -25,19 +25,13 @@
  */
 package org.niis.xroad.securityserver.restapi.service;
 
-import ee.ria.xroad.common.crypto.identifier.DigestAlgorithm;
 import ee.ria.xroad.common.identifier.ClientId;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.common.managementrequest.ManagementRequestSender;
-import org.niis.xroad.common.rpc.VaultKeyProvider;
-import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.securityserver.restapi.cache.CurrentSecurityServerId;
-import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties;
-import org.niis.xroad.signer.client.SignerRpcClient;
-import org.niis.xroad.signer.client.SignerSignClient;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 
@@ -49,15 +43,11 @@ import org.springframework.stereotype.Service;
 @PreAuthorize("isAuthenticated()")
 @RequiredArgsConstructor
 public class ManagementRequestSenderService {
-    private final SignerRpcClient signerRpcClient;
-    private final SignerSignClient signerSignClient;
-    private final GlobalConfProvider globalConfProvider;
+    private final ManagementRequestSenderFactory managementRequestSenderFactory;
     private final GlobalConfService globalConfService;
     private final CurrentSecurityServerId currentSecurityServerId;
-    private final VaultKeyProvider vaultKeyProvider;
-    private final AdminServiceProperties adminServiceProperties;
 
-    private static final String MANAGEMENT_REQUEST_SENDING_FAILED_ERROR = "Sending management request failed";
+    static final String MANAGEMENT_REQUEST_SENDING_FAILED_ERROR = "Sending management request failed";
 
     /**
      * Sends the authentication certificate registration request directly
@@ -231,17 +221,9 @@ public class ManagementRequestSenderService {
         }
     }
 
-    private ManagementRequestSender createManagementRequestSender()
-            throws GlobalConfOutdatedException {
+    private ManagementRequestSender createManagementRequestSender() throws GlobalConfOutdatedException {
         globalConfService.verifyGlobalConfValidity();
-        ClientId sender = currentSecurityServerId.getServerId().getOwner();
-        ClientId receiver = globalConfProvider.getManagementRequestService();
-        return new ManagementRequestSender(vaultKeyProvider, globalConfProvider, signerRpcClient,
-                signerSignClient, sender, receiver, adminServiceProperties.getProxyServerUrl(),
-                DigestAlgorithm.ofName(adminServiceProperties.getAuthCertRegSignatureDigestAlgorithmId()),
-                adminServiceProperties.getProxyServerConnectTimeout(),
-                adminServiceProperties.getProxyServerSocketTimeout(),
-                adminServiceProperties.isProxyServerEnableConnectionReuse());
+        return managementRequestSenderFactory.create();
     }
 
     public Integer sendMaintenanceModeEnableRequest(String message) {

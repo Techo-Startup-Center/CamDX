@@ -56,6 +56,7 @@ export enum RouteName {
   GlobalGroups = 'global-resources',
   GlobalGroup = 'global-group',
   SystemSettings = 'system-settings',
+  SystemParameters = 'system-parameters',
   BackupAndRestore = 'backup-and-restore',
   ApiKeys = 'api-keys',
   TlsCertificates = 'tls-certificates',
@@ -86,6 +87,7 @@ export enum Permissions {
   ADD_NEW_MEMBER = 'ADD_NEW_MEMBER',
   VIEW_MEMBER_DETAILS = 'VIEW_MEMBER_DETAILS',
   EDIT_MEMBER_NAME = 'EDIT_MEMBER_NAME',
+  EDIT_MEMBER_DID = 'EDIT_MEMBER_DID',
   ADD_MEMBER_SUBSYSTEM = 'ADD_MEMBER_SUBSYSTEM',
   REMOVE_MEMBER_SUBSYSTEM = 'REMOVE_MEMBER_SUBSYSTEM',
   EDIT_MEMBER_SUBSYSTEM = 'EDIT_MEMBER_SUBSYSTEM',
@@ -142,6 +144,7 @@ export enum Permissions {
   ACTIVATE_SIGNING_KEY = 'ACTIVATE_SIGNING_KEY',
   DELETE_SIGNING_KEY = 'DELETE_SIGNING_KEY',
   VIEW_SYSTEM_SETTINGS = 'VIEW_SYSTEM_SETTINGS',
+  CHANGE_CONFIGURATION_PROPERTY = 'CHANGE_CONFIGURATION_PROPERTY', // settings > system parameters > configurable properties
   REGISTER_SERVICE_PROVIDER = 'REGISTER_SERVICE_PROVIDER',
   BACKUP_CONFIGURATION = 'BACKUP_CONFIGURATION',
   RESTORE_CONFIGURATION = 'RESTORE_CONFIGURATION',
@@ -156,6 +159,7 @@ export enum Permissions {
   GENERATE_DS_TLS_KEY = 'GENERATE_DS_TLS_KEY',
   GENERATE_DS_TLS_CSR = 'GENERATE_DS_TLS_CSR',
   UPLOAD_DS_TLS_CERT = 'UPLOAD_DS_TLS_CERT',
+  ORDER_DS_TLS_CERT = 'ORDER_DS_TLS_CERT',
   VIEW_VERSION = 'VIEW_VERSION',
   CREATE_API_KEY = 'CREATE_API_KEY', // api key
   UPDATE_API_KEY = 'UPDATE_API_KEY', // api key

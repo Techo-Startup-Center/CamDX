@@ -35,22 +35,31 @@ import org.apache.commons.io.IOUtils;
 import org.bouncycastle.asn1.x509.CRLReason;
 import org.bouncycastle.cert.ocsp.RevokedStatus;
 import org.bouncycastle.cert.ocsp.UnknownStatus;
+import org.hibernate.Session;
 import org.junit.Before;
 import org.junit.Test;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
+import org.niis.xroad.common.identifiers.jpa.dao.impl.IdentifierDAOImpl;
+import org.niis.xroad.common.identifiers.jpa.entity.ClientIdEntity;
 import org.niis.xroad.globalconf.model.MemberInfo;
 import org.niis.xroad.restapi.exceptions.DeviationAwareRuntimeException;
 import org.niis.xroad.restapi.service.UnhandledWarningsException;
 import org.niis.xroad.restapi.util.PersistenceUtils;
+import org.niis.xroad.securityserver.restapi.repository.DsParticipantRepository;
+import org.niis.xroad.securityserver.restapi.scheduling.DataspaceParticipantProvisioningWorker;
 import org.niis.xroad.securityserver.restapi.util.CertificateTestUtils;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.impl.entity.ClientEntity;
+import org.niis.xroad.serverconf.impl.entity.DsParticipantEntity;
 import org.niis.xroad.serverconf.model.Client;
 import org.niis.xroad.serverconf.model.GroupMember;
 import org.niis.xroad.serverconf.model.LocalGroup;
+import org.niis.xroad.serverconf.model.ParticipantState;
+import org.niis.xroad.serverconf.model.ParticipantType;
 import org.niis.xroad.signer.api.dto.CertificateInfo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.jdbc.JdbcTestUtils;
 
 import java.security.cert.CertificateException;
@@ -81,6 +90,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.niis.xroad.securityserver.restapi.util.TestUtils.CLIENT_ID_SS1;
@@ -124,9 +134,17 @@ public class ClientServiceIntegrationTest extends AbstractServiceIntegrationTest
     @Autowired
     PersistenceUtils persistenceUtils;
 
+    @Autowired
+    DsParticipantRepository dsParticipantRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @MockitoBean
+    CatalogInvalidationNotifier catalogInvalidationNotifier;
+
+    @MockitoBean
+    DataspaceParticipantProvisioningWorker dataspaceParticipantProvisioningWorker;
 
     private byte[] pemBytes;
     private byte[] derBytes;
@@ -363,6 +381,85 @@ public class ClientServiceIntegrationTest extends AbstractServiceIntegrationTest
                 () -> clientService.deleteLocalClient(getClientId("FI:GOV:NON-EXISTENT:SUBSYSTEM")));
     }
 
+
+    @Test
+    public void deleteLocalClientKeepsBoundDataspaceIdentity() throws Exception {
+        ClientId memberId = getClientId("FI:GOV:M3");
+        clientService.addLocalClient(memberId.getMemberClass(), memberId.getMemberCode(),
+                memberId.getSubsystemCode(), null, IsAuthentication.SSLAUTH, false);
+        persistenceUtils.flush();
+
+        Long identifierId = jdbcTemplate.queryForObject(
+                "SELECT id FROM identifier WHERE member_code = 'M3' AND subsystem_code IS NULL", Long.class);
+        jdbcTemplate.update("INSERT INTO ds_participant"
+                + " (id, participant_type, member_identifier, ctx_id, did, scheme_version, state, created_at, updated_at)"
+                + " VALUES (9001, 'MEMBER', ?, 'ctx', 'did:web:bound', 'v1', 'ACTIVE',"
+                + " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", identifierId);
+
+        clientService.deleteLocalClient(memberId);
+        persistenceUtils.flush();
+
+        assertNull(clientService.getLocalClient(memberId));
+        assertEquals(Integer.valueOf(1), jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM identifier WHERE id = ?", Integer.class, identifierId));
+        assertEquals(Integer.valueOf(1), jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM ds_participant WHERE member_identifier = ?", Integer.class, identifierId));
+    }
+
+    @Test
+    public void deleteLocalClientNotifiesCatalogInvalidation() throws Exception {
+        ClientId memberId = getClientId("FI:GOV:M3");
+        clientService.addLocalClient(memberId.getMemberClass(), memberId.getMemberCode(),
+                memberId.getSubsystemCode(), null, IsAuthentication.SSLAUTH, false);
+        reset(catalogInvalidationNotifier);
+
+        clientService.deleteLocalClient(memberId);
+
+        verify(catalogInvalidationNotifier).invalidateCatalogCaches();
+    }
+
+    /**
+     * A member's identifier stays in the {@code identifier} table as long as a dataspace participant
+     * binding references it, even once nothing else (local group, access right) does — otherwise the
+     * binding's foreign key would dangle. Deleting the member's last client also flips that binding
+     * to decommissioned.
+     */
+    @Test
+    public void deleteLocalClientPreservesIdentifierStillBoundToDataspaceParticipant() throws Exception {
+        ClientId memberId = getClientId("FI:GOV:M3");
+        clientService.addLocalClient(memberId.getMemberClass(), memberId.getMemberCode(),
+                memberId.getSubsystemCode(), null, IsAuthentication.SSLAUTH, false);
+        bindActiveDataspaceParticipant(memberId);
+        persistenceUtils.flush();
+        int startIdentifiers = countIdentifiers();
+
+        clientService.deleteLocalClient(memberId);
+        persistenceUtils.flush();
+
+        assertEquals(startIdentifiers, countIdentifiers());
+        assertNull(clientService.getLocalClient(memberId));
+        var binding = dsParticipantRepository.findByMemberIdentifier(memberId);
+        assertTrue(binding.isPresent());
+        assertEquals(ParticipantState.DECOMMISSIONED, binding.get().getState());
+    }
+
+    /**
+     * Binds an {@code ACTIVE} dataspace participant row directly, simulating the provisioning-time
+     * binding that a future story writes — this test module has no such writer yet.
+     */
+    private void bindActiveDataspaceParticipant(ClientId member) {
+        Session session = persistenceUtils.getCurrentSession();
+        ClientIdEntity identifier = new IdentifierDAOImpl().findOrCreateClientId(session, member);
+
+        DsParticipantEntity participant = new DsParticipantEntity();
+        participant.setParticipantType(ParticipantType.MEMBER);
+        participant.setMemberIdentifier(identifier);
+        participant.setCtxId("FI:GOV:M3");
+        participant.setDid("did:web:ss.example.test:v1:FI:GOV:M3");
+        participant.setSchemeVersion("v1");
+        participant.setState(ParticipantState.ACTIVE);
+        session.persist(participant);
+    }
 
     /**
      * When client is deleted from local database
@@ -649,6 +746,15 @@ public class ClientServiceIntegrationTest extends AbstractServiceIntegrationTest
         assertThrows(ClientService.AdditionalMemberAlreadyExistsException.class,
                 () -> clientService.addLocalClient(id2.getMemberClass(), id2.getMemberCode(), id2.getSubsystemCode(), null,
                         IsAuthentication.SSLAUTH, false));
+    }
+
+    @Test
+    public void addLocalClientNotifiesCatalogInvalidation() throws Exception {
+        ClientId id = getClientId("FI:GOV:M2");
+        clientService.addLocalClient(id.getMemberClass(), id.getMemberCode(), id.getSubsystemCode(), null,
+                IsAuthentication.SSLAUTH, false);
+
+        verify(catalogInvalidationNotifier).invalidateCatalogCaches();
     }
 
     @Test

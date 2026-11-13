@@ -35,16 +35,22 @@ import io.grpc.stub.StreamObserver;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.niis.xroad.common.agreementtoken.key.AgreementTokenKeyInfo;
+import org.niis.xroad.common.core.exception.ErrorCode;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.common.healthcheck.HeapMemoryStatusService;
 import org.niis.xroad.messagelog.MessageLogEncryptionProperties;
 import org.niis.xroad.messagelog.archive.EncryptionConfigProvider;
 import org.niis.xroad.proxy.core.admin.handler.TimestampStatusHandler;
+import org.niis.xroad.proxy.core.configuration.AgreementTokenKeyMaterial;
 import org.niis.xroad.proxy.core.configuration.ProxyMessageLogProperties;
 import org.niis.xroad.proxy.proto.AddOnStatusResp;
 import org.niis.xroad.proxy.proto.AdminServiceGrpc;
+import org.niis.xroad.proxy.proto.AgreementTokenKeyStatusResp;
 import org.niis.xroad.proxy.proto.MessageLogArchiveEncryptionMember;
 import org.niis.xroad.proxy.proto.MessageLogEncryptionStatusResp;
 import org.niis.xroad.proxy.proto.ProxyMemoryStatusResp;
+import org.niis.xroad.proxy.proto.RotateAgreementTokenSigningKeyResp;
 import org.niis.xroad.proxy.proto.TimestampStatusResp;
 import org.niis.xroad.proxy.proto.TimestampingPrioritizationStrategyResp;
 import org.niis.xroad.proxy.proto.dto.MessageLogEncryptionStatusDiagnostics;
@@ -69,6 +75,7 @@ public class AdminService extends AdminServiceGrpc.AdminServiceImplBase {
     private final EncryptionConfigProvider encryptionConfigProvider;
     private final ProxyMessageLogProperties messageLogProperties;
     private final MessageLogEncryptionProperties messageLogEncryptionProperties;
+    private final AgreementTokenKeyMaterial agreementTokenKeyMaterial;
 
     private MessageLogEncryptionStatusDiagnostics messageLogEncryptionStatusDiagnostics;
 
@@ -101,6 +108,16 @@ public class AdminService extends AdminServiceGrpc.AdminServiceImplBase {
     public void getTimestampingPrioritizationStrategy(
             Empty request, StreamObserver<TimestampingPrioritizationStrategyResp> responseObserver) {
         handleRequest(responseObserver, this::handleGetTimestampingPrioritizationStrategy);
+    }
+
+    @Override
+    public void rotateAgreementTokenSigningKey(Empty request, StreamObserver<RotateAgreementTokenSigningKeyResp> responseObserver) {
+        handleRequest(responseObserver, this::handleRotateAgreementTokenSigningKey);
+    }
+
+    @Override
+    public void getAgreementTokenKeyStatus(Empty request, StreamObserver<AgreementTokenKeyStatusResp> responseObserver) {
+        handleRequest(responseObserver, this::handleGetAgreementTokenKeyStatus);
     }
 
     private <T> void handleRequest(StreamObserver<T> responseObserver, Supplier<T> handler) {
@@ -160,6 +177,32 @@ public class AdminService extends AdminServiceGrpc.AdminServiceImplBase {
         return Empty.getDefaultInstance();
     }
 
+    private RotateAgreementTokenSigningKeyResp handleRotateAgreementTokenSigningKey() {
+        var provider = agreementTokenKeyMaterial.provider()
+                .orElseThrow(() -> XrdRuntimeException.systemException(ErrorCode.AGREEMENT_TOKEN_KEY_NOT_AVAILABLE)
+                        .details("Agreement-token signing key material is not available; cannot rotate")
+                        .build());
+        var newKey = provider.rotate();
+        return RotateAgreementTokenSigningKeyResp.newBuilder().setKeyId(newKey.keyId()).build();
+    }
+
+    private AgreementTokenKeyStatusResp handleGetAgreementTokenKeyStatus() {
+        var response = AgreementTokenKeyStatusResp.newBuilder();
+        var provider = agreementTokenKeyMaterial.provider();
+        if (provider.isEmpty()) {
+            return response.setAvailable(false).build();
+        }
+        var keys = provider.get().listKeys();
+        response.setAvailable(true).setRetainedKeyCount(keys.size());
+        keys.stream().filter(AgreementTokenKeyInfo::signing).findFirst().ifPresent(active -> {
+            response.setActiveKeyId(active.keyId());
+            active.issueTime().ifPresent(issueTime -> response.setActiveKeyCreatedAt(issueTime.toEpochMilli()));
+        });
+        if (!keys.isEmpty() && !keys.get(keys.size() - 1).signing()) {
+            response.setPendingKeyId(keys.get(keys.size() - 1).keyId());
+        }
+        return response.build();
+    }
 
     private MessageLogEncryptionStatusDiagnostics messageLogEncryptionStatusDiagnostics() {
         return new MessageLogEncryptionStatusDiagnostics(

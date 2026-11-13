@@ -61,6 +61,10 @@ export enum RouteName {
   SSTlsCertificate = 'ss-tls-certificate',
   DsTlsCertificate = 'ds-tls-certificate',
   DsTlsCertificateDetails = 'ds-tls-certificate-details',
+  AgreementTokenKey = 'agreement-token-key',
+  OpMonitorTrust = 'op-monitor-trust',
+  ExternalRpcCaDetails = 'external-rpc-ca-details',
+  OpMonitorCaDetails = 'op-monitor-ca-details',
   Token = 'token',
   Key = 'key',
   Settings = 'settings',
@@ -141,6 +145,7 @@ export enum Permissions {
   IMPORT_AUTH_CERT = 'IMPORT_AUTH_CERT',
   IMPORT_INTERNAL_TLS_CERT = 'IMPORT_INTERNAL_TLS_CERT', // Import security server TLS certificate
   UPLOAD_DS_TLS_CERT = 'UPLOAD_DS_TLS_CERT', // Upload the DataSpace TLS certificate
+  ORDER_DS_TLS_CERT = 'ORDER_DS_TLS_CERT', // Order the DataSpace TLS certificate via ACME
   IMPORT_SIGN_CERT = 'IMPORT_SIGN_CERT',
   IMPORT_UNKNOWN_CERT = 'IMPORT_UNKNOWN_CERT', // Import hardware token certificate from token
   INIT_CONFIG = 'INIT_CONFIG', // can initialise security server
@@ -175,6 +180,13 @@ export enum Permissions {
   VIEW_INTERNAL_TLS_CERT = 'VIEW_INTERNAL_TLS_CERT', // view server TLS certificate in client "internal servers" or in system parameters
   VIEW_DS_TLS_CERT = 'VIEW_DS_TLS_CERT', // view the DataSpace TLS certificate details and status
   DOWNLOAD_DS_TLS_CERT = 'DOWNLOAD_DS_TLS_CERT', // download the DataSpace TLS certificate
+  VIEW_AGREEMENT_TOKEN_KEY = 'VIEW_AGREEMENT_TOKEN_KEY', // keys and certificates > agreement token key tab
+  ROTATE_AGREEMENT_TOKEN_KEY = 'ROTATE_AGREEMENT_TOKEN_KEY', // keys and certificates > agreement token key > rotate key
+  VIEW_EXTERNAL_RPC_CA = 'VIEW_EXTERNAL_RPC_CA', // view the external RPC CA details
+  DOWNLOAD_EXTERNAL_RPC_CA = 'DOWNLOAD_EXTERNAL_RPC_CA', // download the external RPC CA
+  VIEW_OP_MONITOR_CA = 'VIEW_OP_MONITOR_CA', // view the op-monitor CA details
+  UPLOAD_OP_MONITOR_CA = 'UPLOAD_OP_MONITOR_CA', // upload or replace the op-monitor CA
+  DELETE_OP_MONITOR_CA = 'DELETE_OP_MONITOR_CA', // delete the op-monitor CA
   VIEW_KEYS = 'VIEW_KEYS', // keys and certificates tab
   VIEW_SERVICE_ACL = 'VIEW_SERVICE_ACL', // not needed because roles can't access the view
   VIEW_SYS_PARAMS = 'VIEW_SYS_PARAMS', // settings > system paramters tab

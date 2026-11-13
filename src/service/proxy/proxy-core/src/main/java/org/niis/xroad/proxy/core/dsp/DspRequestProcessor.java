@@ -36,13 +36,54 @@ public interface DspRequestProcessor {
 
     /**
      * Executes DSP processing for the given request and returns the asset access details
-     * (endpoint + optional authorization) resolved from the control plane.
+     * (endpoint + optional authorization) resolved from the control plane, with the number of
+     * distinct candidate Security Servers the acquisition chose among.
      *
      * @param request the DSP request carrying the target service identifier and an optional
      *                caller-sent security-server hint
-     * @return the asset access response containing the dataplane endpoint and optional authorization;
-     *         never {@code null} — an unresolved target raises an exception instead
+     * @return the acquisition holding the asset access response with the dataplane endpoint and optional
+     *         authorization; never {@code null} — an unresolved target raises an exception instead
      */
     @Nonnull
-    AssetAccessResponse execute(DspRequest request);
+    DspAcquisition execute(DspRequest request);
+
+    /**
+     * Tells whether the request goes to the provider over the X-Road 7 path instead of through DSP. A request
+     * that bypasses DSP is not passed to {@link #execute}, and no agreement token is attached to it.
+     *
+     * @param request the request to route
+     * @return {@code true} when the request bypasses DSP
+     */
+    default boolean bypassesDsp(DspRequest request) {
+        return false;
+    }
+
+    /**
+     * Drops the asset access held for the request's target, so that the next {@link #execute} acquires afresh.
+     * Called when the provider rejected the agreement token the cached asset access carried.
+     *
+     * @param request the request whose cached asset access is to be dropped
+     */
+    default void invalidateAssetAccess(DspRequest request) {
+    }
+
+    /**
+     * Drops every cached asset access won by the Security Server at the given address, so that the next
+     * {@link #execute} acquires afresh. Servers are compared by the lowercase {@code host:port} of the address with
+     * the scheme's default port filled in, or by the exact address when it is not an HTTP(S) URL.
+     *
+     * @param counterPartyAddress the counter-party address of the failed Security Server
+     */
+    default void invalidateAssetAccessWonBy(String counterPartyAddress) {
+    }
+
+    /**
+     * Reports a provider Security Server as unreachable, so that the next acquisition keeps it out of selection.
+     * Returns without waiting for the control plane; a failed report is logged and never thrown.
+     *
+     * @param counterPartyId      the counter-party id of the failed Security Server
+     * @param counterPartyAddress the counter-party address of the failed Security Server
+     */
+    default void reportCounterPartyFailure(String counterPartyId, String counterPartyAddress) {
+    }
 }

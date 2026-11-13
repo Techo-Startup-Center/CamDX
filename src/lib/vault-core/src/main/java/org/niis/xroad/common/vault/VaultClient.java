@@ -27,6 +27,7 @@
 package org.niis.xroad.common.vault;
 
 import ee.ria.xroad.common.conf.InternalSSLKey;
+import ee.ria.xroad.common.util.CryptoUtils;
 
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemReader;
@@ -34,6 +35,7 @@ import org.bouncycastle.util.io.pem.PemWriter;
 import org.niis.xroad.common.core.exception.ErrorCode;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -69,7 +71,7 @@ public interface VaultClient {
     String LAST_ERROR_KEY = "lastError";
 
     String INTERNAL_TLS_CREDENTIALS_PATH = "tls/internal";
-    String OPMONITOR_TLS_CREDENTIALS_PATH = "tls/opmonitor";
+    String OPMONITOR_CA_PATH = "tls/opmonitor-ca";
     String ADMIN_SERVICE_TLS_CREDENTIALS_PATH = "tls/admin-service";
     String MANAGEMENT_SERVICE_TLS_CREDENTIALS_PATH = "tls/management-service";
     String CONFIGURATION_PROXY_TLS_CREDENTIALS_PATH = "tls/configuration-proxy";
@@ -81,21 +83,17 @@ public interface VaultClient {
 
     String MLOG_DB_ENCRYPTION_SECRET_KEYS_BASE_PATH = "message-log/database-encryption/keys";
 
-    String SIGNER_TOKEN_PINS_BASE_PATH = "signer/token-pins";
-
     String ACME_ACCOUNT_KEYS_BASE_PATH = "acme/account-keys";
 
-    InternalSSLKey getInternalTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException;
+    String AGREEMENT_TOKEN_SIGNING_KEYS_BASE_PATH = "agreement-token/signing-keys";
 
-    InternalSSLKey getOpmonitorTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException;
+    InternalSSLKey getInternalTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException;
 
     InternalSSLKey getAdminServiceTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException;
 
     InternalSSLKey getManagementServicesTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException;
 
     void createInternalTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException;
-
-    void createOpmonitorTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException;
 
     void createAdminServiceTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException;
 
@@ -123,6 +121,26 @@ public interface VaultClient {
      * @param status the enrollment status to store
      */
     void createDsTlsEnrollmentStatus(DsTlsEnrollmentStatus status);
+
+    /**
+     * Retrieves the CA certificate of an operational monitoring daemon (op-monitor) running on another host.
+     *
+     * @return the stored CA certificate, or empty if none is stored or the stored record holds no certificate
+     */
+    Optional<X509Certificate> getOpMonitorCa();
+
+    /**
+     * Stores the op-monitor CA certificate, replacing whatever was stored before.
+     *
+     * @param certificate the CA certificate to store
+     */
+    void createOpMonitorCa(X509Certificate certificate);
+
+    /**
+     * Clears the stored op-monitor CA certificate by writing a record whose {@code certificate} field is blank,
+     * never by deleting the secret.
+     */
+    void clearOpMonitorCa();
 
     void setMLogArchivalSigningSecretKey(String armoredPrivateKey);
 
@@ -188,6 +206,32 @@ public interface VaultClient {
      * @return the stored key pair and its rotation-expiry timestamp, or empty if none exists yet for this alias
      */
     Optional<AcmeAccountKey> getAcmeAccountKey(String alias);
+
+    /**
+     * Stores an agreement-token signing key pair, serialised as a JWK including its private part, under its
+     * key id. Key ids are versioned ("1", "2", ...) rather than reused, so rotation never overwrites a key
+     * a still-outstanding token might have been signed with.
+     *
+     * @param keyId the key's id, as later carried in a minted token's header
+     * @param keyPairJwk the key pair as JWK JSON, private part included
+     */
+    void createAgreementTokenSigningKey(String keyId, String keyPairJwk);
+
+    /**
+     * Retrieves every agreement-token signing key currently stored, keyed by key id. Includes keys
+     * superseded by rotation, so a verifier can still resolve the key a not-yet-expired token names.
+     *
+     * @return map of key id to key pair JWK JSON
+     */
+    Map<String, String> getAgreementTokenSigningKeys();
+
+    /**
+     * Deletes one agreement-token signing key. Only a key that has stopped signing, and is kept for the
+     * retention period after that so every token it signed has expired, may be deleted; the caller decides which.
+     *
+     * @param keyId the id of the key to delete
+     */
+    void deleteAgreementTokenSigningKey(String keyId);
 
     default String toPem(PrivateKey privateKey) throws IOException {
         StringWriter stringWriter = new StringWriter();
@@ -269,29 +313,73 @@ public interface VaultClient {
     /**
      * Parses a raw Vault secret map into a {@link DsTlsEnrollmentStatus}. Shared by every {@link VaultClient}
      * implementation regardless of whether its underlying client returns {@code Map<String, Object>} or
-     * {@code Map<String, String>} values.
+     * {@code Map<String, String>} values. A missing or blank value means the field is absent, so records written
+     * by {@link #toDsTlsEnrollmentStatusSecret(DsTlsEnrollmentStatus)} and older records that omitted optional
+     * keys both parse.
      */
     default DsTlsEnrollmentStatus toDsTlsEnrollmentStatus(Map<String, ?> secret) {
-        var method = DsTlsEnrollmentMethod.valueOf(secret.get(METHOD_KEY).toString());
-        var nextRenewalTime = secret.containsKey(NEXT_RENEWAL_TIME_KEY)
-                ? Instant.parse(secret.get(NEXT_RENEWAL_TIME_KEY).toString()) : null;
-        var lastError = secret.containsKey(LAST_ERROR_KEY) ? secret.get(LAST_ERROR_KEY).toString() : null;
-        return new DsTlsEnrollmentStatus(method, nextRenewalTime, lastError);
+        var method = presentValue(secret, METHOD_KEY);
+        var nextRenewalTime = presentValue(secret, NEXT_RENEWAL_TIME_KEY);
+        return new DsTlsEnrollmentStatus(
+                method == null ? null : DsTlsEnrollmentMethod.valueOf(method),
+                nextRenewalTime == null ? null : Instant.parse(nextRenewalTime),
+                presentValue(secret, LAST_ERROR_KEY));
     }
 
     /**
      * Builds the raw Vault secret map for a {@link DsTlsEnrollmentStatus}, the inverse of
-     * {@link #toDsTlsEnrollmentStatus(Map)}.
+     * {@link #toDsTlsEnrollmentStatus(Map)}. Every key is always written, blank when the field is absent: the
+     * OpenBao policy for this path grants no delete, so clearing the record is an ordinary write, and a KV v1 mount
+     * rejects a secret without data fields.
      */
     default Map<String, String> toDsTlsEnrollmentStatusSecret(DsTlsEnrollmentStatus status) {
         var secret = new HashMap<String, String>();
-        secret.put(METHOD_KEY, status.method().name());
-        if (status.nextRenewalTime() != null) {
-            secret.put(NEXT_RENEWAL_TIME_KEY, status.nextRenewalTime().toString());
-        }
-        if (status.lastError() != null) {
-            secret.put(LAST_ERROR_KEY, status.lastError());
-        }
+        secret.put(METHOD_KEY, status.method() == null ? "" : status.method().name());
+        secret.put(NEXT_RENEWAL_TIME_KEY, status.nextRenewalTime() == null ? "" : status.nextRenewalTime().toString());
+        secret.put(LAST_ERROR_KEY, status.lastError() == null ? "" : status.lastError());
         return secret;
+    }
+
+    /**
+     * Parses a raw Vault secret map into the op-monitor CA certificate. Shared by every {@link VaultClient}
+     * implementation regardless of whether its underlying client returns {@code Map<String, Object>} or
+     * {@code Map<String, String>} values. A missing or blank {@code certificate} field means no CA is stored.
+     */
+    default Optional<X509Certificate> toOpMonitorCa(Map<String, ?> secret) {
+        var pem = presentValue(secret, CERTIFICATE_KEY);
+        if (pem == null) {
+            return Optional.empty();
+        }
+        return Optional.of(CryptoUtils.readCertificate(new ByteArrayInputStream(pem.getBytes(StandardCharsets.UTF_8))));
+    }
+
+    /**
+     * Builds the raw Vault secret map for the op-monitor CA certificate, the inverse of
+     * {@link #toOpMonitorCa(Map)}. The record holds exactly the {@code certificate} field.
+     */
+    default Map<String, String> toOpMonitorCaSecret(X509Certificate certificate) {
+        try {
+            return Map.of(CERTIFICATE_KEY, toPem(certificate));
+        } catch (IOException | CertificateEncodingException e) {
+            throw XrdRuntimeException.systemException(e);
+        }
+    }
+
+    /**
+     * Builds the raw Vault secret map that marks the op-monitor CA as absent: the {@code certificate} field is kept,
+     * blank. The OpenBao policy for this path grants no delete, so clearing is an ordinary write, and a KV v1 mount
+     * rejects a secret without data fields.
+     */
+    default Map<String, String> toClearedOpMonitorCaSecret() {
+        return Map.of(CERTIFICATE_KEY, "");
+    }
+
+    private static String presentValue(Map<String, ?> secret, String key) {
+        var value = secret.get(key);
+        if (value == null) {
+            return null;
+        }
+        var text = value.toString();
+        return text.isBlank() ? null : text;
     }
 }

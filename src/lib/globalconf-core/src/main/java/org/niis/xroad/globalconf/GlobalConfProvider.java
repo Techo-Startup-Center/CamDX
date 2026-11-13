@@ -38,9 +38,10 @@ import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.globalconf.cert.CertChain;
 import org.niis.xroad.globalconf.extension.GlobalConfExtensions;
 import org.niis.xroad.globalconf.model.ApprovedCAInfo;
-import org.niis.xroad.globalconf.model.ApprovedDsTlsCaInfo;
+import org.niis.xroad.globalconf.model.ApprovedConnectorTlsCAInfo;
 import org.niis.xroad.globalconf.model.GlobalGroupInfo;
 import org.niis.xroad.globalconf.model.MemberInfo;
+import org.niis.xroad.globalconf.model.ServerSystemValues;
 import org.niis.xroad.globalconf.model.SharedParameters;
 
 import java.io.IOException;
@@ -290,12 +291,50 @@ public interface GlobalConfProvider {
 
     /**
      * @param instanceIdentifier the instance identifier
-     * @return all known approved DataSpace TLS CAs. Separate from {@link #getApprovedCAs}: this list is never
+     * @return all known approved connector TLS CAs. Separate from {@link #getApprovedCAs}: this list is never
      * consulted for member-certificate validation.
      */
-    default Collection<ApprovedDsTlsCaInfo> getApprovedDsTlsCas(
+    default Collection<ApprovedConnectorTlsCAInfo> getApprovedConnectorTlsCAs(
             String instanceIdentifier) {
         return Collections.emptyList();
+    }
+
+    /**
+     * @param instanceIdentifier the instance identifier
+     * @return the distributed credential issuer trust anchor: every issuer DID published by any Central Server
+     * node of this instance. Empty when no node has provisioned a credential issuer.
+     */
+    default Collection<String> getCredentialIssuerDids(
+            String instanceIdentifier) {
+        return Collections.emptyList();
+    }
+
+    /**
+     * @param instanceIdentifier the instance identifier
+     * @return true when the instance refuses legacy calls. False when the instance does not publish the setting, is
+     * unknown or its global configuration cannot be read.
+     */
+    default boolean isLegacyProtocolDisabled(String instanceIdentifier) {
+        return false;
+    }
+
+    /**
+     * @param serverId the Security Server identifier
+     * @return the SYSTEM DID and DSP base URL published for the server, or empty when the server is unknown or has
+     * no published values
+     */
+    default Optional<ServerSystemValues> getServerSystemValues(SecurityServerId serverId) {
+        return Optional.empty();
+    }
+
+    /**
+     * @param memberId a member or subsystem identifier; a subsystem is resolved to its member
+     * @param serverId the Security Server identifier
+     * @return the DID published for the member on the server, or empty when the server is unknown or the member has
+     * no published DID on it
+     */
+    default Optional<String> getMemberDid(ClientId memberId, SecurityServerId serverId) {
+        return Optional.empty();
     }
 
     /**
@@ -354,6 +393,16 @@ public interface GlobalConfProvider {
      * @return true, if given subject belongs to given global group
      */
     boolean isSubjectInGlobalGroup(ClientId subject, GlobalGroupId group);
+
+    /**
+     * The member-level counterpart of {@link #isSubjectInGlobalGroup}, for callers that know only the member of a
+     * client, such as the DSP catalog.
+     *
+     * @param member the member identifier, its subsystem part (if any) ignored
+     * @param group  the global group
+     * @return true, if the member itself or any of its subsystems belongs to the given global group
+     */
+    boolean isMemberInGlobalGroup(ClientId member, GlobalGroupId group);
 
     /**
      * @param client         the client identifier

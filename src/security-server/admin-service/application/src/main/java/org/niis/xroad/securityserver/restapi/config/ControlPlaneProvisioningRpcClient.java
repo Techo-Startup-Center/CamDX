@@ -34,6 +34,8 @@ import org.niis.xroad.common.rpc.client.AbstractRpcClient;
 import org.niis.xroad.common.rpc.client.RpcChannelFactory;
 import org.niis.xroad.edc.controlplane.provisioning.proto.ControlPlaneProvisioningServiceGrpc;
 import org.niis.xroad.edc.controlplane.provisioning.proto.CreateParticipantContextReq;
+import org.niis.xroad.edc.controlplane.provisioning.proto.DeleteParticipantContextReq;
+import org.niis.xroad.edc.controlplane.provisioning.proto.InvalidateCatalogCachesReq;
 import org.niis.xroad.edc.controlplane.provisioning.proto.PutParticipantContextConfigReq;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
@@ -94,5 +96,15 @@ public class ControlPlaneProvisioningRpcClient extends AbstractRpcClient impleme
                 .setDid(did)
                 .setStsTokenUrl(stsTokenUrl)
                 .build()));
+    }
+
+    public void deleteParticipantContext(String participantContextId) {
+        exec(() -> stub.deleteParticipantContext(DeleteParticipantContextReq.newBuilder()
+                .setParticipantContextId(participantContextId)
+                .build()));
+    }
+
+    public void invalidateCatalogCaches() {
+        exec(() -> stub.invalidateCatalogCaches(InvalidateCatalogCachesReq.getDefaultInstance()));
     }
 }

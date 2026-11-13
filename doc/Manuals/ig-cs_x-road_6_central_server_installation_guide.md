@@ -1,6 +1,6 @@
 # X-Road: Central Server Installation Guide <!-- omit in toc -->
 
-Version: 2.45
+Version: 2.49
 Doc. ID: IG-CS
 
 ---
@@ -63,6 +63,10 @@ Doc. ID: IG-CS
 | 21.03.2025 | 2.43    | Syntax and styling                                                                                                                                                                            | Pauline Dimmek       |
 | 03.06.2025 | 2.44    | Setup database connection with SSL certificates                                                                                                                                               | Eneli Reimets        |
 | 30.06.2025 | 2.45    | Update the method of adding X-Road apt repository                                                                                                                                             | Mikk-Erik Bachmann   |
+| 10.09.2026 | 2.46    | Document hardware token configuration via the `xroad.signer.modules` database property                                                                                                       | Ričardas Bučiūnas    |
+| 05.11.2026 | 2.47    | Document per-node property values in `db_property.sh`                                                                                                                                        |                      |
+| 07.11.2026 | 2.48    | Add the `db_property.sh list` command and the node name rule                                                                                                                                 |                      |
+| 11.11.2026 | 2.49    | Use the TLS certificate name keys as the per-node example and describe the default of a key without a row                                                                                    | Ričardas Bučiūnas    |
 
 
 ## Table of Contents <!-- omit in toc -->
@@ -353,7 +357,7 @@ systemctl reload nginx
 ```
 
 
-### 2.8 Installing the Support for Hardware Tokens (TODO this is outdated!!!)
+### 2.8 Installing the Support for Hardware Tokens
 
 To configure support for hardware security tokens (smartcard, USB token, Hardware Security Module), act as follows.
 
@@ -362,10 +366,10 @@ To configure support for hardware security tokens (smartcard, USB token, Hardwar
     ```bash
     sudo apt install xroad-addon-hwtokens
     ```
-    
+
 2.  Install and configure a PKCS\#11 driver for the hardware token according to the manufacturer's instructions.
 
-3.  Add the path to the PKCS\#11 driver to the file `/etc/xroad/devices.ini` (as described in the example given in the file).
+3.  Configure the module by adding an entry for it to the `xroad.signer.modules` configuration property, as described below.
 
 4.  After installing and configuring the driver, the xroad-signer service must be restarted:
 
@@ -373,33 +377,95 @@ To configure support for hardware security tokens (smartcard, USB token, Hardwar
     sudo service xroad-signer restart
     ```
 
-If you are running a high availability (HA) hardware token setup (such as a cluster with replicated tokens) then you may need to constrain the token identifier format such that the token replicas can be seen as the same token. The token identifier format can be changed in `/etc/xroad/devices.ini` via the `token_id_format` property (default value: `{moduleType}{slotIndex}{serialNumber}{label}`). Removing certain parts of the identifier will allow the HA setup to work correctly when one of the tokens goes down and is replaced by a replica. For example, if the token replicas are reported to be on different slots the `{slotIndex}` part should be removed from the identifier format.
+Hardware token (HSM) modules are configured as a single JSON document stored in the `xroad.signer.modules` configuration property, not as a file on disk. The document is a JSON object that maps a module identifier of your own choosing (used as the token's UID) to that module's settings, for example:
 
-Depending on the hardware token there may be a need for more additional configuration. All possible configurable parameters in the `/etc/xroad/devices.ini` are described in the next table.
+```json
+{
+  "softhsm2": {
+    "library": "/usr/lib/softhsm/libsofthsm2.so",
+    "os-locking-ok": true,
+    "library-cant-create-os-threads": true,
+    "slot-ids": [0],
+    "token-id-format": "1"
+  }
+}
+```
 
-| Parameter                               | Type        | Default Value                                  | Explanation                                                                                                                                                                                                                                                                                                                        |
-|-----------------------------------------|-------------|------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| *enabled*                               | BOOLEAN     | *true*                                         | Indicates whether this device is enabled.                                                                                                                                                                                                                                                                                          |
-| *library*                               | STRING      |                                                | The path to the pkcs#11 library of the device driver.                                                                                                                                                                                                                                                                              |
-| *library_cant_create_os_threads*        | BOOLEAN     | *false*                                        | Indicates whether application threads, which are executing calls to the pkcs#11 library, may not use native operating system calls to spawn new threads (in other words, the library’s code may not create its own threads).                                                                                                       |
-| *os_locking_ok*                         | BOOLEAN     | *false*                                        | Indicates whether the pkcs#11 library may use the native operation system threading model for locking.                                                                                                                                                                                                                             |
-| *sign_verify_pin*                       | BOOLEAN     | *false*                                        | Indicates whether the PIN should be entered per signing operation.                                                                                                                                                                                                                                                                 |
-| *token_id_format*                       | STRING      | *{moduleType}{slotIndex}{serialNumber}{label}* | Specifies the identifier format used to uniquely identify a token. In certain high availability setups may need be constrained to support replicated tokens (eg. by removing the slot index part which may be different for the token replicas).                                                                                   |
-| *sign_mechanism*                        | STRING      | *CKM_RSA_PKCS*                                 | Specifies the signing mechanism. Supported values: *CKM_RSA_PKCS*, *CKM_RSA_PKCS_PSS*.                                                                                                                                                                                                                                             |
-| *rsa_sign_mechanism*                    | STRING      | *CKM_RSA_PKCS*                                 | Specifies the signing mechanism. Supported values: *CKM_RSA_PKCS*, *CKM_RSA_PKCS_PSS*. If value isn't provided then defaults to value of *sign_mechanism* if present.                                                                                                                                                              |
-| *ec_sign_mechanism*                     | STRING      | *CKM_ECDSA*                                    | Specifies the signing mechanism for EC keys. Supported values: *CKM_ECDSA*.                                                                                                                                                                                                                                                        |
-| *pub_key_attribute_encrypt*             | BOOLEAN     | *true*                                         | Indicates whether public key can be used for encryption.                                                                                                                                                                                                                                                                           |
-| *pub_key_attribute_verify*              | BOOLEAN     | *true*                                         | Indicates whether public key can be used for verification.                                                                                                                                                                                                                                                                         |
-| *pub_key_attribute_wrap*                | BOOLEAN     |                                                | Indicates whether public key can be used for wrapping other keys.                                                                                                                                                                                                                                                                  |
-| *pub_key_attribute_allowed_mechanisms*  | STRING LIST |                                                | Specifies public key allowed mechanisms. Supported values: *CKM_RSA_PKCS*, *CKM_SHA256_RSA_PKCS*, *CKM_SHA384_RSA_PKCS*, *CKM_SHA512_RSA_PKCS*, and *CKM_RSA_PKCS_PSS*, *CKM_SHA256_RSA_PKCS_PSS*, *CKM_SHA384_RSA_PKCS_PSS*, *CKM_SHA512_RSA_PKCS_PSS*, *CKM_ECDSA*, *CKM_ECDSA_SHA256*, *CKM_ECDSA_SHA384*, *CKM_ECDSA_SHA512*.  |
-| *priv_key_attribute_sensitive*          | BOOLEAN     | *true*                                         | Indicates whether private key is sensitive.                                                                                                                                                                                                                                                                                        |
-| *priv_key_attribute_decrypt*            | BOOLEAN     | *true*                                         | Indicates whether private key can be used for encryption.                                                                                                                                                                                                                                                                          |
-| *priv_key_attribute_sign*               | BOOLEAN     | *true*                                         | Indicates whether private key can be used for signing.                                                                                                                                                                                                                                                                             |
-| *priv_key_attribute_unwrap*             | BOOLEAN     |                                                | Indicates whether private key can be used for unwrapping wrapped keys.                                                                                                                                                                                                                                                             |
-| *priv_key_attribute_allowed_mechanisms* | STRING LIST |                                                | Specifies private key allowed mechanisms. Supported values: *CKM_RSA_PKCS*, *CKM_SHA256_RSA_PKCS*, *CKM_SHA384_RSA_PKCS*, *CKM_SHA512_RSA_PKCS*, and *CKM_RSA_PKCS_PSS*, *CKM_SHA256_RSA_PKCS_PSS*, *CKM_SHA384_RSA_PKCS_PSS*, *CKM_SHA512_RSA_PKCS_PSS*, *CKM_ECDSA*, *CKM_ECDSA_SHA256*, *CKM_ECDSA_SHA384*, *CKM_ECDSA_SHA512*. |
+All possible properties of a module entry are described in the next table.
 
-**Note 1:** Only parameter *library* is mandatory, all the others are optional.  
-**Note 2:** The item separator of the type STRING LIST is ",".
+| Property                                 | Type         | Default Value                                  | Explanation                                                                                                                                                                                                                                                                                                                        |
+|-------------------------------------------|--------------|-------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `enabled`                                  | BOOLEAN      | `true`                                          | Indicates whether this module is enabled. Setting `enabled: false` for the reserved module id `softToken` disables the built-in software token instead of a hardware module.                                                                                                                                                    |
+| `library`                                  | STRING       |                                                  | The path to the PKCS#11 library of the device driver, as seen by the signer process.                                                                                                                                                                                                                                              |
+| `library-cant-create-os-threads`           | BOOLEAN      |                                                  | Indicates whether application threads, which are executing calls to the PKCS#11 library, may not use native operating system calls to spawn new threads (in other words, the library's code may not create its own threads).                                                                                                    |
+| `os-locking-ok`                            | BOOLEAN      |                                                  | Indicates whether the PKCS#11 library may use the native operating system threading model for locking.                                                                                                                                                                                                                            |
+| `sign-verify-pin`                          | BOOLEAN      | `false`                                          | Indicates whether the PIN should be entered per signing operation.                                                                                                                                                                                                                                                                 |
+| `token-id-format`                          | STRING       | `{moduleType}{slotIndex}{serialNumber}{label}`  | Specifies the identifier format used to uniquely identify a token. In certain high availability setups may need to be constrained to support replicated tokens (e.g. by removing the slot index part which may be different for the token replicas).                                                                             |
+| `sign-mechanism`                           | STRING       | `CKM_RSA_PKCS`                                  | Specifies the signing mechanism. Supported values: `CKM_RSA_PKCS`, `CKM_RSA_PKCS_PSS`.                                                                                                                                                                                                                                            |
+| `rsa-sign-mechanism`                       | STRING       | value of `sign-mechanism`                       | Specifies the signing mechanism for RSA keys, overriding `sign-mechanism`. Supported values: `CKM_RSA_PKCS`, `CKM_RSA_PKCS_PSS`.                                                                                                                                                                                                  |
+| `ec-sign-mechanism`                        | STRING       | `CKM_ECDSA`                                     | Specifies the signing mechanism for EC keys. Supported values: `CKM_ECDSA`.                                                                                                                                                                                                                                                       |
+| `pub-key-attribute-encrypt`                | BOOLEAN      | `true`                                           | Indicates whether the public key can be used for encryption.                                                                                                                                                                                                                                                                      |
+| `pub-key-attribute-verify`                 | BOOLEAN      | `true`                                           | Indicates whether the public key can be used for verification.                                                                                                                                                                                                                                                                    |
+| `pub-key-attribute-wrap`                   | BOOLEAN      |                                                  | Indicates whether the public key can be used for wrapping other keys.                                                                                                                                                                                                                                                             |
+| `pub-key-attribute-verify-recover`         | BOOLEAN      |                                                  | Indicates whether the public key has the verify-recover attribute.                                                                                                                                                                                                                                                                |
+| `pub-key-attribute-trusted`                | BOOLEAN      |                                                  | Indicates whether the public key has the trusted attribute.                                                                                                                                                                                                                                                                       |
+| `pub-key-attribute-allowed-mechanisms`     | STRING LIST  |                                                  | Specifies public key allowed mechanisms. Supported values: `CKM_RSA_PKCS`, `CKM_SHA256_RSA_PKCS`, `CKM_SHA384_RSA_PKCS`, `CKM_SHA512_RSA_PKCS`, `CKM_RSA_PKCS_PSS`, `CKM_SHA256_RSA_PKCS_PSS`, `CKM_SHA384_RSA_PKCS_PSS`, `CKM_SHA512_RSA_PKCS_PSS`, `CKM_ECDSA`, `CKM_ECDSA_SHA256`, `CKM_ECDSA_SHA384`, `CKM_ECDSA_SHA512`.       |
+| `priv-key-attribute-sensitive`             | BOOLEAN      | `true`                                           | Indicates whether the private key is sensitive.                                                                                                                                                                                                                                                                                   |
+| `priv-key-attribute-decrypt`               | BOOLEAN      | `true`                                           | Indicates whether the private key can be used for decryption.                                                                                                                                                                                                                                                                     |
+| `priv-key-attribute-sign`                  | BOOLEAN      | `true`                                           | Indicates whether the private key can be used for signing.                                                                                                                                                                                                                                                                        |
+| `priv-key-attribute-unwrap`                | BOOLEAN      |                                                  | Indicates whether the private key can be used for unwrapping wrapped keys.                                                                                                                                                                                                                                                        |
+| `priv-key-attribute-sign-recover`          | BOOLEAN      |                                                  | Indicates whether the private key has the sign-recover attribute.                                                                                                                                                                                                                                                                 |
+| `priv-key-attribute-extractable`           | BOOLEAN      |                                                  | Indicates whether the private key has the extractable attribute.                                                                                                                                                                                                                                                                  |
+| `priv-key-attribute-always-sensitive`      | BOOLEAN      |                                                  | Indicates whether the private key has the always-sensitive attribute.                                                                                                                                                                                                                                                             |
+| `priv-key-attribute-never-extractable`     | BOOLEAN      |                                                  | Indicates whether the private key has the never-extractable attribute.                                                                                                                                                                                                                                                            |
+| `priv-key-attribute-wrap-with-trusted`     | BOOLEAN      |                                                  | Indicates whether the private key has the wrap-with-trusted attribute.                                                                                                                                                                                                                                                            |
+| `priv-key-attribute-allowed-mechanisms`    | STRING LIST  |                                                  | Specifies private key allowed mechanisms. Supported values: same as `pub-key-attribute-allowed-mechanisms`.                                                                                                                                                                                                                       |
+| `slot-ids`                                 | INTEGER LIST |                                                  | Restricts the module to the given PKCS#11 slot IDs. Useful when a driver reports more slots than there are physical tokens.                                                                                                                                                                                                       |
+| `batch-signing-enabled`                    | BOOLEAN      | `true`                                           | Indicates whether batch signing is enabled for this module.                                                                                                                                                                                                                                                                       |
+| `read-only`                                | BOOLEAN      | `false`                                          | Indicates whether the module is opened read-only.                                                                                                                                                                                                                                                                                 |
+
+**Note 1:** Only property `library` is mandatory, all the others are optional.
+**Note 2:** Properties of the type STRING LIST are JSON arrays of strings, e.g. `["CKM_RSA_PKCS", "CKM_ECDSA"]`.
+
+Set the property with `db_property.sh`, installed at `/usr/share/xroad/scripts/db_property.sh`:
+
+```bash
+sudo /usr/share/xroad/scripts/db_property.sh set xroad.signer.modules '{"softhsm2":{"library":"/usr/lib/softhsm/libsofthsm2.so","slot-ids":[0]}}' --yes
+```
+
+`xroad.signer.modules` is not exposed in the Central Server admin UI's System Parameters view; `db_property.sh` is the supported way to read and write it. The new value takes effect on the next `xroad-signer` restart — module configuration is read once at signer startup.
+
+**Per-node values:** in a clustered Central Server, each node can use its own value of a property.
+
+- By default `db_property.sh` acts on the shared value, which applies to all nodes.
+- `--node <name>` acts on the value of that node only. A node value wins over the shared value on that node; the other nodes keep using the shared value.
+- The services that read node values are the Central Server admin service, management service, registration service, signer, configuration client and Issuer Service. Each reads its settings once at startup, so restart the service after a change.
+- On the signer, the configuration client and the Issuer Service, settings that the framework publishes to the service use the shared value only, and a node value for them is ignored. An example is the `xroad.dsp.*` settings that the Issuer Service reads through the EDC settings.
+- Data that the signer keeps in its own tables, such as tokens and keys, is still shared by all nodes.
+- A node uses the name set in the `name` key of the `[node]` section of `/etc/xroad/conf.d/node.ini`. If it is blank or missing, the node name is `node_0`.
+- A node name consists of ASCII letters, digits, `_` and `-`, is at most 63 characters long and starts with an ASCII letter or digit. For the full rule, see [IG-CS-8](ig-cs_x-road_8_central_server_installation_guide.md#264-node-name) section 2.6.4.
+- Rows are bound to the node name. After a node is renamed, rows of the old name no longer apply; see [IG-CSHA](ig-csha_x-road_6_ha_installation_guide.md#41-node-name-and-renaming-a-node) section 4.1.
+- `db_property.sh list` prints every shared row as the key, a tab and the value, sorted by key. `db_property.sh list --node <name>` prints the rows of that node only.
+- A value that starts with `-` must be preceded by `--`, so that it is not read as an option.
+- Known limitation: the admin UI and `db_property.sh get` without `--node` show the shared value, not the value that a node actually uses. Use `get --node <name>` to see the value of a node.
+
+Example `node.ini` entry that names the node:
+
+```ini
+[node]
+name=node_1
+```
+
+Example: give the user interface certificate of `node_1` its own common name, and read it back. The keys `xroad.admin-service.tls.certificate-provisioning.*` and `xroad.management-service.tls.certificate-provisioning.*` set the names of the user interface and the management services certificates:
+
+```bash
+sudo /usr/share/xroad/scripts/db_property.sh set --yes --node node_1 -- xroad.admin-service.tls.certificate-provisioning.common-name cs1.example.org
+sudo /usr/share/xroad/scripts/db_property.sh get xroad.admin-service.tls.certificate-provisioning.common-name --node node_1
+```
+
+The other nodes keep using the shared row of the key, or the default of the key when there is no shared row. Then restart the service that reads the property on `node_1`. The certificate names are an exception: they take effect only when the certificate key is created again, see [IG-CS-8](ig-cs_x-road_8_central_server_installation_guide.md#262-provisioning-tls-certificates-for-management-services-and-user-interface) section 2.6.2.
+
+**Migrating from a pre-version-8 `devices.ini`:** versions of X-Road before 8 configured hardware tokens in an INI file at `/etc/xroad/devices.ini`. On X-Road 8 this file is no longer read by the signer — do not create it. When upgrading, `migration-cli signer-devices <devices.ini file> <db.properties file>` converts an existing `devices.ini` into the `xroad.signer.modules` document described above; see the version 8 upgrade guide for details.
 
 ### 2.9 Installing the Support for Monitoring
 

@@ -2,7 +2,7 @@
 
 **X-ROAD 7**
 
-Version: 2.109
+Version: 2.117
 Doc. ID: UG-SS
 
 ---
@@ -139,6 +139,13 @@ Doc. ID: UG-SS
 | 13.05.2026 | 2.108   | Correct tab placement for managing services                                                                                                                                                                                                                                                                                                                                                                 | Urmet Jänes          |
 | 22.05.2026 | 2.109   | Added ACME automatic certificate renewal clarification in a clustered setup                                                                                                                                                                                                                                                                                                                                 | Mikk-Erik Bachmann   |
 | 24.08.2026 | 2.110   | Removed the ACME account keystore password: the account key pair is now generated and stored in OpenBao automatically                                                                                                                                                                                                                                                                                      | Stefan Cvetkovski    |
+| 29.09.2026 | 2.111   | Message log archive upload example script demo-upload.pl is no longer included in the Security Server packages                                                                                                                                                                                                                                                                                             | Eneli Reimets        |
+| 13.10.2026 | 2.112   | Added the CA certificate exchange with an external operational monitoring daemon in section [15.2.6](#1526-exchanging-ca-certificates-with-an-external-operational-monitoring-daemon). Removed the outdated TLS certificate and gRPC keystore steps from section [15.2.5](#1525-configuring-an-external-operational-monitoring-daemon-and-the-corresponding-security-server)                               | Stefan Cvetkovski    |
+| 19.10.2026 | 2.113   | Updated the Diagnostics traffic limits and the operational monitoring daemon endpoint parameters for gRPC                                                                                                                                                                                                                                                                                                  | Eneli Reimets        |
+| 19.10.2026 | 2.114   | Added chapter [26](#26-managing-the-agreement-token-signing-key) on viewing and rotating the agreement token signing key                                                                                                                                                                                                                                                                                   | Andres Rosenthal     |
+| 20.10.2026 | 2.115   | Added automatic rotation, key retention and the remote secret store requirements to chapter [26](#26-managing-the-agreement-token-signing-key)                                                                                                                                                                                                                                                             | Andres Rosenthal     |
+| 05.11.2026 | 2.116   | Added section [7.4](#74-access-rights-over-the-dataspace-protocol) on when local group membership changes take effect over the dataspace protocol                                                                                                                                                                                                                                                          | Andres Rosenthal     |
+| 06.11.2026 | 2.117   | Added section [15.2.7](#1527-trust-settings-of-the-operational-monitoring-connection) on the trust settings of the operational monitoring connection                                                                                                                                                                                                                                                       | Eneli Reimets        |
 ## Table of Contents <!-- omit in toc -->
 
 <!-- toc -->
@@ -216,6 +223,7 @@ Doc. ID: UG-SS
   - [7.1 Changing the Access Rights of a Service](#71-changing-the-access-rights-of-a-service)
   - [7.2 Adding a Service Client](#72-adding-a-service-client)
   - [7.3 Changing the Access Rights of a Service Client](#73-changing-the-access-rights-of-a-service-client)
+  - [7.4 Access Rights over the Dataspace Protocol](#74-access-rights-over-the-dataspace-protocol)
 - [8 Local Access Right Groups](#8-local-access-right-groups)
   - [8.1 Adding a Local Group](#81-adding-a-local-group)
   - [8.2 Displaying and Changing the Members of a Local Group](#82-displaying-and-changing-the-members-of-a-local-group)
@@ -269,9 +277,11 @@ Doc. ID: UG-SS
   - [15.2 Operational Monitoring Daemon](#152-operational-monitoring-daemon)
     - [15.2.1 Configuring the Health Statistics Period](#1521-configuring-the-health-statistics-period)
     - [15.2.2 Configuring the Parameters Related to Database Cleanup](#1522-configuring-the-parameters-related-to-database-cleanup)
-    - [15.2.3 Configuring the Parameters related to the HTTP Endpoint of the Operational Monitoring Daemon](#1523-configuring-the-parameters-related-to-the-http-endpoint-of-the-operational-monitoring-daemon)
+    - [15.2.3 Configuring the Parameters related to the gRPC Endpoint of the Operational Monitoring Daemon](#1523-configuring-the-parameters-related-to-the-grpc-endpoint-of-the-operational-monitoring-daemon)
     - [15.2.4 Installing an External Operational Monitoring Daemon](#1524-installing-an-external-operational-monitoring-daemon)
     - [15.2.5 Configuring an External Operational Monitoring Daemon and the Corresponding Security Server](#1525-configuring-an-external-operational-monitoring-daemon-and-the-corresponding-security-server)
+    - [15.2.6 Exchanging CA Certificates with an External Operational Monitoring Daemon](#1526-exchanging-ca-certificates-with-an-external-operational-monitoring-daemon)
+    - [15.2.7 Trust Settings of the Operational Monitoring Connection](#1527-trust-settings-of-the-operational-monitoring-connection)
 - [16 Environmental Monitoring](#16-environmental-monitoring)
   - [16.1 Usage via SOAP API](#161-usage-via-soap-api)
   - [16.2 Limiting environmental monitoring remote data set](#162-limiting-environmental-monitoring-remote-data-set)
@@ -300,6 +310,12 @@ Doc. ID: UG-SS
 - [25 Migrating to EC Based Authentication and Signing Certificates](#25-migrating-to-ec-based-authentication-and-signing-certificates)
   - [25.1 Steps to Enable EC Based Certificates](#251-steps-to-enable-ec-based-certificates)
   - [25.2 Backwards Compatibility](#252-backwards-compatibility)
+- [26 Managing the Agreement Token Signing Key](#26-managing-the-agreement-token-signing-key)
+  - [26.1 Viewing the Signing Key Status](#261-viewing-the-signing-key-status)
+  - [26.2 Rotating the Signing Key](#262-rotating-the-signing-key)
+  - [26.3 Automatic Rotation](#263-automatic-rotation)
+  - [26.4 Key Retention](#264-key-retention)
+  - [26.5 Secret Store Requirements](#265-secret-store-requirements)
 
 <!-- vim-markdown-toc -->
 <!-- tocstop -->
@@ -1613,6 +1629,13 @@ To change the service client's access rights, follow these steps.
     - Removing service level access rights from the service client also removes all REST API endpoint level access rights to the endpoints of the service. In other words, removing access rights from the service client removes all access rights to a service and its endpoints.
 
 
+### 7.4 Access Rights over the Dataspace Protocol
+
+When the dataspace protocol is enabled on the Security Server, the access rights granted to subsystems and to local and global groups also apply to data exchange in a dataspace. The Security Server keeps the service catalog and the group memberships it publishes in a cache. A change to the access rights or to the members of a local group is therefore not visible in a dataspace immediately.
+
+Adding or removing a member of a local group (see section [8.2](#82-displaying-and-changing-the-members-of-a-local-group)) sends a signal, in the background after the change is saved, to the control plane instance that the Security Server administration service is connected to. When the signal is delivered, that instance clears these caches and the change takes effect there at once. If delivery fails, the failure is only logged, and that instance refreshes its caches when the cache period expires. Other control plane instances and the proxy do not receive the signal and always refresh their caches when the cache period expires. The worst-case time until a removal of a local group member takes effect on every instance is about 120 seconds (the membership cache period `xroad.common-server-conf.cache-period` plus the service catalog cache period `xroad.dsp.catalog.cache.ttl-seconds`, 60 seconds each by default).
+
+
 ## 8 Local Access Right Groups
 
 A local access rights group can be created for a Security Server client in order to facilitate the management of service access rights for a group of X-Road subsystems that use the same services. The access rights granted for a group apply for all the members of the group. Local groups are client-based, that is, a local group can only be used to manage the service access rights of one Security Server client in one Security Server.
@@ -2203,7 +2226,7 @@ Override the configuration parameter archive-transfer-command (create or edit th
 archive-transfer-command=/usr/share/xroad/scripts/archive-http-transporter.sh -r http://my-archiving-server/cgi-bin/upload
 ```
 
-The message log package contains the CGI script `/usr/share/doc/xroad-addon-messagelog/archive-server/demo-upload.pl` for a demo archiving server for the purpose of testing or development.
+An example CGI script for a demo archiving server, for testing or development purposes, is available as [`demo-upload.pl`](https://github.com/nordic-institute/X-Road/blob/develop/src/service/message-log-archiver/scripts/demo-upload.pl) on GitHub.
 
 
 ### 11.3 Using a Remote Database
@@ -2691,6 +2714,8 @@ By default, the page displays all the requests handled during the last 7 days. T
 - **Exchange role** - the role of this Security Server in the message exchange. The options are "Producer" and "Consumer".
 - **Status** - the status of the message exchange. The options are "Success" and "Failure".
 
+While the end of the period is before its start, the page sends no request and displays no data. A client of the Security Server REST API that sends such a request, or a request that is outside the supported limits, receives the HTTP status 400 with the error code `operational_data_intervals_out_of_range`. The limits are stated in the OpenAPI definition of the Security Server REST API.
+
 ### 14.3 Security Server Connection Testing
 
 The "Connection Testing" tab in the Diagnostics page allows testing connectivity from the Security Server to the Central Server and other Security Servers.
@@ -2839,22 +2864,40 @@ The following parameters must be placed in the `[op-monitor]` section of the fil
 The parameter `keep-records-for-days` should be edited, for instance if the disk fills up before cleanup occurs, or alternatively, if the default period of 7 days is too short. The parameter `clean-interval` (a Cron expression \[[CRON](#Ref_CRON)\]) defines how often the system checks whether cleanup should be done. If the default period of 12 hours is too long or short it should be edited according to your needs.
 
 
-#### 15.2.3 Configuring the Parameters related to the HTTP Endpoint of the Operational Monitoring Daemon
+#### 15.2.3 Configuring the Parameters related to the gRPC Endpoint of the Operational Monitoring Daemon
 
-For configuring the endpoint of the operational monitoring daemon, the following parameters are available in the `[op-monitor]` section of the configuration:
+The Security Server communicates with the operational monitoring daemon over gRPC. For configuring the endpoint, the following parameters are available.
 
-**host** – listening host of the daemon (by default the value is set to *localhost*).
+In the configuration of the operational monitoring daemon (the listener):
 
-**port** – listening port (by default the value is set to *2080*).
+`xroad.op-monitor.rpc.listen-address` – listening address of the daemon (by default the value is set to *127.0.0.1*).
 
-**scheme** – connection type (by default the value is set to *HTTP*).
+`xroad.op-monitor.rpc.port` – listening port (by default the value is set to *2081*).
 
-If any of these values are changed, both the proxy and the operational monitoring daemon services must be restarted:
+In the configuration of the Security Server (the channel to the daemon):
+
+`xroad.common-rpc.channel.op-monitor.host` – host of the daemon (by default the value is set to *127.0.0.1*).
+
+`xroad.common-rpc.channel.op-monitor.port` – port of the daemon (by default the value is set to *2081*).
+
+The connection is secured with TLS using the shared internal gRPC identity of the Security Server. The parameter `xroad.common-rpc.use-tls` (by default *true*) turns TLS on or off for all the internal gRPC connections of the Security Server, including this one. The parameter is for testing only; do not set it to *false* in production. When it is *false*, the connections are unencrypted and the trust settings described in section [15.2.7](#1527-trust-settings-of-the-operational-monitoring-connection) are not applied.
+
+The values are changed in the System Parameters view of the Security Server user interface or with the script `/usr/share/xroad/scripts/db_property.sh`. A changed value takes effect when the services that use it are restarted:
+
+- after changing the listening address or the port of the daemon, restart the operational monitoring daemon:
+
+```bash
+service xroad-opmonitor restart
+```
+
+- after changing the host or the port of the channel, restart the proxy and the user interface and API services:
 
 ```bash
 service xroad-proxy restart
-service xroad-opmonitor restart
+service xroad-proxy-ui-api restart
 ```
+
+- after changing the parameter `xroad.common-rpc.use-tls` (testing only), restart all the X-Road services of the Security Server.
 
 
 #### 15.2.4 Installing an External Operational Monitoring Daemon
@@ -2885,62 +2928,7 @@ As advised, the scheme parameter should be set to "https". For communication ove
 
 **NOTE:** If an external operational monitoring daemon is used, the host, scheme (and optionally, port) parameters must be changed at both hosts.
 
-The internal TLS certificate of the Security Server is used for authenticating the Security Server to the operational monitoring daemon. This certificate has been generated beforehand, during the installation process of the Security Server, and is available in PEM format in the file `/etc/xroad/ssl/internal.crt`. Please refer to Section [10.4](#104-changing-the-internal-tls-key-and-certificate) for the instructions on exporting the internal TLS certificate from UI. The file must be copied to the host running the operational monitoring daemon. The system user xroad must have permissions to read this file.
-
-In the configuration of the external daemon, the corresponding path must be set in `/etc/xroad/conf.d/local.ini`:
-
-```ini
-[op-monitor]
-client-tls-certificate = <path/to/security/server/internal/cert>
-```
-
-Next, a TLS key and the corresponding certificate must be generated on the host of the external monitoring daemon as well, using the command
-
-```bash
-generate-opmonitor-certificate
-```
-
-The script will prompt you for standard fields for input to TLS certificates and its output (key files and the certificate) will be generated to the directory `/etc/xroad/ssl`.
-
-The generated certificate, in the file `opmonitor.crt`, must be copied to the corresponding Security Server. The system user `xroad` must have permissions to read this file. Its path at the Security Server must be written to the configuration (note the name of the section, although it is the proxy service that will read the configuration):
-
-```ini
-[op-monitor]
-tls-certificate = <path/to/external/daemon/tls/cert>
-```
-
-For the request traffic visualization on the Security Server UI Diagnostics page, gRPC keystore and truststore also need to be configured on both ends. Certificate that corresponds to the key in external Operational Monitoring gRPC keystore needs to be added to the gRPC truststore on the Security Server side and vice versa - Security Server's gRPC certificate needs to be added to the external monitoring daemon's truststore. The gRPC keystore and truststore system parameters are described in \[[UGSYSPAR](#31-common-parameters--common)\].
-
-You can use java `keytool` and `openssl` when working with gRPC keystores and truststores:
-
-* **Example 1 - extracting certificate in pem format from existing p12 keystore in default location**:
-
-    ```shell
-    openssl pkcs12 -in /var/run/xroad/xroad-grpc-internal-keystore.p12 -nokeys -out <path/to/cert>
-    ```
-
-* **Example 2 - importing existing certificate in pem format to new or existing truststore in p12 format**:
-
-    ```shell
-    keytool -importcert \
-      -file <path/to/cert> \       
-      -alias <suitable unique alias for security server> \
-      -keystore <path/to/truststore> \
-      -storetype PKCS12 \                                        
-      -storepass <truststorepassword>
-    ```
-    and then in `/etc/xroad/local.ini` add:
-
-    ```properties
-    ...
-    [common]
-    grpc-internal-keystore=<path/to/keystore>
-    grpc-internal-keystore-password=<keystorepassword>
-    grpc-internal-truststore=<path/to/truststore>
-    grpc-internal-truststore-password=<truststorepassword>
-    ...
-    ```
-  _Note: By default Security Server gRPC keystore and truststore are one and the same with a single key and certificate that is shared by different applications which all sit on the same machine. But in case of multiple hosts and certificates it's recommended to have keystore and truststore be separate: the keystore has the local application's key and truststore has certificates of trusted external applications that communicate with it over the network._
+The RPC connections between the Security Server and the external operational monitoring daemon are protected with TLS. Both sides must trust the certificate authority (CA) of the other side. The CA certificates are exchanged as described in section [15.2.6](#1526-exchanging-ca-certificates-with-an-external-operational-monitoring-daemon).
 
 For the external operational daemon to be used, the proxy service at the Security Server must be restarted:
 
@@ -2962,6 +2950,198 @@ echo manual > /etc/init/xroad-opmonitor.override
 
 The configuration anchor (renamed as `configuration-anchor.xml`) file must be manually copied into the directory `/etc/xroad` of the external monitoring daemon in order for configuration client to be able to download the global configuration (by default configuration download interval is 60 seconds). The system user xroad must have permissions to read this file.
 
+
+#### 15.2.6 Exchanging CA Certificates with an External Operational Monitoring Daemon
+
+The Security Server and an operational monitoring daemon on a separate host connect over TLS. Each side must trust the certificate authority (CA) that issued the other side's certificate. Two CA certificates are exchanged:
+
+- The **Security Server RPC CA** is the CA of the Security Server host. It signs the certificates of the Security Server's RPC connections and is kept in the Security Server's secret store (OpenBao). The administrator downloads it from the Security Server and installs it on the operational monitoring daemon host.
+- The **Operational Monitoring CA** is the CA that issued the certificate of the operational monitoring daemon. The administrator uploads it to the Security Server.
+
+Only CA certificates are exchanged. No private key is uploaded or downloaded.
+
+Both CAs are managed in the Security Server user interface and in the management REST API (see chapter [19](#19-management-rest-api)).
+
+**Access rights:**
+
+- View the CAs: [Security Officer](#xroad-security-officer), [Registration Officer](#xroad-registration-officer), [Service Administrator](#xroad-service-administrator), [System Administrator](#xroad-system-administrator), [Security Server Observer](#xroad-securityserver-observer)
+- Download the Security Server RPC CA: [Security Officer](#xroad-security-officer), [Registration Officer](#xroad-registration-officer), [Service Administrator](#xroad-service-administrator), [System Administrator](#xroad-system-administrator)
+- Upload, replace and delete the Operational Monitoring CA: [Security Officer](#xroad-security-officer), [System Administrator](#xroad-system-administrator)
+
+**NOTE:** A change to the Operational Monitoring CA takes effect only after the proxy and admin-service are restarted. See **Applying the changes** below and section [15.2.7](#1527-trust-settings-of-the-operational-monitoring-connection).
+
+**NOTE:** The proxy keeps operational monitoring records in memory until it stores them in the operational monitoring daemon. When the proxy restarts, the records that are not yet stored are lost. This holds for a graceful restart too. By default the buffer holds 20000 records. When the buffer is full, the oldest records are dropped.
+
+**NOTE:** Each Security Server host has its own Security Server RPC CA, so one download covers one Security Server. If several Security Servers share one external operational monitoring daemon, upload the Operational Monitoring CA to every one of them. The operational monitoring daemon host then needs the Security Server RPC CA of every one of these Security Servers.
+
+_To view the Security Server RPC CA and the Operational Monitoring CA_, follow these steps.
+
+1. On the **Navigation tabs**, select **Keys and Certificates**.
+
+2. In the opening view, select the **Operational Monitoring Trust** tab.
+
+   The **Security Server RPC CA** section shows the SHA-256 hash (fingerprint) of the Security Server RPC CA. The **Operational Monitoring CA** section shows the SHA-256 hash of the stored Operational Monitoring CA, or "No Operational Monitoring CA is stored".
+
+3. To see all details of a CA, click its hash.
+
+   The view shows the full certificate data, including the Subject Distinguished Name, the Issuer Distinguished Name and the validity dates (Not Before, Not After). To return to the tab, click **Operational Monitoring Trust** in the breadcrumbs or close the view.
+
+_To upload the Operational Monitoring CA_, follow these steps.
+
+1. On the **Navigation tabs**, select **Keys and Certificates**.
+
+2. In the opening view, select the **Operational Monitoring Trust** tab.
+
+3. In the **Operational Monitoring CA** section, click **Upload** and select the CA certificate file.
+
+   The Security Server stores the certificate and shows its hash. The view reminds you to restart the proxy and admin-service to apply the change.
+
+The file must hold exactly one CA certificate, in PEM or DER format. The CA can be a root CA or an intermediate CA, and it must be valid at the time of the upload. In a PEM file, text outside the certificate block is ignored.
+
+The Security Server rejects any other file with HTTP status 400 and one of the following error codes. The user interface shows the message in the second column.
+
+| Error code                          | Message                                                                                                 | Cause                                                                                                     |
+|-------------------------------------|---------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `ca_cert_empty`                     | The file is empty                                                                                       | The file has no content, or only whitespace.                                                              |
+| `ca_cert_not_a_certificate`         | The file is not a PEM or DER encoded certificate                                                        | The file is neither a PEM certificate nor a DER certificate, for example a DER-encoded private key.       |
+| `ca_cert_multiple_certificates`     | The file contains more than one certificate. Upload only the CA certificate that issues the certificate | The file has more than one certificate, or more than one PEM block of any type. Bundles are not accepted. |
+| `ca_cert_key_material`              | The file contains private key material. Upload the CA certificate only                                  | The file has a PEM private key, alone or together with a certificate.                                     |
+| `ca_cert_not_a_ca`                  | The certificate is not a CA certificate                                                                 | The certificate has no basic constraints extension with `cA=true`, for example a server certificate.      |
+| `ca_cert_unsupported_key_algorithm` | The CA certificate public key must be RSA or EC                                                         | The public key of the certificate is neither RSA nor EC, for example Ed25519 or DSA.                      |
+| `ca_cert_expired`                   | The CA certificate has expired                                                                          | The validity period of the certificate has ended.                                                         |
+| `ca_cert_not_yet_valid`             | The CA certificate is not yet valid                                                                     | The validity period of the certificate has not started.                                                   |
+
+A rejected upload leaves the stored Operational Monitoring CA unchanged. Uploading the stored certificate again succeeds and changes nothing.
+
+_To replace the Operational Monitoring CA_, follow the steps for uploading. When a CA is stored, the button is named **Replace**. The new certificate replaces the stored one. The Security Server keeps one Operational Monitoring CA at a time.
+
+_To delete the Operational Monitoring CA_, follow these steps.
+
+1. On the **Navigation tabs**, select **Keys and Certificates**.
+
+2. In the opening view, select the **Operational Monitoring Trust** tab.
+
+3. In the **Operational Monitoring CA** section, click **Delete**, then click **Yes** in the confirmation dialog.
+
+   The view reminds you to restart the proxy and admin-service to apply the change.
+
+After the restart, the Security Server trusts only the Security Server RPC CA again, as for an operational monitoring daemon on the same host. Deleting does not change the host and port settings of the operational monitoring daemon connection. Deleting when no Operational Monitoring CA is stored succeeds and changes nothing.
+
+_To download the Security Server RPC CA_, follow these steps.
+
+1. On the **Navigation tabs**, select **Keys and Certificates**.
+
+2. In the opening view, select the **Operational Monitoring Trust** tab.
+
+3. In the **Security Server RPC CA** section, click **Download** and save the file `external-rpc-ca.pem` to the local file system.
+
+   The file contains exactly one certificate, in PEM format, and no private key. Downloading again returns the same file.
+
+_To install the Security Server RPC CA on the operational monitoring daemon host_, follow these steps.
+
+1. Copy the file `external-rpc-ca.pem` to the operational monitoring daemon host by hand. The Security Server does not deliver it.
+
+2. Check that the file is the right one by comparing its SHA-256 fingerprint with the hash shown in the **Security Server RPC CA** section. The two values must be the same:
+
+   ```bash
+   openssl x509 -in external-rpc-ca.pem -noout -fingerprint -sha256
+   ```
+
+3. Store the file in a directory of your choice. The system user `xroad` must have permission to read it.
+
+4. Configure the operational monitoring daemon to trust this file, as described in section [15.2.5](#1525-configuring-an-external-operational-monitoring-daemon-and-the-corresponding-security-server), and restart the operational monitoring daemon:
+
+   ```bash
+   service xroad-opmonitor restart
+   ```
+
+**Applying the changes**
+
+The Security Server uses the Operational Monitoring CA when it creates its connections to the operational monitoring daemon. After the Operational Monitoring CA is uploaded, replaced or deleted, restart the proxy and admin-service on the Security Server:
+
+```bash
+service xroad-proxy restart
+service xroad-proxy-ui-api restart
+```
+
+Until the restart, the stored Operational Monitoring CA and the CA in use can differ.
+
+The proxy restart loses the operational monitoring records that are buffered in its memory and not yet stored (see the note at the beginning of this section). Plan the restart accordingly.
+
+**Management REST API**
+
+The same operations are available in the management REST API (see chapter [19](#19-management-rest-api) and \[[REST_UI-API](#Ref_REST_UI-API)\]). The roles are the same as in the user interface.
+
+| Operation                                       | Request                                                                                      | Response                                                                                 |
+|-------------------------------------------------|----------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| View the Security Server RPC CA                 | `GET /api/v1/system/external-rpc-ca`                                                         | `200` with the certificate details                                                       |
+| Download the Security Server RPC CA             | `GET /api/v1/system/external-rpc-ca/download`                                                | `200` with one PEM certificate, content type `application/x-pem-file`                    |
+| View the Operational Monitoring CA              | `GET /api/v1/system/op-monitor-ca`                                                           | `200` with the certificate details, or `204` when no Operational Monitoring CA is stored |
+| Upload or replace the Operational Monitoring CA | `POST /api/v1/system/op-monitor-ca`, multipart form with the file in the field `certificate` | `200` with the certificate details, or `400` with one of the error codes                 |
+| Delete the Operational Monitoring CA            | `DELETE /api/v1/system/op-monitor-ca`                                                        | `204`, also when no Operational Monitoring CA is stored                                  |
+
+A request without the required role returns `403`. If the Security Server RPC CA is not available, the two Security Server RPC CA requests return `404` with the error code `external_rpc_ca_not_available`. If the secret store cannot be read or written, the requests return `500`.
+
+Examples of uploading the Operational Monitoring CA and downloading the Security Server RPC CA:
+
+```bash
+curl -X POST --header "Authorization: X-Road-ApiKey token=<api key>" -F "certificate=@op-monitor-ca.pem" "https://localhost:4000/api/v1/system/op-monitor-ca" -k
+
+curl -X GET --header "Authorization: X-Road-ApiKey token=<api key>" "https://localhost:4000/api/v1/system/external-rpc-ca/download" -o external-rpc-ca.pem -k
+```
+
+**Backup**
+
+Both CAs are stored in the secret store (OpenBao).
+
+- When the secret store is installed on the Security Server host, the OpenBao data is included in the configuration backup described in chapter [13](#13-back-up-and-restore). The backup archive then contains both CAs.
+- When the secret store is remote, the configuration backup does not include it. Back up the remote secret store separately.
+
+#### 15.2.7 Trust Settings of the Operational Monitoring Connection
+
+This section explains how the Security Server decides whom to trust on the connection to the operational monitoring daemon, and how to configure the trust. For installing an external operational monitoring daemon, see section [15.2.4](#1524-installing-an-external-operational-monitoring-daemon).
+
+**How the trust is chosen**
+
+The proxy and the admin-service connect to the operational monitoring daemon. Both present the shared internal gRPC certificate of the Security Server. What they trust depends on the Operational Monitoring CA (see section [15.2.6](#1526-exchanging-ca-certificates-with-an-external-operational-monitoring-daemon)):
+
+- When an Operational Monitoring CA is stored, the connections trust only this CA. The host name of the daemon is verified against its certificate.
+- When no Operational Monitoring CA is stored, the connections trust the Security Server RPC CA.
+
+The trust is chosen when the connection is created, on its first use. Therefore, after the Operational Monitoring CA is uploaded, replaced or deleted, restart the proxy and the admin-service.
+
+There is no fallback. If the Operational Monitoring CA cannot be read from the secret store (OpenBao), or it is not a valid certificate, the connection is not created and the call fails with the error code `op_monitor_trust_failure` (*Could not establish a trusted connection to Operational Monitoring*). In the admin user interface only the traffic view of the Diagnostics fails. In the proxy the failure is not remembered, so the next call tries again.
+
+The operational monitoring daemon trusts the Security Server RPC CA installed on its own host.
+
+**Certificate names**
+
+The certificate of the operational monitoring daemon must contain the exact host that the Security Server connects to, which is the value of `xroad.common-rpc.channel.op-monitor.host`.
+
+- If the host is a name, the certificate needs a DNS subject alternative name.
+- If the host is an IP address, the certificate needs an IP subject alternative name.
+
+By default the host and the IP subject alternative name are *127.0.0.1*.
+
+When the certificate of the daemon is issued by the secret store (OpenBao) of the Security Server, its names come from these parameters:
+
+- `xroad.common-rpc.certificate-provisioning.alt-names` – DNS subject alternative names, comma-separated (by default empty).
+- `xroad.common-rpc.certificate-provisioning.ip-subject-alt-names` – IP subject alternative names, comma-separated (by default *127.0.0.1*). A value you set replaces the default. In a package installation, keep *127.0.0.1* in the list; the other internal gRPC connections use it.
+- `xroad.common-rpc.certificate-provisioning.common-name` – common name of the certificate (by default the value of the environment variable `XROAD_HOST`, or *localhost* when it is not set).
+
+All internal gRPC components of the Security Server use these parameters, so a change applies to the certificates of all of them. The parameters are not shown in the System Parameters view. Set them with the script `/usr/share/xroad/scripts/db_property.sh`. The values are read when a component starts. After a change, restart the operational monitoring daemon so that it requests a certificate with the new names. Other components use the new names after their own next restart.
+
+**The allowed client names**
+
+The parameter `xroad.op-monitor.rpc.allowed-client-names` is a comma-separated list of the names of the components that may connect to the operational monitoring daemon. It is a parameter of the operational monitoring daemon. For details, see [UG-OPMONSYSPAR](#Ref_UG-OPMONSYSPAR).
+
+In package installations and the Security Server Sidecar, leave the list empty: every component presents the same name, `localhost`, so the list cannot distinguish them.
+
+**The RPC TLS switch**
+
+The parameter `xroad.common-rpc.use-tls` (by default *true*) is for testing only. Do not set it to *false* in production.
+
+When the parameter is *false*, every internal gRPC connection of the Security Server is unencrypted, including the connection to the operational monitoring daemon. The Operational Monitoring CA and the allowed client names are not applied. Traffic to an external operational monitoring daemon is then neither encrypted nor authenticated. A malformed list of allowed client names still stops the daemon at startup. A valid, non-empty list only causes one warning in the daemon log.
 
 ## 16 Environmental Monitoring
 
@@ -3736,3 +3916,72 @@ signing-key-algorithm = EC
 EC based keys are supported starting from X-Road version 7.6.0 (=> 7.6.0). If an X-Road instance contains Security Servers prior to version 7.6.0 (< 7.6.0), then:
 A Security Server prior to version 7.6.0 (< 7.6.0) is able to verify requests signed with EC keys from a Security Server version 7.6.0 or later (=> 7.6.0).
 If a Security Server prior to version 7.6.0 (< 7.6.0) makes a request to a Security Server version 7.6.0 or later (=> 7.6.0), which uses EC based authentication certificate, then "TLS handshake failed" error may occur. To fix this without upgrading the older Security Server, update the Security Server's `xroad-tls-ciphers` property to include EC compatible TLS cipher, e.g.: `TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384`, please see [UG-SYSPAR](../Manuals/ug-syspar_x-road_v6_system_parameters.md) for details.
+
+## 26 Managing the Agreement Token Signing Key
+
+When the Security Server takes part in data exchange in a dataspace, it signs agreement tokens. An agreement token is a short-lived signed token that a provider Security Server issues to a consumer for a contract agreement; the consumer sends it with each data request, and the provider checks it before serving the request. The Security Server signs the tokens with an agreement token signing key and verifies them with the signing keys it keeps. The keys are stored in the secret store of the Security Server. The Security Server creates the signing key automatically, rotates it automatically when it gets old (see section [26.3](#263-automatic-rotation)) and deletes the old keys that are no longer needed (see section [26.4](#264-key-retention)). The Security Server administrator can view the key status and rotate the key at any time, for example if the key may have leaked.
+
+The key status and the rotation are also available in the Management REST API (see chapter [19](#19-management-rest-api)) as the operations `GET /dataspace/agreement-token-key` and `POST /dataspace/agreement-token-key/rotate`.
+
+### 26.1 Viewing the Signing Key Status
+
+To view the status, open the **Keys and Certificates** page and select the **Agreement Token Key** tab. The tab is available to the roles [Security Officer](#xroad-security-officer), [System Administrator](#xroad-system-administrator) and [Security Server Observer](#xroad-securityserver-observer).
+
+The tab shows the following information:
+
+* **Signing key ID** - the identifier of the key that signs new tokens now.
+* **Created** - the time when the key was created. The value is **Unknown** if the key was stored without a creation time.
+* **Previous keys retained** - the number of earlier keys that the Security Server keeps. Tokens signed with these keys can still be verified.
+* A note that a new key is waiting to start signing. The note is shown after a rotation, until the new key starts signing. While the note is shown, the tab reads the status again every 10 seconds, and it stops when the note is gone.
+
+If the Security Server has not loaded any signing key yet, the tab shows a message instead, and the signing key cannot be rotated.
+
+### 26.2 Rotating the Signing Key
+
+To rotate the signing key, select **Rotate key** on the **Agreement Token Key** tab and confirm the action. The button is available to the roles [Security Officer](#xroad-security-officer) and [System Administrator](#xroad-system-administrator). The button is disabled while the request is in progress and when the signing key is not available.
+
+The rotation works as follows:
+
+* The Security Server generates a new signing key and stores it in the secret store. If the new key cannot be stored, the rotation fails and the current key stays in use.
+* The new key starts signing within two key refresh intervals. The key refresh interval is 30 seconds by default, so by default the new key starts signing within 60 seconds. Until then, the current key keeps signing.
+* If the Security Server has several proxy replicas, every replica of the same Security Server switches to the new key within the same time.
+* Tokens signed with the previous key stay valid until they expire. By default, a token is valid for 60 seconds, and the verifier accepts it for another 5 seconds after that (the expiry leeway).
+* The rotation does not delete the previous key. The Security Server keeps it for the key retention period after it stops signing, that is, after the new key starts signing, and then deletes it as described in section [26.4](#264-key-retention).
+
+The rotation is recorded in the audit log as the event **Rotate agreement token signing key** (see \[[SPEC-AL](#Ref_SPEC-AL)\]).
+
+### 26.3 Automatic Rotation
+
+The Security Server rotates the signing key by itself when the newest key is older than the maximum key age. The automatic rotation works as the rotation described in section [26.2](#262-rotating-the-signing-key). It runs only when the dataspace protocol is enabled on the Security Server.
+
+If the Security Server has several proxy replicas, each replica waits for a random time of up to two key refresh intervals before it rotates, and checks again whether the rotation is still needed. Therefore the replicas rarely rotate the key at the same time.
+
+The maximum key age is set with the property `xroad.proxy.agreement-token.max-key-age`. The value is a duration in the ISO 8601 format, for example `P30D` for 30 days. The default value is 30 days. The value `0` disables the automatic rotation. A non-zero value must be longer than the key refresh interval (`xroad.proxy.agreement-token.key-refresh-interval`, 30 seconds by default). Otherwise the proxy does not start.
+
+### 26.4 Key Retention
+
+The Security Server deletes the previous signing keys that can no longer be needed to verify a valid token. A key is kept for the key retention period after it stops signing, that is, after the next key (the key with the next higher ID) starts signing. After each key refresh, the Security Server deletes the keys for which this period has passed. It never deletes the key that signs now or the key with the highest ID. A proxy also deletes a key only after it has itself seen the key stop signing at least the token validity period plus the expiry leeway earlier. The proxy sees a key stop signing in the first key refresh in which the key is no longer the signing key. The proxy keeps this observation in memory only, so after a proxy restart the period starts again and the first deletion waits that much longer. The deletion runs only when the dataspace protocol is enabled on the Security Server. Each deleted key is written to the proxy log with its ID.
+
+The key retention period is set with the property `xroad.proxy.agreement-token.key-retention`. The value is a duration in the ISO 8601 format, for example `P1D` for one day. The default value is one day. The value `0` keeps all keys. A non-zero value must be at least 10 times the token validity period (`xroad.proxy.agreement-token.token-ttl`, 60 seconds by default) and at least 3 times the key refresh interval plus the token validity period plus the expiry leeway (`xroad.proxy.agreement-token.expiry-leeway`, 5 seconds by default). Otherwise the proxy does not start, and the proxy log tells which property is wrong.
+
+A proxy that cannot reach the secret store keeps signing with the keys it loaded last, but not for longer than a limit. When the last successful key refresh is older than the key retention period minus the key refresh interval, the token validity period and the expiry leeway, the proxy stops issuing agreement tokens, because a token it signed after that time could still be valid when another proxy replica deletes the key. The limit is at least two key refresh intervals, so a proxy that misses one key refresh normally keeps issuing tokens. The proxy still verifies tokens with the keys it has, and data exchange falls back to endpoint-only access without an agreement token. With the default values the limit is 1 day minus 95 seconds. The limit does not apply when the key retention period is `0`. A successful key refresh, or a successful key rotation, lifts the limit again.
+
+The proxy log shows the state of this limit:
+
+* When the proxy first refuses to issue an agreement token, it writes one warning: `Agreement-token signing key material has not been refreshed for <time>, longer than the limit of <limit>; refusing to mint agreement tokens until a refresh succeeds`. The warning is not repeated for each refused token. If no token is requested while the limit is exceeded, neither line is written.
+* When the next key refresh succeeds, the proxy writes one info line: `Agreement-token signing key material refreshed; minting agreement tokens again`.
+
+If a key cannot be deleted, the Security Server keeps using the key material it has and tries again on the next key refresh. The failure is written to the proxy log as a warning, and the warning is repeated at most once in every 20 key refreshes. The usual cause is that the secret store access policy does not allow deleting the keys (see section [26.5](#265-secret-store-requirements)).
+
+### 26.5 Secret Store Requirements
+
+If the Security Server uses a remote secret store (package `xroad-secret-store-remote`), the operator of the remote secret store must give the token of the Security Server the following access to the signing keys. The signing keys are stored in the key-value secrets engine (version 1) mounted at `xrd-secret`.
+
+```
+path "xrd-secret/agreement-token/signing-keys/*" {
+  capabilities = ["read", "list", "create", "update", "delete"]
+}
+```
+
+Without the `delete` capability the Security Server works normally but never deletes the old keys, and it writes the warning described in section [26.4](#264-key-retention).
+

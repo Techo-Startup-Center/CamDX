@@ -60,6 +60,7 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
             .integer("global-configuration-generation-rate-in-seconds")
             .withDefaultValue(60)
             .publishedToFramework()
+            .exposedInUi()
             .build();
 
     // --- rate limiting ---
@@ -67,26 +68,31 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Boolean> RATE_LIMIT_ENABLED = ADMIN
             .bool("rate-limit-enabled")
             .withDefaultValue(true)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.rate-limit-requests-per-second}. */
     public static final ConfigKey<Integer> RATE_LIMIT_REQUESTS_PER_SECOND = ADMIN
             .integer("rate-limit-requests-per-second")
             .withDefaultValue(20)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.rate-limit-requests-per-minute}. */
     public static final ConfigKey<Integer> RATE_LIMIT_REQUESTS_PER_MINUTE = ADMIN
             .integer("rate-limit-requests-per-minute")
             .withDefaultValue(600)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.rate-limit-cache-size}. */
     public static final ConfigKey<Integer> RATE_LIMIT_CACHE_SIZE = ADMIN
             .integer("rate-limit-cache-size")
             .withDefaultValue(10000)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.rate-limit-expire-after-access-minutes}. */
     public static final ConfigKey<Integer> RATE_LIMIT_EXPIRE_AFTER_ACCESS_MINUTES = ADMIN
             .integer("rate-limit-expire-after-access-minutes")
             .withDefaultValue(5)
+            .exposedInUi()
             .build();
 
     // --- caching ---
@@ -94,11 +100,13 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Integer> CACHE_DEFAULT_TTL = ADMIN
             .integer("cache-default-ttl")
             .withDefaultValue(60)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.cache-api-key-ttl}. */
     public static final ConfigKey<Integer> CACHE_API_KEY_TTL = ADMIN
             .integer("cache-api-key-ttl")
             .withDefaultValue(60)
+            .exposedInUi()
             .build();
 
     // --- request handling ---
@@ -110,17 +118,20 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Boolean> STRICT_IDENTIFIER_CHECKS = ADMIN
             .bool("strict-identifier-checks")
             .withDefaultValue(true)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.request-size-limit-regular} — Spring {@code DataSize} string. */
     public static final ConfigKey<String> REQUEST_SIZE_LIMIT_REGULAR = ADMIN
             .string("request-size-limit-regular")
             .withDefaultValue("50KB")
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.request-size-limit-binary-upload} — Spring {@code DataSize} string. */
     public static final ConfigKey<String> REQUEST_SIZE_LIMIT_BINARY_UPLOAD = ADMIN
             .string("request-size-limit-binary-upload")
             .withDefaultValue("10MB")
             .publishedToFramework()
+            .exposedInUi()
             .build();
 
     // --- allowed files (Set<String>, modelled as string arrays) ---
@@ -163,11 +174,13 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<String> AUTHENTICATION_PROVIDER = ADMIN
             .string("authentication-provider")
             .withDefaultValue("PAM")
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.enforce-user-password-policy}. */
     public static final ConfigKey<Boolean> ENFORCE_USER_PASSWORD_POLICY = ADMIN
             .bool("enforce-user-password-policy")
             .withDefaultValue(false)
+            .exposedInUi()
             .build();
 
     // --- misc admin flags ---
@@ -175,6 +188,7 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Boolean> TRUSTED_ANCHORS_ALLOWED = ADMIN
             .bool("trusted-anchors-allowed")
             .withDefaultValue(true)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.conf-backup-path}. */
     public static final ConfigKey<String> CONF_BACKUP_PATH = ADMIN
@@ -301,21 +315,136 @@ public final class CsAdminServiceConfigKeys implements ConfigKeyProvider {
             .withValidator(range(1, 7))
             .build();
 
-    // --- management-requests (auto-approval toggles) ---
+    // --- ACME (DS TLS renewal scheduling / HTTP-01 challenge listener) ---
+    /** {@code xroad.admin-service.acme-renewal-retry-delay} — ACME certificate renewal retry delay in seconds. */
+    public static final ConfigKey<Integer> ACME_RENEWAL_RETRY_DELAY = ADMIN
+            .integer("acme-renewal-retry-delay")
+            .withDefaultValue(60)
+            .build();
+    /** {@code xroad.admin-service.acme-renewal-interval} — ACME certificate renewal job interval in seconds. */
+    public static final ConfigKey<Integer> ACME_RENEWAL_INTERVAL = ADMIN
+            .integer("acme-renewal-interval")
+            .withDefaultValue(3600)
+            .build();
+    /** {@code xroad.admin-service.acme-renewal-time-before-expiration-date}. */
+    public static final ConfigKey<Integer> ACME_RENEWAL_TIME_BEFORE_EXPIRATION_DATE = ADMIN
+            .integer("acme-renewal-time-before-expiration-date")
+            .withDefaultValue(14)
+            .build();
+    /** {@code xroad.admin-service.acme-keypair-renewal-time-before-expiration-date}. */
+    public static final ConfigKey<Integer> ACME_KEYPAIR_RENEWAL_TIME_BEFORE_EXPIRATION_DATE = ADMIN
+            .integer("acme-keypair-renewal-time-before-expiration-date")
+            .withDefaultValue(14)
+            .build();
+    /** {@code xroad.admin-service.acme-authorization-wait-attempts}. */
+    public static final ConfigKey<Integer> ACME_AUTHORIZATION_WAIT_ATTEMPTS = ADMIN
+            .integer("acme-authorization-wait-attempts")
+            .withDefaultValue(5)
+            .build();
+    /** {@code xroad.admin-service.acme-authorization-wait-interval}. */
+    public static final ConfigKey<Integer> ACME_AUTHORIZATION_WAIT_INTERVAL = ADMIN
+            .integer("acme-authorization-wait-interval")
+            .withDefaultValue(5)
+            .build();
+    /** {@code xroad.admin-service.acme-certificate-wait-attempts}. */
+    public static final ConfigKey<Integer> ACME_CERTIFICATE_WAIT_ATTEMPTS = ADMIN
+            .integer("acme-certificate-wait-attempts")
+            .withDefaultValue(5)
+            .build();
+    /** {@code xroad.admin-service.acme-certificate-wait-interval}. */
+    public static final ConfigKey<Integer> ACME_CERTIFICATE_WAIT_INTERVAL = ADMIN
+            .integer("acme-certificate-wait-interval")
+            .withDefaultValue(5)
+            .build();
+    /** {@code xroad.admin-service.acme-certificate-account-key-pair-expiration}. */
+    public static final ConfigKey<Integer> ACME_CERTIFICATE_ACCOUNT_KEY_PAIR_EXPIRATION = ADMIN
+            .integer("acme-certificate-account-key-pair-expiration")
+            .withDefaultValue(365)
+            .build();
+    /**
+     * {@code xroad.admin-service.acme-challenge-port-enabled} — whether admin-service should listen on
+     * {@link #ACME_CHALLENGE_PORT} for incoming HTTP-01 challenge requests. The public well-known path is
+     * reached only via nginx proxying to this port, never directly — see {@link #ACME_CHALLENGE_BIND_ADDRESS}
+     * for how that's enforced.
+     */
+    public static final ConfigKey<Boolean> ACME_CHALLENGE_PORT_ENABLED = ADMIN
+            .bool("acme-challenge-port-enabled")
+            .withDefaultValue(false)
+            .build();
+    /**
+     * {@code xroad.admin-service.acme-challenge-bind-address} — the network address the ACME challenge
+     * listener binds to. Defaults to loopback-only, matching the co-located topology every native-package
+     * install has today: nginx and admin-service run on the same host, so nothing outside it needs to reach
+     * this port directly. Change this (together with {@code xroad-acme-challenge.conf}'s proxy target on the
+     * nginx side) only once nginx and admin-service no longer share a host — e.g. a future
+     * containerized/Kubernetes Central Server (XRDADR-37) — to an address nginx can actually route to; a
+     * loopback bind on that side would make the port unreachable no matter what the nginx side is configured
+     * to proxy to.
+     */
+    public static final ConfigKey<String> ACME_CHALLENGE_BIND_ADDRESS = ADMIN
+            .string("acme-challenge-bind-address")
+            .withDefaultValue("127.0.0.1")
+            .build();
+    /**
+     * {@code xroad.admin-service.acme-challenge-port}. Defaults to a port distinct from both admin-service's
+     * own HTTPS port and the public port 80 nginx already binds for globalconf distribution.
+     */
+    public static final ConfigKey<Integer> ACME_CHALLENGE_PORT = ADMIN
+            .integer("acme-challenge-port")
+            .withDefaultValue(5987)
+            .build();
+    /** {@code xroad.admin-service.acme-key-length}. */
+    public static final ConfigKey<Integer> ACME_KEY_LENGTH = ADMIN
+            .integer("acme-key-length")
+            .withDefaultValue(2048)
+            .build();
+    /** {@code xroad.admin-service.acme-challenge-path}. */
+    public static final ConfigKey<String> ACME_CHALLENGE_PATH = ADMIN
+            .string("acme-challenge-path")
+            .withDefaultValue("/etc/xroad/acme-challenge")
+            .build();
+
+    // --- management-requests ---
     /** {@code xroad.admin-service.management-requests.auto-approve-auth-cert-reg-requests}. */
     public static final ConfigKey<Boolean> MANAGEMENT_REQUESTS_AUTO_APPROVE_AUTH_CERT_REG_REQUESTS = MANAGEMENT_REQUESTS
             .bool("auto-approve-auth-cert-reg-requests")
             .withDefaultValue(false)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.management-requests.auto-approve-client-reg-requests}. */
     public static final ConfigKey<Boolean> MANAGEMENT_REQUESTS_AUTO_APPROVE_CLIENT_REG_REQUESTS = MANAGEMENT_REQUESTS
             .bool("auto-approve-client-reg-requests")
             .withDefaultValue(false)
+            .exposedInUi()
             .build();
     /** {@code xroad.admin-service.management-requests.auto-approve-owner-change-requests}. */
     public static final ConfigKey<Boolean> MANAGEMENT_REQUESTS_AUTO_APPROVE_OWNER_CHANGE_REQUESTS = MANAGEMENT_REQUESTS
             .bool("auto-approve-owner-change-requests")
             .withDefaultValue(false)
+            .exposedInUi()
+            .build();
+    /**
+     * {@code xroad.admin-service.management-requests.member-did-reg-max-entries} — maximum entries per member DID
+     * request; the management service's request body size bound limits a batch before a high cap does.
+     */
+    public static final ConfigKey<Integer> MANAGEMENT_REQUESTS_MEMBER_DID_REG_MAX_ENTRIES = MANAGEMENT_REQUESTS
+            .integer("member-did-reg-max-entries")
+            .withDefaultValue(100)
+            .withValidator(range(1, 1000))
+            .build();
+
+    /**
+     * {@code xroad.admin-service.acme} — full ACME configuration (EAB credentials) as a YAML/JSON document,
+     * same document shape Security Server uses (parsed into the same {@code AcmeProperties}), but its own
+     * key: Security Server's equivalent lives at the bare, unscoped {@code xroad.acme} — this can't share
+     * that literal path even though the two are read from entirely separate databases, because the system's
+     * property catalogue ({@code ConfigKeyProviders.allProviders()}) aggregates every product's provider
+     * into one list and expects every bare key path to be globally unique across it, for the admin-service
+     * UI/export and the Quarkus defaults config source that consume it. No default (unset = no EAB
+     * credentials configured).
+     */
+    public static final ConfigKey<String> ACME = ADMIN
+            .string("acme")
             .build();
 
     private CsAdminServiceConfigKeys() {

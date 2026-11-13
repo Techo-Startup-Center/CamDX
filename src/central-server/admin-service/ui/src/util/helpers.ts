@@ -101,6 +101,10 @@ export function managementTypeToIconTextColor(type: ManagementRequestType | unde
       return mrIconColorText('managementRequests.changeAddress', 'link', 'info');
     case ManagementRequestType.CLIENT_RENAME_REQUEST:
       return mrIconColorText('managementRequests.renameClient', 'edit_square', 'info');
+    case ManagementRequestType.SYSTEM_DID_REGISTRATION_REQUEST:
+      return mrIconColorText('managementRequests.systemDidRegistration', 'badge', 'success');
+    case ManagementRequestType.MEMBER_DID_REGISTRATION_REQUEST:
+      return mrIconColorText('managementRequests.memberDidRegistration', 'groups', 'success');
     case ManagementRequestType.MAINTENANCE_MODE_ENABLE_REQUEST:
       return mrIconColorText('managementRequests.maintenanceModeEnable', 'build_circle', 'success');
     case ManagementRequestType.MAINTENANCE_MODE_DISABLE_REQUEST:
@@ -108,6 +112,15 @@ export function managementTypeToIconTextColor(type: ManagementRequestType | unde
     default:
       return undefined;
   }
+}
+
+export function hasStoredSystemPair(systemDid: string | undefined, dspBaseUrl: string | undefined): boolean {
+  return !!systemDid && !!dspBaseUrl;
+}
+
+// Host names are case-insensitive, so addresses differing only in letter case name the same host
+export function addressChanged(stored: string | undefined, requested: string | undefined): boolean {
+  return stored?.toLowerCase() !== requested?.toLowerCase();
 }
 
 // Upper case every word

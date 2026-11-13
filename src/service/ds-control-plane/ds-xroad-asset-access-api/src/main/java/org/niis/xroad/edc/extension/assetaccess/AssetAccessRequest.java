@@ -27,15 +27,29 @@
 
 package org.niis.xroad.edc.extension.assetaccess;
 
+import jakarta.annotation.Nullable;
+import org.niis.xroad.ds.identity.DspConventions;
+
+import java.util.List;
+
+/**
+ * @param candidates provider Security Server participants to try; acquisition reorders them
+ * @param clientId   encoded id of the consumer client (subsystem) the access is acquired for;
+ *                   {@code null} when the caller states none
+ */
 public record AssetAccessRequest(
         String assetId,
-        String counterPartyId,
-        String counterPartyAddress,
-        String protocol
+        List<Candidate> candidates,
+        String protocol,
+        @Nullable String clientId
 ) {
-    private static final String DEFAULT_PROTOCOL = "http-dsp-profile-2025-1";
+    /**
+     * One provider Security Server participant: its counter-party id and DSP address.
+     */
+    public record Candidate(String counterPartyId, String counterPartyAddress) {
+    }
 
     public String protocolOrDefault() {
-        return protocol != null ? protocol : DEFAULT_PROTOCOL;
+        return protocol != null ? protocol : DspConventions.DSP_PROFILE_ID;
     }
 }

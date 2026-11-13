@@ -44,6 +44,9 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.niis.xroad.common.identifiers.jpa.entity.ClientIdEntity;
 import org.niis.xroad.common.identifiers.jpa.entity.SecurityServerIdEntity;
 
@@ -52,6 +55,7 @@ import java.util.Set;
 
 @Entity
 @Table(name = SecurityServerEntity.TABLE_NAME)
+@DynamicUpdate
 @NoArgsConstructor
 public class SecurityServerEntity extends AuditableEntity {
 
@@ -68,6 +72,7 @@ public class SecurityServerEntity extends AuditableEntity {
     @NotNull
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "owner_id")
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @Access(AccessType.FIELD)
     @Getter
     @Setter
@@ -95,6 +100,16 @@ public class SecurityServerEntity extends AuditableEntity {
     @Getter
     @Setter
     private String maintenanceModeMessage;
+
+    @Column(name = "system_did", length = 4000)
+    @Getter
+    @Setter
+    private String systemDid;
+
+    @Column(name = "dsp_base_url", columnDefinition = "TEXT")
+    @Getter
+    @Setter
+    private String dspBaseUrl;
 
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "securityServer")
     @Access(AccessType.FIELD)

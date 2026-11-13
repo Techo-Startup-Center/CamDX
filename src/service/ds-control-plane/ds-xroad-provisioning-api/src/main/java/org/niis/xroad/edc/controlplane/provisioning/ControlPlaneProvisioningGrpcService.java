@@ -32,15 +32,22 @@ import org.eclipse.edc.participantcontext.spi.config.model.ParticipantContextCon
 import org.eclipse.edc.participantcontext.spi.config.service.ParticipantContextConfigService;
 import org.eclipse.edc.participantcontext.spi.service.ParticipantContextService;
 import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
+import org.eclipse.edc.spi.result.ServiceFailure;
 import org.niis.xroad.common.rpc.server.RpcResponseHandler;
 import org.niis.xroad.edc.controlplane.provisioning.proto.ControlPlaneProvisioningServiceGrpc;
 import org.niis.xroad.edc.controlplane.provisioning.proto.CreateParticipantContextReq;
 import org.niis.xroad.edc.controlplane.provisioning.proto.CreateParticipantContextResp;
+import org.niis.xroad.edc.controlplane.provisioning.proto.DeleteParticipantContextReq;
+import org.niis.xroad.edc.controlplane.provisioning.proto.DeleteParticipantContextResp;
+import org.niis.xroad.edc.controlplane.provisioning.proto.InvalidateCatalogCachesReq;
+import org.niis.xroad.edc.controlplane.provisioning.proto.InvalidateCatalogCachesResp;
 import org.niis.xroad.edc.controlplane.provisioning.proto.PutParticipantContextConfigReq;
 import org.niis.xroad.edc.controlplane.provisioning.proto.PutParticipantContextConfigResp;
+import org.niis.xroad.edc.extension.catalog.CatalogCacheInvalidator;
 
 import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PARTICIPANT_CONTEXT_FAILED;
 import static org.niis.xroad.common.core.exception.ErrorCode.DSP_PROVISIONING_FAILED;
+import static org.niis.xroad.edc.extension.rpc.EdcProvisioningHelper.failure;
 import static org.niis.xroad.edc.extension.rpc.EdcProvisioningHelper.requireSuccessOrConflict;
 import static org.niis.xroad.edc.extension.rpc.EdcProvisioningHelper.validateManifestFields;
 
@@ -60,6 +67,8 @@ class ControlPlaneProvisioningGrpcService extends ControlPlaneProvisioningServic
 
     private final ParticipantContextService participantContextService;
     private final ParticipantContextConfigService participantContextConfigService;
+    private final ParticipantContextConfigDeleter participantContextConfigDeleter;
+    private final CatalogCacheInvalidator catalogCacheInvalidator;
     private final RpcResponseHandler responseHandler;
 
     @Override
@@ -74,6 +83,18 @@ class ControlPlaneProvisioningGrpcService extends ControlPlaneProvisioningServic
         responseHandler.handleRequest(responseObserver, () -> putParticipantContextConfigInternal(request));
     }
 
+    @Override
+    public void deleteParticipantContext(DeleteParticipantContextReq request,
+                                         StreamObserver<DeleteParticipantContextResp> responseObserver) {
+        responseHandler.handleRequest(responseObserver, () -> deleteParticipantContextInternal(request));
+    }
+
+    @Override
+    public void invalidateCatalogCaches(InvalidateCatalogCachesReq request,
+                                        StreamObserver<InvalidateCatalogCachesResp> responseObserver) {
+        responseHandler.handleRequest(responseObserver, this::invalidateCatalogCachesInternal);
+    }
+
     private CreateParticipantContextResp createParticipantContextInternal(CreateParticipantContextReq request) {
         validateManifestFields(request.getParticipantContextId(), request.getDid());
         var participantContext = ParticipantContext.Builder.newInstance()
@@ -83,6 +104,11 @@ class ControlPlaneProvisioningGrpcService extends ControlPlaneProvisioningServic
 
         var result = participantContextService.createParticipantContext(participantContext);
         requireSuccessOrConflict(result, DSP_PARTICIPANT_CONTEXT_FAILED, request.getParticipantContextId());
+        // Only a fresh create invalidates the cache: the admin worker re-sends this request every 30s, and
+        // invalidating on each conflict would defeat the cache TTL permanently.
+        if (result.succeeded()) {
+            catalogCacheInvalidator.invalidate();
+        }
         return CreateParticipantContextResp.getDefaultInstance();
     }
 
@@ -99,5 +125,23 @@ class ControlPlaneProvisioningGrpcService extends ControlPlaneProvisioningServic
         var result = participantContextConfigService.save(configuration);
         requireSuccessOrConflict(result, DSP_PROVISIONING_FAILED, request.getParticipantContextId());
         return PutParticipantContextConfigResp.getDefaultInstance();
+    }
+
+    private DeleteParticipantContextResp deleteParticipantContextInternal(DeleteParticipantContextReq request) {
+        var participantContextId = request.getParticipantContextId();
+
+        var result = participantContextService.deleteParticipantContext(participantContextId);
+        if (result.failed() && result.reason() != ServiceFailure.Reason.NOT_FOUND) {
+            throw failure(DSP_PROVISIONING_FAILED, participantContextId, result.getFailureDetail());
+        }
+
+        participantContextConfigDeleter.deleteByParticipantContextId(participantContextId);
+
+        return DeleteParticipantContextResp.getDefaultInstance();
+    }
+
+    private InvalidateCatalogCachesResp invalidateCatalogCachesInternal() {
+        catalogCacheInvalidator.invalidate();
+        return InvalidateCatalogCachesResp.getDefaultInstance();
     }
 }

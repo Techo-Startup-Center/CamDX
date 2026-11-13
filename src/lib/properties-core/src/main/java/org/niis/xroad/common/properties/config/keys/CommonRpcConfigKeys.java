@@ -36,6 +36,7 @@ import java.time.Duration;
 import java.util.Set;
 
 import static org.niis.xroad.common.properties.EnvProperties.xroadHost;
+import static org.niis.xroad.common.properties.config.Validator.range;
 
 /** Common-RPC keys ({@code xroad.common-rpc.*}): root props, cert-provisioning, and channel sub-trees. */
 @SuppressWarnings("checkstyle:MagicNumber") // a keys registry: default literals are the point
@@ -51,10 +52,16 @@ public final class CommonRpcConfigKeys implements ConfigKeyProvider {
     private static final Prefix CHANNEL_CONF_CLIENT = CHANNEL.subPrefix("configuration-client");
     private static final Prefix CHANNEL_PROXY = CHANNEL.subPrefix("proxy");
     private static final Prefix CHANNEL_AUXILIARY_SERVICE = CHANNEL.subPrefix("auxiliary-service");
-    private static final Prefix CHANNEL_ASSET_ACCESS = CHANNEL.subPrefix("asset-access");
+    private static final Prefix CHANNEL_CONTROL_PLANE = CHANNEL.subPrefix("control-plane");
 
     private static final String DEADLINE_AFTER = "deadline-after";
     private static final String LOCALHOST_IP = "127.0.0.1";
+
+    /**
+     * Smallest accepted message limit of the op-monitor channel in bytes. The largest Diagnostics response,
+     * 100 000 time buckets of at most 35 bytes each, fits in it.
+     */
+    public static final int MIN_OP_MONITOR_CHANNEL_MESSAGE_SIZE = 4 * 1024 * 1024;
 
     private static final CommonRpcConfigKeys INSTANCE = new CommonRpcConfigKeys();
 
@@ -112,31 +119,24 @@ public final class CommonRpcConfigKeys implements ConfigKeyProvider {
             .exposedInUi()
             .build();
 
-    /** {@code xroad.common-rpc.certificate-provisioning.retry-delay}. */
-    public static final ConfigKey<Duration> CERT_PROVISIONING_RETRY_DELAY = CERT_PROVISIONING
-            .keyDuration("retry-delay")
+    /** {@code xroad.common-rpc.certificate-provisioning.wait-duration}. */
+    public static final ConfigKey<Duration> CERT_PROVISIONING_WAIT_DURATION = CERT_PROVISIONING
+            .keyDuration("wait-duration")
             .withDefaultValue(Duration.ofSeconds(5))
             .exposedInUi()
             .build();
 
-    /** {@code xroad.common-rpc.certificate-provisioning.retry-exponential-backoff-multiplier}. */
-    public static final ConfigKey<String> CERT_PROVISIONING_RETRY_EXPONENTIAL_BACKOFF_MULTIPLIER = CERT_PROVISIONING
-            .string("retry-exponential-backoff-multiplier")
+    /** {@code xroad.common-rpc.certificate-provisioning.exponential-backoff-multiplier}. */
+    public static final ConfigKey<String> CERT_PROVISIONING_EXPONENTIAL_BACKOFF_MULTIPLIER = CERT_PROVISIONING
+            .string("exponential-backoff-multiplier")
             .withDefaultValue("1.5")
             .exposedInUi()
             .build();
 
-    /** {@code xroad.common-rpc.certificate-provisioning.retry-max-attempts}. */
-    public static final ConfigKey<Integer> CERT_PROVISIONING_RETRY_MAX_ATTEMPTS = CERT_PROVISIONING
-            .integer("retry-max-attempts")
-            .withDefaultValue(10)
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.common-rpc.certificate-provisioning.retry-timeout}. */
-    public static final ConfigKey<Duration> CERT_PROVISIONING_RETRY_TIMEOUT = CERT_PROVISIONING
-            .keyDuration("retry-timeout")
-            .withDefaultValue(Duration.ofSeconds(60))
+    /** {@code xroad.common-rpc.certificate-provisioning.exponential-max-wait-duration}. */
+    public static final ConfigKey<Duration> CERT_PROVISIONING_EXPONENTIAL_MAX_WAIT_DURATION = CERT_PROVISIONING
+            .keyDuration("exponential-max-wait-duration")
+            .withDefaultValue(Duration.ofMinutes(5))
             .exposedInUi()
             .build();
 
@@ -209,6 +209,14 @@ public final class CommonRpcConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Integer> CHANNEL_OP_MONITOR_DEADLINE_AFTER = CHANNEL_OP_MONITOR
             .integer(DEADLINE_AFTER)
             .withDefaultValue(60000)
+            .exposedInUi()
+            .build();
+
+    /** {@code xroad.common-rpc.channel.op-monitor.max-inbound-message-size}. */
+    public static final ConfigKey<Integer> CHANNEL_OP_MONITOR_MAX_INBOUND_MESSAGE_SIZE = CHANNEL_OP_MONITOR
+            .integer("max-inbound-message-size")
+            .withDefaultValue(16_777_216)
+            .withValidator(range(MIN_OP_MONITOR_CHANNEL_MESSAGE_SIZE, Integer.MAX_VALUE))
             .exposedInUi()
             .build();
 
@@ -297,7 +305,7 @@ public final class CommonRpcConfigKeys implements ConfigKeyProvider {
     /** {@code xroad.common-rpc.channel.auxiliary-service.port}. */
     public static final ConfigKey<Integer> CHANNEL_AUXILIARY_SERVICE_PORT = CHANNEL_AUXILIARY_SERVICE
             .integer("port")
-            .withDefaultValue(7665)
+            .withDefaultValue(5666)
             .exposedInUi()
             .build();
 
@@ -308,25 +316,25 @@ public final class CommonRpcConfigKeys implements ConfigKeyProvider {
             .exposedInUi()
             .build();
 
-    // --- channel.asset-access ---
+    // --- channel.control-plane ---
 
-    /** {@code xroad.common-rpc.channel.asset-access.host}. */
-    public static final ConfigKey<String> CHANNEL_ASSET_ACCESS_HOST = CHANNEL_ASSET_ACCESS
+    /** {@code xroad.common-rpc.channel.control-plane.host}. */
+    public static final ConfigKey<String> CHANNEL_CONTROL_PLANE_HOST = CHANNEL_CONTROL_PLANE
             .string("host")
             .withDefaultValue(LOCALHOST_IP)
             .withContainerDefaultValue("ds-control-plane")
             .build();
 
-    /** {@code xroad.common-rpc.channel.asset-access.port}. */
-    public static final ConfigKey<Integer> CHANNEL_ASSET_ACCESS_PORT = CHANNEL_ASSET_ACCESS
+    /** {@code xroad.common-rpc.channel.control-plane.port}. */
+    public static final ConfigKey<Integer> CHANNEL_CONTROL_PLANE_PORT = CHANNEL_CONTROL_PLANE
             .integer("port")
             .withDefaultValue(5461)
             .build();
 
-    /** {@code xroad.common-rpc.channel.asset-access.deadline-after}. */
-    public static final ConfigKey<Integer> CHANNEL_ASSET_ACCESS_DEADLINE_AFTER = CHANNEL_ASSET_ACCESS
+    /** {@code xroad.common-rpc.channel.control-plane.deadline-after}. */
+    public static final ConfigKey<Integer> CHANNEL_CONTROL_PLANE_DEADLINE_AFTER = CHANNEL_CONTROL_PLANE
             .integer(DEADLINE_AFTER)
-            .withDefaultValue(60000)
+            .withDefaultValue(65000)
             .build();
 
     private CommonRpcConfigKeys() {

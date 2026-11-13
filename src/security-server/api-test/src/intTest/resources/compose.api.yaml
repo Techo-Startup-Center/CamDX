@@ -34,10 +34,10 @@ services:
       interval: 5s
       retries: 40
       test: [ "CMD", "curl", "-f", "-k", "http://localhost:5558/q/health" ]
+    # The ss0 registered-address alias lives on the ds-gateway service (compose.api.ds.yaml,
+    # always layered on), which fans the address's ports out per backend.
     networks:
-      xrd-ss-network:
-        aliases:
-          - ss0
+      - xrd-ss-network
     volumes:
       - ./container-files/etc/xroad/conf.d:/etc/xroad/conf.d
       - ./container-files/etc/xroad/messagelog:/etc/xroad/messagelog
@@ -49,9 +49,9 @@ services:
       db-serverconf-config-seed:
         condition: service_completed_successfully
 
-  # Single place for all configuration_properties seeds. Rows are keyed by property_key alone (the consuming
-  # app's quarkus/spring.application.name, or NULL for global); apps resolve these via the DB-override
-  # layer (XRoadConfig.dbOverrides / DB ConfigSource), not local.yaml/env.
+  # Single place for all configuration_properties seeds. Rows are keyed by (property_key, ha_node_name) and
+  # are seeded shared (NULL node); apps resolve these via the DB-override layer
+  # (XRoadConfig.dbOverrides / DB ConfigSource), not local.yaml/env.
   db-serverconf-config-seed:
     image: ${POSTGRES_DEV_IMG:-postgres-dev}
     pull_policy: always
@@ -67,11 +67,6 @@ services:
         ('xroad.health-check.memory.threshold-percent', '77', now(), now()),
         ('xroad.proxy.message-log.timestamping-prioritization-strategy', 'PAID_FIRST', now(), now()),
         ('xroad.proxy.addon.op-monitor.enabled', 'true', now(), now()),
-        ('xroad.proxy.addon.op-monitor.buffer.socket-timeout-seconds', '1', now(), now()),
-        ('xroad.proxy.addon.op-monitor.connection.host', 'op-monitor', now(), now()),
-        ('xroad.proxy.addon.op-monitor.connection.scheme', 'https', now(), now()),
-        ('xroad.proxy.addon.op-monitor.connection.socket-timeout-seconds', '1', now(), now()),
-        ('xroad.proxy.dsp.participant-context-id', 'ss0', now(), now()),
         ('xroad.configuration-client.update-interval', '3', now(), now()),
         ('xroad.configuration-client.global-conf-tls-cert-verification', 'false', now(), now()),
         ('xroad.configuration-client.global-conf-hostname-verification', 'false', now(), now()),
@@ -89,16 +84,12 @@ services:
         ('xroad.proxy-ui-api.key-management-api-whitelist', '0.0.0.0/0, ::/0', now(), now()),
         ('xroad.proxy-ui-api.proxy-server-url', 'https://proxy:8443', now(), now()),
 
-        ('xroad.proxy-ui-api.dataspace.enabled', 'true', now(), now()),
         -- host is 'ui' (the admin-service container), not 'ds-identity-hub': the DS TLS ACME worker's HTTP-01
         -- challenge is served from admin-service's own challenge port, which acme2certifier (testca) can only
         -- reach at a hostname resolvable to that container, matching the same reasoning AcmeOrderTest's CSRs
         -- already rely on ("O=ui-test", SAN=ui). No DataSpace-stack container is required for this.
-        ('xroad.proxy-ui-api.dataspace.identity-hub-url', 'https://ui:7182', now(), now()),
+        ('xroad.proxy-ui-api.dataspace.identity-hub-url', 'https://ui', now(), now()),
         ('xroad.proxy-ui-api.dataspace.control-plane-url', 'https://ds-control-plane:8182', now(), now()),
-        ('xroad.proxy-ui-api.dataspace.participant-id', 'ss0', now(), now()),
-        ('xroad.proxy-ui-api.dataspace.management-context-enabled', 'true', now(), now()),
-        ('xroad.proxy-ui-api.dataspace.issuer-did', 'did:web:ds-issuer-service%3A6183:issuer', now(), now()),
         ('xroad.proxy-ui-api.dataspace.identity-token', 'eyJraWQiOiI3NGYzNDIyYjM3ZmM4Njg4ZTdmNWE3NDE2MjdmODg4OSIsInR5cCI6ImF0K2p3dCIsImFsZyI6IlJTMjU2In0.eyJpc3MiOiJ0ZXN0LWlzc3VlciIsImV4cCI6MjAwNDI2ODkwMCwiaWF0IjoxNzgzNTE2OTAwLCJqdGkiOiI3NDcyYmExN2ExMjE0MGI3YWVhNjNlNDM2ZWI1OTMxMSIsInNjb3BlIjoiaWRlbnRpdHktYXBpOmFkbWluIn0.LTjYT366IgFiI12rkxBatvzoIbtTzoYYVXRE9ytAJ23thT_cVid6Gv3m7XKe6bEphARXodhJqTwxeLYMtHAI_XIIC50xZ76e2mo9qLF9LX3JR2_Y5prMDb1BjmYpzedLupnu8SwB2W9n7POYeaMMTTXDlCZsqR2zffwZaCliXGWuj9VLdp0SUvNc8Xz9LMR1C0NNwL-HSH0oBHzMTn0E7kFSJ5HU0AZNa-h9ZNpYu6e4S_Yx7Lo4xRFtVMFRCW8sqfWfqjE861DVGTaQKgmBerbA0jfgaOWB4IU_8EwPBse68N2w8rCUJ4NU6MgRpd8uKEAbSBwNCmSpBvOOriqqAw', now(), now()),
         ('xroad.proxy-ui-api.dataspace.control-plane-token', 'eyJraWQiOiI3NGYzNDIyYjM3ZmM4Njg4ZTdmNWE3NDE2MjdmODg4OSIsInR5cCI6ImF0K2p3dCIsImFsZyI6IlJTMjU2In0.eyJpc3MiOiJ0ZXN0LWlzc3VlciIsImV4cCI6MjAwNDI2ODkwMCwiaWF0IjoxNzgzNTE2OTAwLCJqdGkiOiJjZWI1MjYzM2M1YjU0MDU3OWM3OTIxZTRmN2QyOWM3NSIsInNjb3BlIjoibWFuYWdlbWVudC1hcGk6YWRtaW4ifQ.iNTzn9fdrEkO5SChx8d9aZI34kKW7HV6EfUauPHUs_HC7OpGXMra9qLaEUwcNVmaPdIp7qypBG-wgIEn9znZ6inhDI7V4hoGVTEE7bZS2jar5LTcnr_tt-7Y-frV7GX-qW-b-C9y7hDWpTE_D4mPCLXvhSPjKYAS3_ZP2uCryQ6wGyFUToyf39YDnMOys2vpkI9knnCDfdFFoPsLmVWAz7CWjtV5J_IpTwRP2c63trsPVuPn85tQqXIDI8-geiXmxUVGWFGQQSkCyHX3xSbFE0vC23HFFxkmV0EUr8qFS6wDNiSFw2UYmYfWgfMk64xRY3d07HFbAWwgYa4tZixT6Q', now(), now()),
         -- non-empty so the test CA's account-creation "contact" requirement is exercised for real, instead of
@@ -106,11 +97,11 @@ services:
         ('xroad.proxy-ui-api.dataspace.tls-certificate-contacts', 'dstls-ca-contact@example.org', now(), now()),
         ('xroad.proxy-ui-api.dataspace.tls-certificate-notification-contacts', 'dstls-notify@example.org', now(), now()),
 
-        -- the "dataspace-tls" member entry is the fixed, non-member ACME account alias DsTlsAcmeService uses for
-        -- every DS TLS enrollment/renewal (see DsTlsAcmeService.DS_TLS_ACME_ALIAS) - keyid_4 in
+        -- the "dataspace-tls" member entry is the fixed, non-member ACME account alias ConnectorTlsAcmeService uses for
+        -- every DS TLS enrollment/renewal (see SecurityServerConnectorTlsAcmeHostContext.DS_TLS_ACME_ALIAS) - keyid_4 in
         -- development/acme2certifier/kid_profiles.json carries the matching EAB credential on the test CA side.
         -- EAB credentials are looked up by the CA's own globalconf <name>, so the "dataspace-tls" entry has to be
-        -- duplicated under "Test DS TLS CA" (the V7 fixture's <approvedDsTlsCa> name) in addition to "Test CA" -
+        -- duplicated under "Test DS TLS CA" (the V7 fixture's <approvedConnectorTlsCA> name) in addition to "Test CA" -
         -- both point at the same acme2certifier backend and the same keyid_4 credential, just under the two
         -- distinct CA names each side of globalconf actually uses.
         ('xroad.acme', '{"eab-credentials":{"certificate-authorities":{"Test CA":{"mac-key-base64-encoded":true,"members":{"DEV:COM:1234":{"auth-kid":"keyid_2","auth-mac-key":"addfdbb19965e85623c124a88d085eae50a7f7f4f570989e3a320a81c3119625","sign-kid":"keyid_3","sign-mac-key":"96d7380f5ea8de06912a4520d0adca616848b5e70cb3d0bd748af5b33507ddde"},"dataspace-tls":{"kid":"keyid_4","mac-key":"d1e4f9c6a8b53d2e7f0c1a4b8d3e6f9c2a5b8d1e4f7a0c3b6d9e2f5a8b1c4d7e"}}},"Test DS TLS CA":{"mac-key-base64-encoded":true,"members":{"dataspace-tls":{"kid":"keyid_4","mac-key":"d1e4f9c6a8b53d2e7f0c1a4b8d3e6f9c2a5b8d1e4f7a0c3b6d9e2f5a8b1c4d7e"}}}}}}', now(), now()),
@@ -122,13 +113,8 @@ services:
         ('xroad.message-log-encryption.db.encryption-enabled', 'true', now(), now()),
         ('xroad.message-log-encryption.db.key-id', 'default', now(), now()),
         ('xroad.message-log-encryption.archive.encryption-enabled', 'true', now(), now()),
-        ('xroad.op-monitor.listen-address', '0.0.0.0', now(), now()),
-        ('xroad.op-monitor.scheme', 'https', now(), now()),
-        ('xroad.op-monitor.tls.client-certificate-refresh-interval', 'PT60S', now(), now()),
         ('xroad.op-monitor.records-available-timestamp-offset-seconds', '1', now(), now()),
-        ('xroad.op-monitor.rpc.listen-address', '0.0.0.0', now(), now()),
-        ('xroad.op-monitor.tls.certificate-provisioning.common-name', 'op-monitor', now(), now()),
-        ('xroad.op-monitor.tls.certificate-provisioning.ip-subject-alt-names', '127.0.0.1', now(), now())
+        ('xroad.op-monitor.rpc.listen-address', '0.0.0.0', now(), now())
 
         ON CONFLICT DO NOTHING;
         SQL
@@ -223,8 +209,8 @@ services:
       - XROAD_DB_OP_MONITOR_HIBERNATE_CONNECTION_DRIVER_CLASS=org.postgresql.Driver
       - XROAD_DB_OP_MONITOR_HIBERNATE_CONNECTION_USERNAME=opmonitor
       - XROAD_DB_OP_MONITOR_HIBERNATE_CONNECTION_PASSWORD=secret
-      # op-monitor overrides (listen-address, scheme, tls cert-refresh, records offset) moved to the
-      # configuration_properties DB-override layer - see seed service below.
+      # op-monitor overrides (rpc listen-address, records offset) are seeded into the
+      # configuration_properties DB-override layer by the db-serverconf-config-seed service above.
       - DB_CONFIG_SOURCE_URL=jdbc:postgresql://db-serverconf:5432/serverconf
       - DB_CONFIG_SOURCE_USERNAME=serverconf
       - DB_CONFIG_SOURCE_PASSWORD=secret

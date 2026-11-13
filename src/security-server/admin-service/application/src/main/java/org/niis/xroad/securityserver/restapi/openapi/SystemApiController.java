@@ -34,9 +34,12 @@ import org.niis.xroad.restapi.config.audit.AuditDataHelper;
 import org.niis.xroad.restapi.config.audit.AuditEventMethod;
 import org.niis.xroad.restapi.config.audit.RestApiAuditEvent;
 import org.niis.xroad.restapi.config.audit.RestApiAuditProperty;
+import org.niis.xroad.restapi.openapi.ConfigurablePropertiesApi;
 import org.niis.xroad.restapi.openapi.ControllerUtil;
+import org.niis.xroad.restapi.openapi.model.ConfigurablePropertyDto;
+import org.niis.xroad.restapi.openapi.model.ConfigurablePropertyUpdateDto;
+import org.niis.xroad.restapi.service.ConfigurablePropertiesService;
 import org.niis.xroad.restapi.util.ResourceUtils;
-import org.niis.xroad.securityserver.restapi.cache.CurrentSecurityServerId;
 import org.niis.xroad.securityserver.restapi.cache.SecurityServerAddressChangeStatus;
 import org.niis.xroad.securityserver.restapi.converter.AnchorConverter;
 import org.niis.xroad.securityserver.restapi.converter.AuthProviderTypeMapping;
@@ -57,20 +60,20 @@ import org.niis.xroad.securityserver.restapi.openapi.model.NodeTypeDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.NodeTypeResponseDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerAddressDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerAddressStatusDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerConfigurablePropertyDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerPropertyUpdateDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.ServicePrioritizationStrategyDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.TimestampingServiceDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.VersionInfoDto;
-import org.niis.xroad.securityserver.restapi.service.ConfigurablePropertiesService;
+import org.niis.xroad.securityserver.restapi.service.ExternalRpcCaService;
 import org.niis.xroad.securityserver.restapi.service.GlobalConfService;
 import org.niis.xroad.securityserver.restapi.service.InternalTlsCertificateService;
 import org.niis.xroad.securityserver.restapi.service.KeyNotFoundException;
+import org.niis.xroad.securityserver.restapi.service.OpMonitorCaService;
 import org.niis.xroad.securityserver.restapi.service.SystemService;
 import org.niis.xroad.securityserver.restapi.service.VersionService;
 import org.niis.xroad.serverconf.model.TimestampingService;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
@@ -89,8 +92,13 @@ import java.util.Set;
 @Slf4j
 @PreAuthorize("denyAll")
 @RequiredArgsConstructor
-public class SystemApiController implements SystemApi {
+public class SystemApiController implements SystemApi, ConfigurablePropertiesApi {
+    private static final String EXTERNAL_RPC_CA_FILENAME = "external-rpc-ca.pem";
+    private static final MediaType PEM_FILE = MediaType.parseMediaType("application/x-pem-file");
+
     private final InternalTlsCertificateService internalTlsCertificateService;
+    private final ExternalRpcCaService externalRpcCaService;
+    private final OpMonitorCaService opMonitorCaService;
     private final ConfigurablePropertiesService configurablePropertiesService;
     private final CertificateDetailsConverter certificateDetailsConverter;
     private final TimestampingServiceConverter timestampingServiceConverter;
@@ -99,7 +107,6 @@ public class SystemApiController implements SystemApi {
     private final VersionConverter versionConverter;
     private final SystemService systemService;
     private final VersionService versionService;
-    private final CurrentSecurityServerId currentSecurityServerId;
     private final GlobalConfService globalConfService;
     private final SecurityServerAddressChangeStatus addressChangeStatus;
     private final CsrFilenameCreator csrFilenameCreator;
@@ -130,6 +137,45 @@ public class SystemApiController implements SystemApi {
     }
 
     @Override
+    @PreAuthorize("hasAuthority('VIEW_EXTERNAL_RPC_CA')")
+    public ResponseEntity<CertificateDetailsDto> getExternalRpcCa() {
+        return ResponseEntity.ok(certificateDetailsConverter.convert(externalRpcCaService.getExternalRpcCa()));
+    }
+
+    @Override
+    @PreAuthorize("hasAuthority('DOWNLOAD_EXTERNAL_RPC_CA')")
+    public ResponseEntity<Resource> downloadExternalRpcCa() {
+        return ControllerUtil.createAttachmentResourceResponse(
+                externalRpcCaService.downloadExternalRpcCa(), EXTERNAL_RPC_CA_FILENAME, PEM_FILE);
+    }
+
+    @Override
+    @PreAuthorize("hasAuthority('VIEW_OP_MONITOR_CA')")
+    public ResponseEntity<CertificateDetailsDto> getOpMonitorCa() {
+        return opMonitorCaService.getOpMonitorCa()
+                .map(certificateDetailsConverter::convert)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    @Override
+    @PreAuthorize("hasAuthority('UPLOAD_OP_MONITOR_CA')")
+    @AuditEventMethod(event = RestApiAuditEvent.UPLOAD_OP_MONITOR_CA)
+    public ResponseEntity<CertificateDetailsDto> uploadOpMonitorCa(MultipartFile certificate) {
+        byte[] certificateFileBytes = ResourceUtils.springResourceToBytesOrThrowBadRequest(certificate);
+        X509Certificate stored = opMonitorCaService.uploadOpMonitorCa(certificateFileBytes);
+        return ResponseEntity.ok(certificateDetailsConverter.convert(stored));
+    }
+
+    @Override
+    @PreAuthorize("hasAuthority('DELETE_OP_MONITOR_CA')")
+    @AuditEventMethod(event = RestApiAuditEvent.DELETE_OP_MONITOR_CA)
+    public ResponseEntity<Void> deleteOpMonitorCa() {
+        opMonitorCaService.deleteOpMonitorCa();
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
     @PreAuthorize("hasAuthority('GENERATE_INTERNAL_TLS_KEY_CERT')")
     @AuditEventMethod(event = RestApiAuditEvent.GENERATE_INTERNAL_TLS_KEY_CERT)
     public ResponseEntity<Void> generateSystemTlsKeyAndCertificate() {
@@ -139,18 +185,16 @@ public class SystemApiController implements SystemApi {
 
     @Override
     @PreAuthorize("hasAuthority('CHANGE_CONFIGURATION_PROPERTY')")
-    public ResponseEntity<Set<SecurityServerConfigurablePropertyDto>> getConfigurableProperties() {
+    public ResponseEntity<Set<ConfigurablePropertyDto>> getConfigurableProperties() {
         return new ResponseEntity<>(configurablePropertiesService.getConfigurationProperties(), HttpStatus.OK);
     }
 
     @Override
     @PreAuthorize("hasAuthority('CHANGE_CONFIGURATION_PROPERTY')")
     @AuditEventMethod(event = RestApiAuditEvent.UPDATE_CONFIGURATION_PROPERTY)
-    public ResponseEntity<Void> updateConfigurableProperty(
-            SecurityServerPropertyUpdateDto securityServerSystemParameterUpdateDto
-    ) {
-        var name = securityServerSystemParameterUpdateDto.getPropertyName();
-        var value = securityServerSystemParameterUpdateDto.getPropertyValue();
+    public ResponseEntity<Void> updateConfigurableProperty(ConfigurablePropertyUpdateDto configurablePropertyUpdateDto) {
+        var name = configurablePropertyUpdateDto.getPropertyName();
+        var value = configurablePropertyUpdateDto.getPropertyValue();
 
         configurablePropertiesService.updateConfigurableProperty(name, value);
 
@@ -205,9 +249,10 @@ public class SystemApiController implements SystemApi {
     @Override
     @PreAuthorize("hasAuthority('CHANGE_SS_ADDRESS')")
     public ResponseEntity<SecurityServerAddressStatusDto> getServerAddress() {
-        String current = globalConfService.getSecurityServerAddress(currentSecurityServerId.getServerId());
         SecurityServerAddressStatusDto response = new SecurityServerAddressStatusDto();
-        response.setCurrentAddress(new SecurityServerAddressDto(current));
+        systemService.registeredAddress()
+                .map(SecurityServerAddressDto::new)
+                .ifPresent(response::setCurrentAddress);
         addressChangeStatus.getAddressChangeRequest()
                 .map(SecurityServerAddressDto::new)
                 .ifPresent(response::setRequestedChange);

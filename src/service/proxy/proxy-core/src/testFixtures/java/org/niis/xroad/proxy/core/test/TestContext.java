@@ -29,12 +29,15 @@ package org.niis.xroad.proxy.core.test;
 
 import lombok.Getter;
 import org.apache.http.protocol.HttpContext;
+import org.niis.xroad.common.agreementtoken.key.AgreementTokenKeyProvider;
+import org.niis.xroad.common.properties.config.XRoadConfig;
 import org.niis.xroad.common.rpc.NoopVaultKeyProvider;
-import org.niis.xroad.common.vault.NoopVaultClient;
+import org.niis.xroad.common.rpc.client.RpcChannelFactory;
 import org.niis.xroad.globalconf.impl.cert.CertHelper;
 import org.niis.xroad.globalconf.impl.ocsp.OcspVerifierFactory;
 import org.niis.xroad.keyconf.KeyConfProvider;
 import org.niis.xroad.monitor.rpc.MonitorRpcClient;
+import org.niis.xroad.opmonitor.client.OpMonitorChannelTrustResolver;
 import org.niis.xroad.proxy.core.addon.metaservice.clientproxy.MetadataHandler;
 import org.niis.xroad.proxy.core.addon.opmonitoring.NoOpMonitoringBuffer;
 import org.niis.xroad.proxy.core.antidos.AntiDosConfiguration;
@@ -43,15 +46,22 @@ import org.niis.xroad.proxy.core.clientproxy.ClientProxy;
 import org.niis.xroad.proxy.core.clientproxy.ClientRequestPreparationService;
 import org.niis.xroad.proxy.core.clientproxy.ClientSoapMessageHandler;
 import org.niis.xroad.proxy.core.clientproxy.ClientSoapMessageProcessor;
+import org.niis.xroad.proxy.core.clientproxy.DspFailover;
+import org.niis.xroad.proxy.core.clientproxy.DspSendFailureHandler;
 import org.niis.xroad.proxy.core.clientproxy.ReloadingSSLSocketFactory;
 import org.niis.xroad.proxy.core.clientproxy.UnusableAddressTracker;
+import org.niis.xroad.proxy.core.configuration.AgreementTokenKeyMaterial;
+import org.niis.xroad.proxy.core.configuration.ProxyAgreementTokenProperties;
 import org.niis.xroad.proxy.core.configuration.ProxyClientConfig;
+import org.niis.xroad.proxy.core.configuration.ProxyProperties;
 import org.niis.xroad.proxy.core.dsp.DspRequestProcessor;
 import org.niis.xroad.proxy.core.messagelog.MessageLog;
 import org.niis.xroad.proxy.core.messagelog.NullLogManager;
+import org.niis.xroad.proxy.core.serverproxy.AgreementTokenAccessCheck;
 import org.niis.xroad.proxy.core.serverproxy.ClientProxyVersionVerifier;
 import org.niis.xroad.proxy.core.serverproxy.HttpClientCreator;
 import org.niis.xroad.proxy.core.serverproxy.IdleConnectionMonitorThread;
+import org.niis.xroad.proxy.core.serverproxy.ServerConfGroupAccess;
 import org.niis.xroad.proxy.core.serverproxy.ServerProxy;
 import org.niis.xroad.proxy.core.serverproxy.ServerProxyHandler;
 import org.niis.xroad.proxy.core.serverproxy.ServerRestMessageProcessor;
@@ -60,6 +70,7 @@ import org.niis.xroad.proxy.core.serverproxy.ServiceHandlerLoader;
 import org.niis.xroad.proxy.core.service.ClientVerificationService;
 import org.niis.xroad.proxy.core.service.DefaultServiceAddressResolver;
 import org.niis.xroad.proxy.core.service.HttpSenderProvider;
+import org.niis.xroad.proxy.core.service.LegacyCallRefusalPolicy;
 import org.niis.xroad.proxy.core.service.MessageSigningService;
 import org.niis.xroad.proxy.core.service.ProviderSecurityServerResolver;
 import org.niis.xroad.proxy.core.service.ServiceAddressResolver;
@@ -68,23 +79,42 @@ import org.niis.xroad.proxy.core.util.CertHashBasedOcspResponderClient;
 import org.niis.xroad.proxy.core.util.ClientAuthenticationService;
 import org.niis.xroad.proxy.core.util.IdentifierValidationService;
 import org.niis.xroad.proxy.core.util.OpMonitoringDataHelper;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
+import org.niis.xroad.serverconf.impl.ownserver.ServerConfProviderIdentitySource;
 import org.niis.xroad.test.globalconf.TestGlobalConfWrapper;
 import org.niis.xroad.test.serverconf.TestServerConfWrapper;
 
 import javax.net.ssl.SSLSession;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class TestContext {
+    private static final String AGREEMENT_TOKEN_ISSUER = "x-road-provider-data-plane";
+    private static final String AGREEMENT_TOKEN_AUDIENCE = "x-road-server-proxy";
+    private static final Duration AGREEMENT_TOKEN_TTL = Duration.ofSeconds(60);
+
     final TestGlobalConfWrapper globalConfProvider;
     final OcspVerifierFactory ocspVerifierFactory = new OcspVerifierFactory();
     @Getter
     final KeyConfProvider keyConfProvider;
     final TestServerConfWrapper serverConfProvider;
     final ProxyTestSuiteHelper proxyTestSuiteHelper;
+
+    /** Real in-memory key material backing the server-side {@link AgreementTokenAccessCheck} in this context. */
+    @Getter
+    final AgreementTokenKeyProvider agreementTokenKeyProvider = InMemoryAgreementTokenKeyProvider.withGeneratedKey("1");
+    @Getter
+    final ProxyAgreementTokenProperties agreementTokenProperties = mockAgreementTokenProperties();
+    /** The consumer-side DSP dependency of the client proxy, stubbable per test case. Requests bypass DSP unless stubbed. */
+    @Getter
+    final DspRequestProcessor consumerSideDspProcessor = mockConsumerSideDspProcessor();
 
     public ServerProxy serverProxy;
     ClientProxy clientProxy;
@@ -119,6 +149,17 @@ public class TestContext {
      */
     public TestContext(ProxyTestSuiteHelper proxyTestSuiteHelper, boolean startServerProxy, MonitorRpcClient monitorRpcClient,
                        ServiceAddressResolver serviceAddressResolverOverride, Runnable authTrustVerifiedListener) {
+        this(proxyTestSuiteHelper, startServerProxy, monitorRpcClient, serviceAddressResolverOverride,
+                authTrustVerifiedListener, null);
+    }
+
+    /**
+     * Creates a test context whose server-side components read {@code serverProxyProperties} while the client
+     * side keeps the shared properties of the helper. A {@code null} value means the shared properties.
+     */
+    public TestContext(ProxyTestSuiteHelper proxyTestSuiteHelper, boolean startServerProxy, MonitorRpcClient monitorRpcClient,
+                       ServiceAddressResolver serviceAddressResolverOverride, Runnable authTrustVerifiedListener,
+                       ProxyProperties serverProxyProperties) {
         try {
             org.apache.xml.security.Init.init();
 
@@ -151,7 +192,8 @@ public class TestContext {
                     .proxyHttpClient(proxyProperties, authTrustVerifier, reloadingSSLSocketFactory, unusableAddressTracker);
             HttpClientCreator httpClientCreator = new HttpClientCreator(serverConfProvider,
                     proxyProperties.clientProxy().clientTlsProtocols(), proxyProperties.clientProxy().clientTlsCiphers());
-            var opMonitoringDataHelper = new OpMonitoringDataHelper(globalConfProvider, serverConfProvider);
+            var opMonitoringDataHelper = new OpMonitoringDataHelper(globalConfProvider, serverConfProvider,
+                    new OwnSecurityServerResolver(new ServerConfProviderIdentitySource(serverConfProvider), globalConfProvider));
             var httpSenderProvider = new HttpSenderProvider(httpClient, httpClientCreator.getHttpClient(), proxyProperties);
             var messageSigningService = new MessageSigningService(keyConfProvider, signingCtxProvider);
             var serviceAddressResolver = serviceAddressResolverOverride != null
@@ -173,7 +215,10 @@ public class TestContext {
                     messageSigningService, httpSenderProvider,
                     clientVerificationService, opMonitoringDataHelper,
                     globalConfProvider, proxyProperties, commonProperties,
-                    ocspVerifierFactory, clientRequestPreparationService, mock(DspRequestProcessor.class), identifierValidationService);
+                    ocspVerifierFactory, clientRequestPreparationService, consumerSideDspProcessor, identifierValidationService,
+                    new LegacyCallRefusalPolicy(proxyProperties, globalConfProvider),
+                    new DspFailover(consumerSideDspProcessor, httpSenderProvider,
+                            new DspSendFailureHandler(consumerSideDspProcessor)));
             ClientSoapMessageHandler soapMessageHandler = new ClientSoapMessageHandler(
                     clientSoapMessageProcessor, proxyProperties, globalConfProvider, keyConfProvider,
                     new NoOpMonitoringBuffer(), opMonitoringDataHelper);
@@ -187,27 +232,37 @@ public class TestContext {
 
                 ServiceHandlerLoader serviceHandlerLoader = new ServiceHandlerLoader(
                         serverConfProvider, globalConfProvider, proxyProperties, commonProperties,
-                        new NoopVaultClient(), monitorRpcClient,
+                        mock(RpcChannelFactory.class), mock(XRoadConfig.class), mock(OpMonitorChannelTrustResolver.class),
+                        monitorRpcClient,
                         httpSenderProvider, httpClientCreator.getHttpClient());
                 serviceHandlerLoader.init();
 
+                var agreementTokenKeyMaterial = mock(AgreementTokenKeyMaterial.class);
+                when(agreementTokenKeyMaterial.provider()).thenReturn(Optional.of(agreementTokenKeyProvider));
+
+                var serverSideProperties = serverProxyProperties != null ? serverProxyProperties : proxyProperties;
+                var legacyCallRefusalPolicy = new LegacyCallRefusalPolicy(serverSideProperties, globalConfProvider);
+
+                var agreementTokenAccessCheck = new AgreementTokenAccessCheck(agreementTokenKeyMaterial, agreementTokenProperties,
+                        legacyCallRefusalPolicy, new ServerConfGroupAccess(serverConfProvider, globalConfProvider));
+
                 var serverRestMessageProcessor = new ServerRestMessageProcessor(
                         messageSigningService, clientVerificationService, opMonitoringDataHelper,
-                        globalConfProvider, serverConfProvider, proxyProperties, commonProperties,
-                        ocspVerifierFactory, serviceHandlerLoader, identifierValidationService);
+                        globalConfProvider, serverConfProvider, serverSideProperties, commonProperties,
+                        ocspVerifierFactory, serviceHandlerLoader, identifierValidationService, agreementTokenAccessCheck);
 
                 var serverSoapMessageProcessor = new ServerSoapMessageProcessor(
                         messageSigningService, clientVerificationService, opMonitoringDataHelper,
-                        globalConfProvider, serverConfProvider, proxyProperties, commonProperties,
-                        ocspVerifierFactory, serviceHandlerLoader, identifierValidationService);
+                        globalConfProvider, serverConfProvider, serverSideProperties, commonProperties,
+                        ocspVerifierFactory, serviceHandlerLoader, identifierValidationService, agreementTokenAccessCheck);
 
 
                 ServerProxyHandler proxyHandler = new ServerProxyHandler(serverRestMessageProcessor,
-                        serverSoapMessageProcessor, proxyProperties.server(),
+                        serverSoapMessageProcessor, serverSideProperties.server(),
                         mock(ClientProxyVersionVerifier.class),
                         globalConfProvider,
                         new NoOpMonitoringBuffer());
-                serverProxy = new ServerProxy(proxyProperties, globalConfProvider, keyConfProvider,
+                serverProxy = new ServerProxy(serverSideProperties, globalConfProvider, keyConfProvider,
                         proxyHandler, mock(IdleConnectionMonitorThread.class), antiDosConfiguration);
                 serverProxy.init();
             }
@@ -216,6 +271,21 @@ public class TestContext {
         } catch (Exception e) {
             throw new RuntimeException("Init failed", e);
         }
+    }
+
+    private static DspRequestProcessor mockConsumerSideDspProcessor() {
+        var processor = mock(DspRequestProcessor.class);
+        when(processor.bypassesDsp(any())).thenReturn(true);
+        return processor;
+    }
+
+    private static ProxyAgreementTokenProperties mockAgreementTokenProperties() {
+        var properties = mock(ProxyAgreementTokenProperties.class);
+        when(properties.issuer()).thenReturn(AGREEMENT_TOKEN_ISSUER);
+        when(properties.audience()).thenReturn(AGREEMENT_TOKEN_AUDIENCE);
+        when(properties.tokenTtl()).thenReturn(AGREEMENT_TOKEN_TTL);
+        when(properties.expiryLeeway()).thenReturn(Duration.ZERO);
+        return properties;
     }
 
     /** Port the server proxy is bound to (OS-assigned when configured with {@code listen-port=0}). */

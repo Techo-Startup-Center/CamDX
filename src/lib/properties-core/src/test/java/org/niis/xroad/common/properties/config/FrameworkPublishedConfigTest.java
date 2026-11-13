@@ -48,11 +48,10 @@ class FrameworkPublishedConfigTest {
             "xroad.proxy.health-check-port",
             "xroad.proxy-ui-api.request-size-limit-binary-upload",
             "xroad.admin-service.request-size-limit-binary-upload",
-            "xroad.edc.iam.trusted-issuer.issuer.id",
-            // ds-control-plane extensions read these directly via ServiceExtensionContext.getSetting();
-            // a stored override only reaches that call through the framework-published config source
-            "xroad.dsp.participant-context-id",
-            "xroad.dsp.management-participant-context-id",
+            // every key of the DSP registry is published: the control-plane extensions and the identity hub
+            // configuration read it from the framework configuration
+            "xroad.dsp.did-port",
+            "xroad.dsp.dsp-port",
             "xroad.dsp.catalog.cache.enabled",
             "xroad.dsp.catalog.cache.ttl-seconds",
             "xroad.dsp.catalog.cache.find-by-id-max-size",
@@ -60,13 +59,19 @@ class FrameworkPublishedConfigTest {
             "xroad.dsp.builtin-services.opMonitor.enabled",
             "xroad.dsp.builtin-services.metaservices.enabled",
             "xroad.dsp.builtin-services.server-proxy-url",
+            "xroad.dsp.issuer-trust.refresh-interval-seconds",
+            "xroad.dsp.did-resolution.fetch-timeout-ms",
+            // the Issuer Service's application.yaml interpolates this into the did/issuance/statuslist
+            // contexts' bind host
+            "xroad.dataspace.issuer.listen-address",
             // Quarkus @LookupIfProperty bean gates (proxy messagelog beans + readiness check) and the
             // auxiliary-service @ConfigProperty reader resolve this from framework config
             "xroad.proxy.message-log.enabled",
             // Spring @Scheduled(fixedRateString) / Quarkus @Scheduled(every) — the scheduler resolves
             // these itself, so a stored override has to reach the framework config
             "xroad.admin-service.global-configuration-generation-rate-in-seconds",
-            "xroad.configuration-proxy.update-interval");
+            "xroad.configuration-proxy.update-interval",
+            "xroad.proxy-ui-api.dataspace.provisioning-tick-ms");
 
     @Test
     void onlyTheDeclaredFrameworkSettingsAreFlagged() {

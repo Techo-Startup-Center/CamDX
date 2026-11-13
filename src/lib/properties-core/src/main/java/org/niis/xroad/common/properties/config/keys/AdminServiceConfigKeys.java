@@ -42,6 +42,7 @@ import static org.niis.xroad.common.properties.DefaultTlsProperties.DEFAULT_PROX
 import static org.niis.xroad.common.properties.DefaultTlsProperties.DEFAULT_PROXY_CLIENT_TLS_PROTOCOLS_STRING;
 import static org.niis.xroad.common.properties.EnvProperties.xroadHost;
 import static org.niis.xroad.common.properties.config.Validator.nonEmpty;
+import static org.niis.xroad.common.properties.config.Validator.positiveInt;
 
 /**
  * Security Server admin-service keys ({@code xroad.proxy-ui-api.*}, incl. {@code .tls} and the
@@ -455,9 +456,13 @@ public final class AdminServiceConfigKeys implements ConfigKeyProvider {
             .string("mail-notification")
             .build();
 
-    public static final ConfigKey<Boolean> DATASPACE_ENABLED = DATASPACE
-            .bool("enabled")
-            .withDefaultValue(false)
+    /**
+     * {@code xroad.proxy-ui-api.dataspace.provisioning-enabled}. Holds back the participant
+     * provisioning worker.
+     */
+    public static final ConfigKey<Boolean> DATASPACE_PROVISIONING_ENABLED = DATASPACE
+            .bool("provisioning-enabled")
+            .withDefaultValue(true)
             .build();
 
     public static final ConfigKey<String> DATASPACE_IDENTITY_HUB_URL = DATASPACE
@@ -468,15 +473,6 @@ public final class AdminServiceConfigKeys implements ConfigKeyProvider {
             .string("control-plane-url")
             .build();
 
-    public static final ConfigKey<String> DATASPACE_PARTICIPANT_ID = DATASPACE
-            .string("participant-id")
-            .build();
-
-    public static final ConfigKey<Integer> DATASPACE_IDENTITY_HUB_DID_PORT = DATASPACE
-            .integer("identity-hub-did-port")
-            .withDefaultValue(7183)
-            .build();
-
     public static final ConfigKey<Integer> DATASPACE_IDENTITY_HUB_STS_PORT = DATASPACE
             .integer("identity-hub-sts-port")
             .withDefaultValue(7184)
@@ -485,15 +481,6 @@ public final class AdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Integer> DATASPACE_IDENTITY_HUB_CREDENTIALS_PORT = DATASPACE
             .integer("identity-hub-credentials-port")
             .withDefaultValue(7185)
-            .build();
-
-    public static final ConfigKey<Boolean> DATASPACE_MANAGEMENT_CONTEXT_ENABLED = DATASPACE
-            .bool("management-context-enabled")
-            .withDefaultValue(false)
-            .build();
-
-    public static final ConfigKey<String> DATASPACE_ISSUER_DID = DATASPACE
-            .string("issuer-did")
             .build();
 
     public static final ConfigKey<String> DATASPACE_CREDENTIAL_DEFINITION_ID = DATASPACE
@@ -527,6 +514,25 @@ public final class AdminServiceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Integer> DATASPACE_MAX_HOLDER_PID_SLOTS = DATASPACE
             .integer("max-holder-pid-slots")
             .withDefaultValue(20)
+            .build();
+
+    /** {@code xroad.proxy-ui-api.dataspace.provisioning-tick-ms} */
+    public static final ConfigKey<Integer> DATASPACE_PROVISIONING_TICK_MS = DATASPACE
+            .integer("provisioning-tick-ms")
+            .withDefaultValue(30000)
+            .publishedToFramework()
+            .build();
+
+    /**
+     * {@code xroad.proxy-ui-api.dataspace.provisioning-batch-size}. Number of participant contexts, the
+     * SYSTEM context and members alike, the provisioning worker binds and provisions per batch. Every pass
+     * runs all batches, so the size does not limit how much work a pass does; it shapes how binding and
+     * provisioning interleave, since a batch binds its unbound contexts before it provisions any of them.
+     */
+    public static final ConfigKey<Integer> DATASPACE_PROVISIONING_BATCH_SIZE = DATASPACE
+            .integer("provisioning-batch-size")
+            .withDefaultValue(100)
+            .withValidator(positiveInt())
             .build();
 
     /** {@code xroad.proxy-ui-api.dataspace.tls-certificate-contacts} */

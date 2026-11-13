@@ -40,6 +40,7 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 
 class QueryEvaluatorTest {
 
@@ -76,6 +77,98 @@ class QueryEvaluatorTest {
     void idFilterMatchesExactlyOneItem() {
         var spec = QuerySpec.Builder.newInstance()
                 .filter(Criterion.criterion("id", "=", "id-a"))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        var result = evaluator.evaluate(items.stream(), spec).toList();
+
+        assertThat(result).containsExactly(ITEM_A);
+    }
+
+    @Test
+    void idInFilterMatchesExactlyTheListedIdsThatExist() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(Criterion.criterion("id", "in", List.of("id-a", "id-c", "id-missing")))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        var result = evaluator.evaluate(items.stream(), spec).toList();
+
+        assertThat(result).containsExactlyInAnyOrder(ITEM_A, ITEM_C);
+    }
+
+    @Test
+    void namespacedIdInFilterMatchesLikeThePlainOne() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(Criterion.criterion(EDC_NAMESPACE + "id", "in", List.of("id-b")))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        var result = evaluator.evaluate(items.stream(), spec).toList();
+
+        assertThat(result).containsExactly(ITEM_B);
+    }
+
+    @Test
+    void idInFilterWithEmptyListMatchesNothing() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(Criterion.criterion("id", "in", List.of()))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        assertThat(evaluator.evaluate(items.stream(), spec).toList()).isEmpty();
+    }
+
+    @Test
+    void idInFilterCombinesWithParticipantContextIdFilter() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(List.of(
+                        Criterion.criterion("id", "in", List.of("id-a", "id-c")),
+                        Criterion.criterion("participantContextId", "=", "ctx-1")
+                ))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        var result = evaluator.evaluate(items.stream(), spec).toList();
+
+        assertThat(result).containsExactly(ITEM_A);
+    }
+
+    @Test
+    void idInFilterWithoutCollectionOperandMatchesNothingWithWarnLog() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(Criterion.criterion("id", "in", "id-a"))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        var result = evaluator.evaluate(items.stream(), spec).toList();
+
+        assertThat(result).isEmpty();
+        assertThat(logAppender.list)
+                .anySatisfy(event -> {
+                    assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                    assertThat(event.getFormattedMessage()).contains("needs a collection operand");
+                });
+    }
+
+    @Test
+    void inOnParticipantContextIdMatchesNothingWithWarnLog() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(Criterion.criterion("participantContextId", "in", List.of("ctx-1")))
+                .limit(Integer.MAX_VALUE)
+                .build();
+
+        var result = evaluator.evaluate(items.stream(), spec).toList();
+
+        assertThat(result).isEmpty();
+        assertThat(logAppender.list)
+                .anySatisfy(event -> assertThat(event.getFormattedMessage()).contains("Unsupported operator"));
+    }
+
+    @Test
+    void namespacedIdFilterMatchesLikeThePlainOne() {
+        var spec = QuerySpec.Builder.newInstance()
+                .filter(Criterion.criterion(EDC_NAMESPACE + "id", "=", "id-a"))
                 .limit(Integer.MAX_VALUE)
                 .build();
 
@@ -141,7 +234,7 @@ class QueryEvaluatorTest {
     }
 
     @Test
-    void unsupportedOperatorSkipsWithWarnLog() {
+    void unsupportedOperatorMatchesNothingWithWarnLog() {
         var spec = QuerySpec.Builder.newInstance()
                 .filter(Criterion.criterion("id", "!=", "id-a"))
                 .limit(Integer.MAX_VALUE)
@@ -149,7 +242,7 @@ class QueryEvaluatorTest {
 
         var result = evaluator.evaluate(items.stream(), spec).toList();
 
-        assertThat(result).hasSize(3);
+        assertThat(result).isEmpty();
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getLevel, ILoggingEvent::getFormattedMessage)
                 .anySatisfy(tuple -> {
@@ -159,7 +252,7 @@ class QueryEvaluatorTest {
     }
 
     @Test
-    void unknownCriterionSkipsWithWarnLog() {
+    void unknownCriterionMatchesNothingWithWarnLog() {
         var spec = QuerySpec.Builder.newInstance()
                 .filter(Criterion.criterion("unknownField", "=", "value"))
                 .limit(Integer.MAX_VALUE)
@@ -167,7 +260,7 @@ class QueryEvaluatorTest {
 
         var result = evaluator.evaluate(items.stream(), spec).toList();
 
-        assertThat(result).hasSize(3);
+        assertThat(result).isEmpty();
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getLevel, ILoggingEvent::getFormattedMessage)
                 .anySatisfy(tuple -> {

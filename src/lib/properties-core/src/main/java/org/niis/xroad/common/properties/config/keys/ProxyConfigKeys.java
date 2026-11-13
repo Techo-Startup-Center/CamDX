@@ -42,6 +42,9 @@ import static org.niis.xroad.common.properties.DefaultTlsProperties.DEFAULT_PROX
 import static org.niis.xroad.common.properties.DefaultTlsProperties.DEFAULT_PROXY_CLIENT_TLS_PROTOCOLS_STRING;
 import static org.niis.xroad.common.properties.DefaultTlsProperties.DEFAULT_XROAD_SSL_CIPHER_SUITES_STRING;
 import static org.niis.xroad.common.properties.EnvProperties.xroadHost;
+import static org.niis.xroad.common.properties.config.Validator.nonNegative;
+import static org.niis.xroad.common.properties.config.Validator.positive;
+import static org.niis.xroad.common.properties.config.Validator.range;
 
 /**
  * Keys for the {@code xroad.proxy} scope, mirroring the nested structure of the legacy
@@ -61,7 +64,6 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
     private static final Prefix ADDON_META_SERVICES = ADDON.subPrefix("meta-services");
     private static final Prefix ADDON_OP_MONITOR = ADDON.subPrefix("op-monitor");
     private static final Prefix ADDON_OP_MONITOR_BUFFER = ADDON_OP_MONITOR.subPrefix("buffer");
-    private static final Prefix ADDON_OP_MONITOR_CONNECTION = ADDON_OP_MONITOR.subPrefix("connection");
     private static final Prefix TLS = PROXY.subPrefix("tls");
     private static final Prefix TLS_CERT_PROVISIONING = TLS.subPrefix("certificate-provisioning");
     private static final Prefix ANTI_DOS = Prefix.of(Category.PROXY, "xroad.anti-dos");
@@ -73,6 +75,7 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
     private static final Prefix RPC = PROXY.subPrefix("rpc");
     private static final Prefix DSP = PROXY.subPrefix("dsp");
     private static final Prefix DSP_CACHE = DSP.subPrefix("cache");
+    private static final Prefix AGREEMENT_TOKEN = PROXY.subPrefix("agreement-token");
 
     private static final String ENABLED = "enabled";
     private static final String LISTEN_ADDRESS = "listen-address";
@@ -102,6 +105,13 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Boolean> DSP_ENABLED = PROXY
             .bool("dsp-enabled")
             .withDefaultValue(true)
+            .build();
+
+    /** {@code xroad.proxy.legacy-protocol-disabled}. */
+    public static final ConfigKey<Boolean> LEGACY_PROTOCOL_DISABLED = PROXY
+            .bool("legacy-protocol-disabled")
+            .withDefaultValue(false)
+            .exposedInUi()
             .build();
 
     /** {@code xroad.proxy.health-check-enabled}. */
@@ -226,6 +236,18 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Integer> CLIENT_PROXY_CLIENT_CONNECTOR_INITIAL_IDLE_TIME = CLIENT_PROXY
             .integer("client-connector-initial-idle-time")
             .withDefaultValue(30000)
+            .exposedInUi()
+            .build();
+
+    /**
+     * {@code xroad.proxy.client-proxy.client-connector-max-idle-time}: once the client proxy starts processing a
+     * request, how long (in milliseconds) that request may stay continuously idle before it fails. 0 means no
+     * limit. A positive bound is enforced at the next {@link #CLIENT_PROXY_CLIENT_CONNECTOR_INITIAL_IDLE_TIME}
+     * idle-timeout firing on or after it has passed.
+     */
+    public static final ConfigKey<Integer> CLIENT_PROXY_CLIENT_CONNECTOR_MAX_IDLE_TIME = CLIENT_PROXY
+            .integer("client-connector-max-idle-time")
+            .withDefaultValue(0)
             .exposedInUi()
             .build();
 
@@ -458,79 +480,21 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
             .exposedInUi()
             .build();
 
+    /**
+     * {@code xroad.proxy.addon.op-monitor.buffer.max-message-size}: largest store request in bytes; larger batches are
+     * split. Keep it below op-monitor's {@code xroad.op-monitor.rpc.max-inbound-message-size} (gRPC default 4 MiB).
+     */
+    public static final ConfigKey<Integer> ADDON_OP_MONITOR_BUFFER_MAX_MESSAGE_SIZE = ADDON_OP_MONITOR_BUFFER
+            .integer("max-message-size")
+            .withDefaultValue(3 * 1024 * 1024)
+            .withValidator(range(OpMonitorConfigKeys.MIN_STORE_MESSAGE_SIZE, Integer.MAX_VALUE))
+            .exposedInUi()
+            .build();
+
     /** {@code xroad.proxy.addon.op-monitor.buffer.sending-interval-seconds}. */
     public static final ConfigKey<Long> ADDON_OP_MONITOR_BUFFER_SENDING_INTERVAL_SECONDS = ADDON_OP_MONITOR_BUFFER
             .longValue("sending-interval-seconds")
             .withDefaultValue(5L)
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.buffer.socket-timeout-seconds}. */
-    public static final ConfigKey<Integer> ADDON_OP_MONITOR_BUFFER_SOCKET_TIMEOUT_SECONDS = ADDON_OP_MONITOR_BUFFER
-            .integer("socket-timeout-seconds")
-            .withDefaultValue(60)
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.buffer.connection-timeout-seconds}. */
-    public static final ConfigKey<Integer> ADDON_OP_MONITOR_BUFFER_CONNECTION_TIMEOUT_SECONDS = ADDON_OP_MONITOR_BUFFER
-            .integer("connection-timeout-seconds")
-            .withDefaultValue(50)
-            .exposedInUi()
-            .build();
-
-    // --- xroad.proxy.addon.op-monitor.connection -----------------------------
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.host}. */
-    public static final ConfigKey<String> ADDON_OP_MONITOR_CONNECTION_HOST = ADDON_OP_MONITOR_CONNECTION
-            .string("host")
-            .withDefaultValue("localhost")
-            .withContainerDefaultValue("op-monitor")
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.port}. */
-    public static final ConfigKey<Integer> ADDON_OP_MONITOR_CONNECTION_PORT = ADDON_OP_MONITOR_CONNECTION
-            .integer("port")
-            .withDefaultValue(2080)
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.scheme}. */
-    public static final ConfigKey<String> ADDON_OP_MONITOR_CONNECTION_SCHEME = ADDON_OP_MONITOR_CONNECTION
-            .string("scheme")
-            .withDefaultValue("http")
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.client-tls-certificate} — no default (optional, deprecated). */
-    public static final ConfigKey<String> ADDON_OP_MONITOR_CONNECTION_CLIENT_TLS_CERTIFICATE = ADDON_OP_MONITOR_CONNECTION
-            .string("client-tls-certificate")
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.tls-certificate} — no default (optional, deprecated). */
-    public static final ConfigKey<String> ADDON_OP_MONITOR_CONNECTION_TLS_CERTIFICATE = ADDON_OP_MONITOR_CONNECTION
-            .string("tls-certificate")
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.socket-timeout-seconds}. */
-    public static final ConfigKey<Integer> ADDON_OP_MONITOR_CONNECTION_SOCKET_TIMEOUT_SECONDS = ADDON_OP_MONITOR_CONNECTION
-            .integer("socket-timeout-seconds")
-            .withDefaultValue(60)
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.connection-timeout-seconds}. */
-    public static final ConfigKey<Integer> ADDON_OP_MONITOR_CONNECTION_CONNECTION_TIMEOUT_SECONDS = ADDON_OP_MONITOR_CONNECTION
-            .integer("connection-timeout-seconds")
-            .withDefaultValue(30)
-            .exposedInUi()
-            .build();
-
-    /** {@code xroad.proxy.addon.op-monitor.connection.xroad-tls-ciphers}. */
-    public static final ConfigKey<String[]> ADDON_OP_MONITOR_CONNECTION_XROAD_TLS_CIPHERS = ADDON_OP_MONITOR_CONNECTION
-            .stringArray("xroad-tls-ciphers")
-            .withDefaultValue(DEFAULT_XROAD_SSL_CIPHER_SUITES_STRING)
             .exposedInUi()
             .build();
 
@@ -814,11 +778,6 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
 
     // --- xroad.proxy.dsp --------------------------------------------------------
 
-    /** {@code xroad.proxy.dsp.participant-context-id} — no default (must be set per SS). */
-    public static final ConfigKey<String> DSP_PARTICIPANT_CONTEXT_ID = DSP
-            .string("participant-context-id")
-            .build();
-
     /** {@code xroad.proxy.dsp.protocol}. */
     public static final ConfigKey<String> DSP_PROTOCOL = DSP
             .string("protocol")
@@ -864,6 +823,26 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
             .string("serverproxy-endpoint")
             .build();
 
+    /**
+     * {@code xroad.proxy.dsp.acquisition-deadline} — the one time limit for acquiring asset access, shared by
+     * every step and every provider server candidate.
+     */
+    public static final ConfigKey<Duration> DSP_ACQUISITION_DEADLINE = DSP
+            .keyDuration("acquisition-deadline")
+            .withDefaultValue(Duration.ofSeconds(60))
+            .withValidator(positive())
+            .build();
+
+    /**
+     * {@code xroad.proxy.dsp.acquisition-deadline-margin} — how long past its share of the deadline the proxy
+     * waits for the control plane's own answer before it gives up on the call.
+     */
+    public static final ConfigKey<Duration> DSP_ACQUISITION_DEADLINE_MARGIN = DSP
+            .keyDuration("acquisition-deadline-margin")
+            .withDefaultValue(Duration.ofSeconds(5))
+            .withValidator(nonNegative())
+            .build();
+
     /** {@code xroad.proxy.dsp.cache.enabled}. */
     public static final ConfigKey<Boolean> DSP_CACHE_ENABLED = DSP_CACHE
             .bool(ENABLED)
@@ -880,6 +859,87 @@ public final class ProxyConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<Long> DSP_CACHE_MAXIMUM_SIZE = DSP_CACHE
             .longValue("maximum-size")
             .withDefaultValue(10000L)
+            .build();
+
+    /** {@code xroad.proxy.dsp.cache.margin} — how long before a cached token's real expiry it is reloaded. */
+    public static final ConfigKey<Duration> DSP_CACHE_MARGIN = DSP_CACHE
+            .keyDuration("margin")
+            .withDefaultValue(Duration.ofSeconds(5))
+            .withValidator(nonNegative())
+            .exposedInUi()
+            .build();
+
+    // --- xroad.proxy.agreement-token ---------------------------------------------
+
+    /** {@code xroad.proxy.agreement-token.issuer}. */
+    public static final ConfigKey<String> AGREEMENT_TOKEN_ISSUER = AGREEMENT_TOKEN
+            .string("issuer")
+            .withDefaultValue("x-road-provider-data-plane")
+            .exposedInUi()
+            .build();
+
+    /** {@code xroad.proxy.agreement-token.audience}. */
+    public static final ConfigKey<String> AGREEMENT_TOKEN_AUDIENCE = AGREEMENT_TOKEN
+            .string("audience")
+            .withDefaultValue("x-road-server-proxy")
+            .exposedInUi()
+            .build();
+
+    /** {@code xroad.proxy.agreement-token.token-ttl}. */
+    public static final ConfigKey<Duration> AGREEMENT_TOKEN_TOKEN_TTL = AGREEMENT_TOKEN
+            .keyDuration("token-ttl")
+            .withDefaultValue(Duration.ofSeconds(60))
+            .withValidator(positive())
+            .exposedInUi()
+            .build();
+
+    /** {@code xroad.proxy.agreement-token.key-refresh-interval}. */
+    public static final ConfigKey<Duration> AGREEMENT_TOKEN_KEY_REFRESH_INTERVAL = AGREEMENT_TOKEN
+            .keyDuration("key-refresh-interval")
+            .withDefaultValue(Duration.ofSeconds(30))
+            .withValidator(positive())
+            .exposedInUi()
+            .build();
+
+    /**
+     * {@code xroad.proxy.agreement-token.max-key-age} — how old the newest signing key may get before the proxy
+     * rotates it automatically; zero disables automatic rotation.
+     */
+    public static final ConfigKey<Duration> AGREEMENT_TOKEN_MAX_KEY_AGE = AGREEMENT_TOKEN
+            .keyDuration("max-key-age")
+            .withDefaultValue(Duration.ofDays(30))
+            .withValidator(nonNegative())
+            .exposedInUi()
+            .build();
+
+    /**
+     * {@code xroad.proxy.agreement-token.key-retention} — how long a signing key is kept after it stops signing,
+     * which is when its successor starts signing, before the proxy deletes it from the secret store; zero keeps
+     * every key. A non-zero value must be at least ten times the token lifetime and at least three key refresh
+     * intervals plus the token lifetime and the expiry leeway. A proxy that has not refreshed its keys for longer
+     * than this value minus one key refresh interval, the token lifetime and the expiry leeway stops minting.
+     */
+    public static final ConfigKey<Duration> AGREEMENT_TOKEN_KEY_RETENTION = AGREEMENT_TOKEN
+            .keyDuration("key-retention")
+            .withDefaultValue(Duration.ofDays(1))
+            .withValidator(nonNegative())
+            .exposedInUi()
+            .build();
+
+    /** {@code xroad.proxy.agreement-token.expiry-leeway} — clock-skew leeway the verifier allows past a token's exp. */
+    public static final ConfigKey<Duration> AGREEMENT_TOKEN_EXPIRY_LEEWAY = AGREEMENT_TOKEN
+            .keyDuration("expiry-leeway")
+            .withDefaultValue(Duration.ofSeconds(5))
+            .withValidator(nonNegative())
+            .exposedInUi()
+            .build();
+
+    /** {@code xroad.proxy.agreement-token.grant-lookup-deadline}. */
+    public static final ConfigKey<Duration> AGREEMENT_TOKEN_GRANT_LOOKUP_DEADLINE = AGREEMENT_TOKEN
+            .keyDuration("grant-lookup-deadline")
+            .withDefaultValue(Duration.ofSeconds(5))
+            .withValidator(positive())
+            .exposedInUi()
             .build();
 
     private ProxyConfigKeys() {

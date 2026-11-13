@@ -28,15 +28,26 @@ package org.niis.xroad.securityserver.restapi.repository;
 
 import ee.ria.xroad.common.identifier.ClientId;
 
+import jakarta.annotation.Nullable;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.Session;
+import org.niis.xroad.common.identifiers.jpa.dao.impl.IdentifierDAOImpl;
+import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
 import org.niis.xroad.restapi.util.PersistenceUtils;
 import org.niis.xroad.serverconf.impl.dao.DsParticipantDAOImpl;
 import org.niis.xroad.serverconf.impl.entity.DsParticipantEntity;
+import org.niis.xroad.serverconf.model.ParticipantState;
+import org.niis.xroad.serverconf.model.ParticipantType;
+import org.niis.xroad.serverconf.model.PublicationState;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Repository for the {@code ds_participant} table, per XRDADR-41's derive-then-bind decision.
@@ -50,6 +61,7 @@ public class DsParticipantRepository {
     private final PersistenceUtils persistenceUtils;
 
     private final DsParticipantDAOImpl dsParticipantDAO = new DsParticipantDAOImpl();
+    private final IdentifierDAOImpl identifierDAO = new IdentifierDAOImpl();
 
     /**
      * Finds the bound participant row for the given member identifier.
@@ -59,5 +71,136 @@ public class DsParticipantRepository {
      */
     public Optional<DsParticipantEntity> findByMemberIdentifier(ClientId member) {
         return dsParticipantDAO.findByMemberIdentifier(persistenceUtils.getCurrentSession(), member);
+    }
+
+    /**
+     * Flips the member's bound participant row to decommissioned, in the caller's transaction — a
+     * no-op if it already is. Does nothing when the member has no bound row.
+     *
+     * @param member the member identifier
+     * @return {@code true} if the member had a bound row, {@code false} if it had none
+     */
+    public boolean decommissionMember(ClientId member) {
+        return dsParticipantDAO.decommissionMember(persistenceUtils.getCurrentSession(), member);
+    }
+
+    /**
+     * Finds every bound participant row currently marked decommissioned, awaiting teardown convergence.
+     *
+     * @return the decommissioned rows
+     */
+    public List<DsParticipantEntity> findDecommissioned() {
+        return dsParticipantDAO.findDecommissioned(persistenceUtils.getCurrentSession());
+    }
+
+    /**
+     * Deletes the given participant row by id, in the caller's transaction. Idempotent: deleting an
+     * already-absent row is not an error.
+     *
+     * @param id the participant row id
+     * @return {@code true} if a row was deleted, {@code false} if none existed
+     */
+    public boolean delete(Long id) {
+        return dsParticipantDAO.delete(persistenceUtils.getCurrentSession(), id);
+    }
+
+    /**
+     * Finds the Security Server's bound SYSTEM participant row, if one has been provisioned.
+     *
+     * @return the bound SYSTEM row, if one has been provisioned
+     */
+    public Optional<DsParticipantEntity> findSystemParticipant() {
+        return dsParticipantDAO.findSystemParticipant(persistenceUtils.getCurrentSession());
+    }
+
+    /**
+     * Finds the Security Server's SYSTEM participant row if it is active.
+     *
+     * @return the active SYSTEM row, empty when none exists or the row is decommissioned
+     */
+    public Optional<DsParticipantEntity> findActiveSystemParticipant() {
+        return dsParticipantDAO.findActiveSystemParticipant(persistenceUtils.getCurrentSession());
+    }
+
+    /**
+     * Finds every active MEMBER row whose publication state is one of the given states; a row with no publication
+     * state counts as {@code NOT_SENT}.
+     *
+     * @param states the publication states to match
+     * @return the matching active member rows
+     */
+    public List<DsParticipantEntity> findActiveMembers(Set<PublicationState> states) {
+        return dsParticipantDAO.findActiveMembers(persistenceUtils.getCurrentSession(), states);
+    }
+
+    /**
+     * Moves a row's publication state from {@code expected} to {@code next} only if the row is still active
+     * and in the expected state; a row with no publication state counts as {@code NOT_SENT}.
+     *
+     * @param id       the participant row id
+     * @param expected the state the row must still be in
+     * @param next     the new state
+     * @param reason   the new reason, may be {@code null}
+     * @return {@code true} if the transition applied, {@code false} if the row is gone, no longer active or
+     *         in another state
+     */
+    public boolean transitionPublication(Long id, PublicationState expected, PublicationState next,
+            @Nullable String reason) {
+        return dsParticipantDAO.transitionPublication(persistenceUtils.getCurrentSession(), id, expected, next, reason,
+                Instant.now());
+    }
+
+    /**
+     * Binds a new MEMBER participant row. Never call this for a member that is already bound —
+     * the bound row is authoritative and must never be overwritten. The insert is flushed
+     * immediately, so a concurrent bind of the same member surfaces here as a constraint
+     * violation rather than at the surrounding transaction's commit.
+     *
+     * <p>Runs in its own transaction: callers bind as a side effect of unrelated work, and a
+     * losing race on the unique member identifier must not mark the caller's transaction
+     * rollback-only.
+     *
+     * @param member the member identifier
+     * @param ctxId  the derived ctx-id
+     * @param did    the derived DID
+     * @return the persisted row
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public DsParticipantEntity bindMemberParticipant(ClientId member, String ctxId, String did) {
+        var session = persistenceUtils.getCurrentSession();
+        var participant = activeParticipant(ParticipantType.MEMBER, ctxId, did);
+        participant.setMemberIdentifier(identifierDAO.findOrCreateClientId(session, member));
+        return saveAndFlush(session, participant);
+    }
+
+    /**
+     * Binds the Security Server's SYSTEM participant row, with the same rules as
+     * {@link #bindMemberParticipant}: never over an existing SYSTEM row, flushed immediately so a
+     * concurrent bind fails on the single-SYSTEM-row index here, and in its own transaction.
+     *
+     * @param ctxId the SYSTEM ctx-id
+     * @param did   the derived SYSTEM DID
+     * @return the persisted row
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public DsParticipantEntity bindSystemParticipant(String ctxId, String did) {
+        var participant = activeParticipant(ParticipantType.SYSTEM, ctxId, did);
+        return saveAndFlush(persistenceUtils.getCurrentSession(), participant);
+    }
+
+    private static DsParticipantEntity activeParticipant(ParticipantType type, String ctxId, String did) {
+        var participant = new DsParticipantEntity();
+        participant.setParticipantType(type);
+        participant.setCtxId(ctxId);
+        participant.setDid(did);
+        participant.setSchemeVersion(ParticipantIdentifierScheme.SCHEME_VERSION);
+        participant.setState(ParticipantState.ACTIVE);
+        return participant;
+    }
+
+    private DsParticipantEntity saveAndFlush(Session session, DsParticipantEntity participant) {
+        var saved = dsParticipantDAO.save(session, participant);
+        session.flush();
+        return saved;
     }
 }

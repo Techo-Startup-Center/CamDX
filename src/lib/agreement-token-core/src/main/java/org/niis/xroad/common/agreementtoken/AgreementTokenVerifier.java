@@ -1,0 +1,335 @@
+/*
+ * The MIT License
+ *
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+ * Copyright (c) 2018 Estonian Information System Authority (RIA),
+ * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+ * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+package org.niis.xroad.common.agreementtoken;
+
+import ee.ria.xroad.common.util.UriUtils;
+
+import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.crypto.ECDSAVerifier;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import org.niis.xroad.common.agreementtoken.key.AgreementTokenKeyProvider;
+
+import java.text.ParseException;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
+
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.CLAIM_AGREEMENT_ID;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.CLAIM_CLIENT;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.CLAIM_GROUP;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.CLAIM_SCOPE;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.CLAIM_SERVICE;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.CLAIM_SERVICE_VERSION;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.decodeClient;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.decodeGroup;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.decodeScope;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.decodeService;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.optionalStringClaim;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenClaimsCodec.requireStringClaim;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.AUDIENCE_MISMATCH;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.CLIENT_MISMATCH;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.ENDPOINT_NOT_ALLOWED;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.EXPIRED;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.INVALID_SIGNATURE;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.ISSUER_MISMATCH;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.MALFORMED_TOKEN;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.NOT_GROUP_MEMBER;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.SCOPE_MISMATCH;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.SERVICE_MISMATCH;
+import static org.niis.xroad.common.agreementtoken.AgreementTokenRejectionReason.UNKNOWN_KEY_ID;
+
+/**
+ * Verifies agreement tokens end to end: signature, expiry, issuer, audience, then the client/service/scope
+ * claims against what the caller actually observed for the request. A token that carries a {@code group} claim
+ * is a group token: instead of a client and scope it is judged by the {@link AgreementTokenGroupAccess}
+ * lookups. A token that carries neither a client, a scope nor a group is a service-only token: it is accepted only
+ * when the live ACL lets the caller use the requested endpoint. Every failure — malformed input included — comes back as an
+ * {@link AgreementTokenVerificationResult.Rejected} value with a reason, never as a thrown
+ * exception, so a caller handles every outcome with one {@code switch}.
+ * <p>
+ * The signature check accepts ES256 only: a token re-signed under any other algorithm but naming a known
+ * key id is rejected outright instead of being checked against the wrong primitive.
+ */
+public final class AgreementTokenVerifier {
+
+    private static final String MALFORMED_CLAIMS = "token claims are malformed: ";
+    private static final String SERVICE_MISMATCH_DETAIL = "token service does not match the requested service";
+
+    private final AgreementTokenKeyProvider keyProvider;
+    private final AgreementTokenProtocolProperties properties;
+    private final Clock clock;
+    private final AgreementTokenGroupAccess groupAccess;
+
+    public AgreementTokenVerifier(AgreementTokenKeyProvider keyProvider, AgreementTokenProtocolProperties properties) {
+        this(keyProvider, properties, Clock.systemUTC(), AgreementTokenGroupAccess.NONE);
+    }
+
+    public AgreementTokenVerifier(AgreementTokenKeyProvider keyProvider, AgreementTokenProtocolProperties properties, Clock clock) {
+        this(keyProvider, properties, clock, AgreementTokenGroupAccess.NONE);
+    }
+
+    public AgreementTokenVerifier(AgreementTokenKeyProvider keyProvider, AgreementTokenProtocolProperties properties,
+                                  AgreementTokenGroupAccess groupAccess) {
+        this(keyProvider, properties, Clock.systemUTC(), groupAccess);
+    }
+
+    public AgreementTokenVerifier(AgreementTokenKeyProvider keyProvider, AgreementTokenProtocolProperties properties,
+                                  Clock clock, AgreementTokenGroupAccess groupAccess) {
+        this.keyProvider = Objects.requireNonNull(keyProvider, "keyProvider must not be null");
+        this.properties = Objects.requireNonNull(properties, "properties must not be null");
+        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this.groupAccess = Objects.requireNonNull(groupAccess, "groupAccess must not be null");
+    }
+
+    public AgreementTokenVerificationResult verify(String token, AgreementTokenRequestContext context) {
+        Objects.requireNonNull(context, "context must not be null");
+        if (token == null || token.isBlank()) {
+            return rejected(MALFORMED_TOKEN, "token is blank");
+        }
+
+        SignedJWT signedJwt;
+        try {
+            signedJwt = SignedJWT.parse(token);
+        } catch (ParseException | IllegalArgumentException e) {
+            return rejected(MALFORMED_TOKEN, "token is not a well-formed JWS: " + e.getMessage());
+        }
+
+        var signatureRejection = checkSignature(signedJwt);
+        if (signatureRejection.isPresent()) {
+            return signatureRejection.get();
+        }
+
+        JWTClaimsSet claimsSet;
+        try {
+            claimsSet = signedJwt.getJWTClaimsSet();
+        } catch (ParseException e) {
+            return rejected(MALFORMED_TOKEN, "token payload is not a valid claims set: " + e.getMessage());
+        }
+
+        var envelopeRejection = checkEnvelope(claimsSet);
+        if (envelopeRejection.isPresent()) {
+            return envelopeRejection.get();
+        }
+
+        if (claimsSet.getClaim(CLAIM_GROUP) != null) {
+            return verifyGroupToken(claimsSet, context);
+        }
+
+        if (claimsSet.getClaim(CLAIM_CLIENT) == null && claimsSet.getClaim(CLAIM_SCOPE) == null) {
+            return verifyServiceToken(claimsSet, context);
+        }
+
+        AgreementTokenClaims claims;
+        try {
+            claims = decodeClaims(claimsSet);
+        } catch (IllegalArgumentException e) {
+            return rejected(MALFORMED_TOKEN, MALFORMED_CLAIMS + e.getMessage());
+        }
+
+        var grantRejection = checkGrant(claims, context);
+        if (grantRejection.isPresent()) {
+            return grantRejection.get();
+        }
+        return new AgreementTokenVerificationResult.Valid(claims);
+    }
+
+    /**
+     * A group token names a group and a service and carries neither client nor scope. The signature-proven caller
+     * must be in the group, and the live ACL must let that caller use the requested endpoint.
+     */
+    private AgreementTokenVerificationResult verifyGroupToken(JWTClaimsSet claimsSet, AgreementTokenRequestContext context) {
+        if (claimsSet.getClaim(CLAIM_CLIENT) != null || claimsSet.getClaim(CLAIM_SCOPE) != null) {
+            return rejected(MALFORMED_TOKEN, "group token must not carry client_id or scope");
+        }
+
+        AgreementTokenGroupClaims claims;
+        try {
+            claims = decodeGroupClaims(claimsSet);
+        } catch (IllegalArgumentException e) {
+            return rejected(MALFORMED_TOKEN, MALFORMED_CLAIMS + e.getMessage());
+        }
+
+        if (!claims.service().equals(context.expectedService())) {
+            return rejected(SERVICE_MISMATCH, SERVICE_MISMATCH_DETAIL);
+        }
+        if (!groupAccess.isMember(claims.group(), context.expectedClient())) {
+            return rejected(NOT_GROUP_MEMBER, "the signature-proven client is not in the token's group");
+        }
+        if (!groupAccess.isEndpointAllowed(context.expectedClient(), context.expectedService(),
+                context.requestMethod(), context.requestPath())) {
+            return rejected(ENDPOINT_NOT_ALLOWED, "the live ACL does not grant the client the requested endpoint");
+        }
+        return new AgreementTokenVerificationResult.ValidGroup(claims);
+    }
+
+    /**
+     * A service-only token names a service and nothing else: it entitles no one by itself. The live ACL must let
+     * the signature-proven caller use the requested endpoint, exactly as the ACL would without a token.
+     */
+    private AgreementTokenVerificationResult verifyServiceToken(JWTClaimsSet claimsSet, AgreementTokenRequestContext context) {
+        AgreementTokenServiceClaims claims;
+        try {
+            claims = decodeServiceClaims(claimsSet);
+        } catch (IllegalArgumentException e) {
+            return rejected(MALFORMED_TOKEN, MALFORMED_CLAIMS + e.getMessage());
+        }
+
+        if (!claims.service().equals(context.expectedService())) {
+            return rejected(SERVICE_MISMATCH, SERVICE_MISMATCH_DETAIL);
+        }
+        if (!groupAccess.isEndpointAllowed(context.expectedClient(), context.expectedService(),
+                context.requestMethod(), context.requestPath())) {
+            return rejected(ENDPOINT_NOT_ALLOWED, "the live ACL does not grant the client the requested endpoint");
+        }
+        return new AgreementTokenVerificationResult.ValidService(claims);
+    }
+
+    private Optional<AgreementTokenVerificationResult.Rejected> checkSignature(SignedJWT signedJwt) {
+        var keyId = signedJwt.getHeader().getKeyID();
+        if (keyId == null || keyId.isBlank()) {
+            return Optional.of(rejected(MALFORMED_TOKEN, "token header carries no key id"));
+        }
+
+        var signingKey = keyProvider.keyById(keyId);
+        if (signingKey.isEmpty()) {
+            return Optional.of(rejected(UNKNOWN_KEY_ID, "no signing key known for key id '" + keyId + "'"));
+        }
+
+        var algorithm = signedJwt.getHeader().getAlgorithm();
+        if (!JWSAlgorithm.ES256.equals(algorithm)) {
+            return Optional.of(rejected(INVALID_SIGNATURE, "expected signature algorithm ES256, got '" + algorithm + "'"));
+        }
+
+        try {
+            if (!signedJwt.verify(new ECDSAVerifier(signingKey.get().publicKey()))) {
+                return Optional.of(rejected(INVALID_SIGNATURE, "signature does not match"));
+            }
+        } catch (JOSEException e) {
+            return Optional.of(rejected(INVALID_SIGNATURE, "signature verification failed: " + e.getMessage()));
+        }
+        return Optional.empty();
+    }
+
+    private Optional<AgreementTokenVerificationResult.Rejected> checkEnvelope(JWTClaimsSet claimsSet) {
+        var expirationTime = claimsSet.getExpirationTime();
+        if (expirationTime == null) {
+            return Optional.of(rejected(MALFORMED_TOKEN, "token carries no expiry"));
+        }
+        var expiresAt = expirationTime.toInstant();
+        var acceptUntil = expiresAt.plus(properties.expiryLeeway());
+        if (!Instant.now(clock).isBefore(acceptUntil)) {
+            return Optional.of(rejected(EXPIRED, "token expired at " + expiresAt));
+        }
+
+        if (!Objects.equals(properties.issuer(), claimsSet.getIssuer())) {
+            return Optional.of(rejected(ISSUER_MISMATCH,
+                    "expected issuer '" + properties.issuer() + "', got '" + claimsSet.getIssuer() + "'"));
+        }
+
+        var audience = claimsSet.getAudience();
+        if (audience == null || !audience.contains(properties.audience())) {
+            return Optional.of(rejected(AUDIENCE_MISMATCH, "expected audience '" + properties.audience() + "', got " + audience));
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<AgreementTokenVerificationResult.Rejected> checkGrant(AgreementTokenClaims claims,
+                                                                                  AgreementTokenRequestContext context) {
+        if (!claims.client().equals(context.expectedClient())) {
+            return Optional.of(rejected(CLIENT_MISMATCH, "token client does not match the signature-proven client"));
+        }
+        if (!claims.service().equals(context.expectedService())) {
+            return Optional.of(rejected(SERVICE_MISMATCH, SERVICE_MISMATCH_DETAIL));
+        }
+        if (!context.isRest()) {
+            return Optional.empty();
+        }
+
+        var requestPath = normalizeLikeAcl(context.requestPath());
+        if (requestPath.isEmpty()) {
+            return Optional.of(rejected(SCOPE_MISMATCH, "request path cannot be normalised: " + context.requestPath()));
+        }
+        var scopeMatches = claims.scope().stream()
+                .anyMatch(entry -> entry.matches(context.requestMethod(), requestPath.get()));
+        if (!scopeMatches) {
+            return Optional.of(rejected(SCOPE_MISMATCH,
+                    "no scope entry matches " + context.requestMethod() + " " + requestPath.get()));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Mirrors the serverconf ACL check: percent-decode and normalise the request path, and treat anything
+     * that still contains a traversal sequence afterwards as unmatchable, so a token can never authorise a
+     * path the ACL would have refused.
+     */
+    private static Optional<String> normalizeLikeAcl(String requestPath) {
+        try {
+            var normalized = UriUtils.decodeAndNormalize(requestPath);
+            if (normalized == null || normalized.contains("..")) {
+                return Optional.empty();
+            }
+            return Optional.of(normalized);
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    private AgreementTokenClaims decodeClaims(JWTClaimsSet claimsSet) {
+        var agreementId = requireStringClaim(claimsSet, CLAIM_AGREEMENT_ID);
+        var client = decodeClient(requireStringClaim(claimsSet, CLAIM_CLIENT));
+        var service = decodeService(requireStringClaim(claimsSet, CLAIM_SERVICE),
+                optionalStringClaim(claimsSet, CLAIM_SERVICE_VERSION));
+        var scope = decodeScope(claimsSet);
+        var expiresAt = claimsSet.getExpirationTime().toInstant();
+        return new AgreementTokenClaims(agreementId, client, service, scope, claimsSet.getIssuer(), properties.audience(), expiresAt);
+    }
+
+    private AgreementTokenGroupClaims decodeGroupClaims(JWTClaimsSet claimsSet) {
+        var agreementId = requireStringClaim(claimsSet, CLAIM_AGREEMENT_ID);
+        var service = decodeService(requireStringClaim(claimsSet, CLAIM_SERVICE),
+                optionalStringClaim(claimsSet, CLAIM_SERVICE_VERSION));
+        var group = decodeGroup(claimsSet);
+        var expiresAt = claimsSet.getExpirationTime().toInstant();
+        return new AgreementTokenGroupClaims(agreementId, group, service, claimsSet.getIssuer(), properties.audience(), expiresAt);
+    }
+
+    private AgreementTokenServiceClaims decodeServiceClaims(JWTClaimsSet claimsSet) {
+        var agreementId = requireStringClaim(claimsSet, CLAIM_AGREEMENT_ID);
+        var service = decodeService(requireStringClaim(claimsSet, CLAIM_SERVICE),
+                optionalStringClaim(claimsSet, CLAIM_SERVICE_VERSION));
+        var expiresAt = claimsSet.getExpirationTime().toInstant();
+        return new AgreementTokenServiceClaims(agreementId, service, claimsSet.getIssuer(), properties.audience(), expiresAt);
+    }
+
+    private static AgreementTokenVerificationResult.Rejected rejected(AgreementTokenRejectionReason reason, String details) {
+        return new AgreementTokenVerificationResult.Rejected(reason, details);
+    }
+}

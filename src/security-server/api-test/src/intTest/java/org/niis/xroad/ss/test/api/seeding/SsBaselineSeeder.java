@@ -76,7 +76,7 @@ public class SsBaselineSeeder {
     private static final String OWNER_MEMBER_ID = "DEV:%s:%s".formatted(SS_OWNER_CLASS, SS_OWNER_CODE);
     private static final String OWNER_CLIENT_ID = OWNER_MEMBER_ID;
     private static final String DS_TLS_SAN =
-            "DNS:ui,DNS:ds-identity-hub,DNS:ds-control-plane,DNS:ds-issuer-service,DNS:localhost";
+            "DNS:ss0,DNS:ui,DNS:ds-identity-hub,DNS:ds-control-plane,DNS:ds-issuer-service,DNS:localhost";
 
     private final String uiBaseUrl;
     private final String testCaBaseUrl;
@@ -275,7 +275,7 @@ public class SsBaselineSeeder {
      * admin API flow an operator would use: generate the server-side key, fetch a DN-only CSR,
      * sign it at the stack's test CA with the SAN list the CA attaches, upload the certificate.
      * Skips when a certificate is already present, so re-runs never roll back a rotated or
-     * ACME-enrolled certificate. The ds-* containers, waiting at startup on this slot, converge once this lands.
+     * ACME-enrolled certificate. The ds-* containers open their HTTPS endpoints once this lands.
      */
     private void ensureDsTlsCertificate() {
         var status = session.given()

@@ -44,8 +44,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.niis.xroad.common.rpc.server.RpcResponseHandler;
 import org.niis.xroad.edc.controlplane.provisioning.proto.CreateParticipantContextReq;
 import org.niis.xroad.edc.controlplane.provisioning.proto.CreateParticipantContextResp;
+import org.niis.xroad.edc.controlplane.provisioning.proto.DeleteParticipantContextReq;
+import org.niis.xroad.edc.controlplane.provisioning.proto.DeleteParticipantContextResp;
+import org.niis.xroad.edc.controlplane.provisioning.proto.InvalidateCatalogCachesReq;
+import org.niis.xroad.edc.controlplane.provisioning.proto.InvalidateCatalogCachesResp;
 import org.niis.xroad.edc.controlplane.provisioning.proto.PutParticipantContextConfigReq;
 import org.niis.xroad.edc.controlplane.provisioning.proto.PutParticipantContextConfigResp;
+import org.niis.xroad.edc.extension.catalog.CatalogCacheInvalidator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -61,16 +66,25 @@ class ControlPlaneProvisioningGrpcServiceTest {
     @Mock
     private ParticipantContextConfigService participantContextConfigService;
     @Mock
+    private ParticipantContextConfigDeleter participantContextConfigDeleter;
+    @Mock
+    private CatalogCacheInvalidator catalogCacheInvalidator;
+    @Mock
     private StreamObserver<CreateParticipantContextResp> createObserver;
     @Mock
     private StreamObserver<PutParticipantContextConfigResp> configObserver;
+    @Mock
+    private StreamObserver<DeleteParticipantContextResp> deleteObserver;
+    @Mock
+    private StreamObserver<InvalidateCatalogCachesResp> invalidateObserver;
 
     private ControlPlaneProvisioningGrpcService service;
 
     @BeforeEach
     void setUp() {
         service = new ControlPlaneProvisioningGrpcService(
-                participantContextService, participantContextConfigService, new RpcResponseHandler());
+                participantContextService, participantContextConfigService, participantContextConfigDeleter,
+                catalogCacheInvalidator, new RpcResponseHandler());
     }
 
     @ParameterizedTest
@@ -102,7 +116,7 @@ class ControlPlaneProvisioningGrpcServiceTest {
     }
 
     @Test
-    void createParticipantContextSucceeds() {
+    void createParticipantContextSucceedsAndInvalidatesCatalogCaches() {
         when(participantContextService.createParticipantContext(any()))
                 .thenReturn(ServiceResult.success(ParticipantContext.Builder.newInstance()
                         .participantContextId("ctx-1")
@@ -119,10 +133,11 @@ class ControlPlaneProvisioningGrpcServiceTest {
         verify(createObserver).onNext(any());
         verify(createObserver).onCompleted();
         verify(createObserver, never()).onError(any());
+        verify(catalogCacheInvalidator).invalidate();
     }
 
     @Test
-    void createParticipantContextToleratesConflict() {
+    void createParticipantContextToleratesConflictButNeverInvalidatesCatalogCaches() {
         when(participantContextService.createParticipantContext(any()))
                 .thenReturn(ServiceResult.conflict("already exists"));
 
@@ -136,6 +151,24 @@ class ControlPlaneProvisioningGrpcServiceTest {
         verify(createObserver).onNext(any());
         verify(createObserver).onCompleted();
         verify(createObserver, never()).onError(any());
+        verify(catalogCacheInvalidator, never()).invalidate();
+    }
+
+    @Test
+    void createParticipantContextDoesNotInvalidateCatalogCachesOnUnexpectedFailure() {
+        when(participantContextService.createParticipantContext(any()))
+                .thenReturn(ServiceResult.unexpected("db down"));
+
+        var request = CreateParticipantContextReq.newBuilder()
+                .setParticipantContextId("ctx-1")
+                .setDid("did:web:example.com")
+                .build();
+
+        service.createParticipantContext(request, createObserver);
+
+        verify(createObserver).onError(any(StatusRuntimeException.class));
+        verify(createObserver, never()).onCompleted();
+        verify(catalogCacheInvalidator, never()).invalidate();
     }
 
     @Test
@@ -197,5 +230,60 @@ class ControlPlaneProvisioningGrpcServiceTest {
 
         verify(configObserver).onError(any(StatusRuntimeException.class));
         verify(configObserver, never()).onCompleted();
+    }
+
+    @Test
+    void deleteParticipantContextDeletesContextAndConfig() {
+        when(participantContextService.deleteParticipantContext("ctx-1")).thenReturn(ServiceResult.success());
+
+        var request = DeleteParticipantContextReq.newBuilder().setParticipantContextId("ctx-1").build();
+
+        service.deleteParticipantContext(request, deleteObserver);
+
+        verify(deleteObserver).onNext(any());
+        verify(deleteObserver).onCompleted();
+        verify(deleteObserver, never()).onError(any());
+        verify(participantContextConfigDeleter).deleteByParticipantContextId("ctx-1");
+    }
+
+    @Test
+    void deleteParticipantContextOfAbsentContextIsIdempotentAndStillCleansUpConfig() {
+        when(participantContextService.deleteParticipantContext("ctx-1"))
+                .thenReturn(ServiceResult.notFound("no such context"));
+
+        var request = DeleteParticipantContextReq.newBuilder().setParticipantContextId("ctx-1").build();
+
+        service.deleteParticipantContext(request, deleteObserver);
+
+        verify(deleteObserver).onNext(any());
+        verify(deleteObserver).onCompleted();
+        verify(deleteObserver, never()).onError(any());
+        verify(participantContextConfigDeleter).deleteByParticipantContextId("ctx-1");
+    }
+
+    @Test
+    void deleteParticipantContextPropagatesUnexpectedFailureWithoutDeletingConfig() {
+        when(participantContextService.deleteParticipantContext("ctx-1"))
+                .thenReturn(ServiceResult.unexpected("db down"));
+
+        var request = DeleteParticipantContextReq.newBuilder().setParticipantContextId("ctx-1").build();
+
+        service.deleteParticipantContext(request, deleteObserver);
+
+        verify(deleteObserver).onError(any(StatusRuntimeException.class));
+        verify(deleteObserver, never()).onCompleted();
+        verify(participantContextConfigDeleter, never()).deleteByParticipantContextId(any());
+    }
+
+    @Test
+    void invalidateCatalogCachesInvokesInvalidatorAndCompletes() {
+        var request = InvalidateCatalogCachesReq.getDefaultInstance();
+
+        service.invalidateCatalogCaches(request, invalidateObserver);
+
+        verify(catalogCacheInvalidator).invalidate();
+        verify(invalidateObserver).onNext(any());
+        verify(invalidateObserver).onCompleted();
+        verify(invalidateObserver, never()).onError(any());
     }
 }

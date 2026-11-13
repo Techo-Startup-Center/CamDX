@@ -27,61 +27,123 @@
 
 package org.niis.xroad.edc.extension.assetaccess.service;
 
-import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
-import org.eclipse.edc.spi.result.ServiceResult;
-import org.eclipse.edc.spi.types.domain.DataAddress;
+import org.niis.xroad.edc.extension.assetaccess.AssetAccessResult;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
- * Holds in-memory mutable state for the asset access flow: the agreement registry and the in-flight request map.
+ * Holds the per-instance in-flight request map that collapses concurrent asset access acquisitions for
+ * the same key into a single call. Agreement state lives in the shared EDC agreement store instead; see
+ * {@link org.niis.xroad.edc.extension.assetaccess.agreement.ReusableAgreementLookup}.
+ *
+ * <p>Every caller gets a waiter of its own on the shared work. Cancelling a waiter ends only that caller's wait;
+ * the work stops, through its {@link AcquisitionScope}, once its last waiter has been cancelled.
  */
 public class AssetAccessStateStore {
 
-    private final ConcurrentHashMap<String, AgreementContext> agreementRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, CompletableFuture<ServiceResult<DataAddress>>> inFlightRequests = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, InFlight> inFlightRequests;
 
-    /**
-     * Returns the cached agreement context for the given key, or {@code null} if none is recorded.
-     */
-    public AgreementContext getAgreement(String key) {
-        return agreementRegistry.get(key);
+    public AssetAccessStateStore() {
+        this(new ConcurrentHashMap<>());
+    }
+
+    AssetAccessStateStore(ConcurrentHashMap<String, InFlight> inFlightRequests) {
+        this.inFlightRequests = inFlightRequests;
     }
 
     /**
-     * Stores an agreement context under the given key.
-     */
-    public void recordAgreement(String key, ContractAgreement agreement, String transferType) {
-        agreementRegistry.put(key, new AgreementContext(agreement, transferType));
-    }
-
-    /**
-     * Returns the existing in-flight future for {@code key} if one exists; otherwise calls {@code supplier}
-     * to create a new future, registers it, and returns it. The registered future removes itself from the
-     * map on completion.
+     * Returns a new waiter on the in-flight work for {@code key} if there is any; otherwise claims the slot,
+     * then calls {@code supplier} outside the map to produce the work and returns the first waiter on it. The
+     * work's outcome completes every waiter still waiting, and the slot is freed once the work completes.
      *
-     * <p>The self-removal callback is attached only after {@code computeIfAbsent} has inserted the entry.
-     * A supplier may return an already-completed future (the assembly itself failed synchronously); attaching
-     * the callback inside the mapping function would run the removal before the entry exists, leaving the
-     * dead future cached under the key forever. Callers that join an existing future attach a redundant
-     * callback; the value-conditional remove makes that harmless.
-     *
-     * <p>The supplier must be non-blocking: it runs under a {@link ConcurrentHashMap} bin lock
-     * and is expected only to assemble (not await) the async pipeline.
+     * <p>The slot is claimed before {@code supplier} runs, so the supplier may block; a supplier that throws
+     * synchronously fails the work and leaves no entry behind.
      */
-    public CompletableFuture<ServiceResult<DataAddress>> loadOrStartInFlight(
+    public CompletableFuture<AssetAccessResult> loadOrStartInFlight(
             String key,
-            Supplier<CompletableFuture<ServiceResult<DataAddress>>> supplier) {
-        var future = inFlightRequests.computeIfAbsent(key, k -> supplier.get());
-        future.whenComplete((result, throwable) -> inFlightRequests.remove(key, future));
-        return future;
+            Function<AcquisitionScope, CompletableFuture<AssetAccessResult>> supplier) {
+        while (true) {
+            var claimed = new InFlight(key);
+            var firstWaiter = claimed.addWaiter();
+            var existing = inFlightRequests.putIfAbsent(key, claimed);
+            if (existing == null) {
+                return start(claimed, firstWaiter, supplier);
+            }
+            var waiter = existing.addWaiter();
+            if (waiter != null) {
+                return waiter;
+            }
+            inFlightRequests.remove(key, existing);
+        }
     }
 
-    /**
-     * Holds a negotiated agreement together with the transfer type chosen for the asset.
-     */
-    public record AgreementContext(ContractAgreement agreement, String transferType) {
+    private CompletableFuture<AssetAccessResult> start(
+            InFlight claimed, CompletableFuture<AssetAccessResult> waiter,
+            Function<AcquisitionScope, CompletableFuture<AssetAccessResult>> supplier) {
+        claimed.outcome.whenComplete((result, throwable) -> inFlightRequests.remove(claimed.key, claimed));
+        try {
+            supplier.apply(claimed.scope).whenComplete((result, throwable) -> {
+                if (throwable != null) {
+                    claimed.outcome.completeExceptionally(throwable);
+                } else {
+                    claimed.outcome.complete(result);
+                }
+            });
+        } catch (Exception e) {
+            claimed.outcome.completeExceptionally(e);
+        }
+        return waiter;
+    }
+
+    final class InFlight {
+        private final String key;
+        private final CompletableFuture<AssetAccessResult> outcome = new CompletableFuture<>();
+        private final AcquisitionScope scope = new AcquisitionScope();
+        private int waiters;
+        private boolean abandoned;
+
+        private InFlight(String key) {
+            this.key = key;
+        }
+
+        /** @return a new waiter, or {@code null} when the work was abandoned by all its waiters */
+        private synchronized CompletableFuture<AssetAccessResult> addWaiter() {
+            if (abandoned) {
+                return null;
+            }
+            waiters++;
+            var waiter = new CompletableFuture<AssetAccessResult>();
+            waiter.whenComplete((result, throwable) -> {
+                if (waiter.isCancelled()) {
+                    removeWaiter();
+                }
+            });
+            outcome.whenComplete((result, throwable) -> {
+                if (throwable != null) {
+                    waiter.completeExceptionally(throwable);
+                } else {
+                    waiter.complete(result);
+                }
+            });
+            return waiter;
+        }
+
+        private void removeWaiter() {
+            synchronized (this) {
+                if (outcome.isDone()) {
+                    return;
+                }
+                waiters--;
+                if (waiters > 0) {
+                    return;
+                }
+                abandoned = true;
+            }
+            inFlightRequests.remove(key, this);
+            scope.stop();
+            outcome.cancel(true);
+        }
     }
 }

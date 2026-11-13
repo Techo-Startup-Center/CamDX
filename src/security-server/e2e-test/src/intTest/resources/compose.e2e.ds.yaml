@@ -47,8 +47,8 @@ services:
 
   # The ds-* services read their serving certificate from OpenBao's tls/ds-https slot,
   # populated by setup.hurl through this stack's admin API after all stacks are up. Until
-  # then they block at startup waiting for the slot, and nothing health-gates on them
-  # before the hurl provisioning runs.
+  # then they run with their HTTPS endpoints closed and report not-ready, and nothing
+  # health-gates on them before the hurl provisioning runs.
   ds-control-plane:
     image: ${DS_CONTROL_PLANE_IMG}
     pull_policy: always
@@ -56,10 +56,6 @@ services:
       - DEBUG=true
       - HOSTNAME=${ENV_PREFIX:-}ds-control-plane
       - XROAD_HOST=ds-control-plane
-      - XROAD_DSP_PARTICIPANT_CONTEXT_ID=${DSP_PARTICIPANT_ID:-xrd-ss}
-      # Interpolated into edc.iam.trusted-issuer.issuer.id by the packaged application.yaml: the EDC
-      # key is hyphenated, so an env var can only reach it through an X-Road key the yaml declares.
-      - XROAD_EDC_IAM_TRUSTED_ISSUER_ISSUER_ID=did:web:cs%3A6183:issuer
       - XROAD_PROXY_DATAPLANE_URL=http://proxy:5590/full/api/v1/dataflows
       - XROAD_SECRET_STORE_HOST=openbao
       - XROAD_SECRET_STORE_TOKEN=${XROAD_SECRET_STORE_TOKEN}
@@ -72,7 +68,9 @@ services:
       - XROAD_DB_SERVERCONF_HIBERNATE_CONNECTION_DRIVER_CLASS=org.postgresql.Driver
       - XROAD_DB_SERVERCONF_HIBERNATE_CONNECTION_USERNAME=serverconf
       - XROAD_DB_SERVERCONF_HIBERNATE_CONNECTION_PASSWORD=secret
-      - EDC_DSP_CALLBACK_ADDRESS=https://${ENV_PREFIX:-}ds-control-plane:8183/api/dsp/%s
+      # The registered-address form: counterparties derive this server's DSP endpoint from
+      # the GlobalConf address (ds-gateway below forwards 8183 to this container).
+      - EDC_DSP_CALLBACK_ADDRESS=https://${SS_ADDRESS:-xrd-ss}:8183/api/dsp/%s
       # Validity in ms (EDC default 900000); 1 ms ~= no cache, so revocation is seen immediately in the test.
       - EDC_IAM_CREDENTIAL_REVOCATION_CACHE_VALIDITY=1
       - DB_CONFIG_SOURCE_URL=jdbc:postgresql://db-serverconf:5432/serverconf
@@ -88,9 +86,7 @@ services:
         aliases:
           - ${ENV_PREFIX:-}ds-control-plane
     ports:
-      - "0:8181"
       - "0:8183" # protocol, /api/dsp
-      - "0:8184" # control, /api/control
       - "0:9999" # debug port
     deploy:
       resources:
@@ -112,7 +108,7 @@ services:
     environment:
       - HOSTNAME=${ENV_PREFIX:-}ds-identity-hub
       - XROAD_HOST=ds-identity-hub
-      - EDC_IH_DID_PUBLIC_HOSTNAME=${ENV_PREFIX:-}ds-identity-hub
+      - EDC_IH_DID_PUBLIC_HOSTNAME=${SS_ADDRESS:-xrd-ss}
       - XROAD_SECRET_STORE_HOST=openbao
       - XROAD_SECRET_STORE_TOKEN=${XROAD_SECRET_STORE_TOKEN}
       - XROAD_SECRET_STORE_SCHEME=http
@@ -121,6 +117,9 @@ services:
       - XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_USERNAME=postgres
       - XROAD_DB_DS_IDENTITY_HUB_HIBERNATE_CONNECTION_PASSWORD=ds_identity_hub_admin_secret
       - DEBUG=true
+      - DB_CONFIG_SOURCE_URL=jdbc:postgresql://db-serverconf:5432/serverconf
+      - DB_CONFIG_SOURCE_USERNAME=serverconf
+      - DB_CONFIG_SOURCE_PASSWORD=secret
     healthcheck:
       interval: 5s
       retries: 40
@@ -139,10 +138,47 @@ services:
         reservations:
           memory: 64M
         limits:
-          memory: 256M
+          memory: 512M
     depends_on:
       db-ds-identity-hub:
         condition: service_healthy
+      config-seed-e2e:
+        condition: service_completed_successfully
+
+  # Owns this Security Server's GlobalConf-registered address (xrd-ssN) on the shared
+  # network and fans its ports out per backend: 5500/5577 to the proxy, 7183 to the
+  # identity hub (DID resolution), 8183 to the control plane (DSP). Counterparties derive
+  # all of these from the one registered address (XRDADR-41), so they must be served there.
+  ds-gateway:
+    image: ${DS_GATEWAY_IMG}
+    environment:
+      - DS_GATEWAY_PROXY_HOST=proxy
+      - DS_GATEWAY_RESOLVER=127.0.0.11
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "5500"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      xrd-ss-network: {}
+      xroad-network:
+        aliases:
+          - ${SS_ADDRESS:-xrd-ss}
+    deploy:
+      resources:
+        reservations:
+          memory: 16M
+        limits:
+          memory: 64M
+    # service_started (not healthy): nginx only needs the backends' DNS entries to exist
+    # when it resolves upstreams at startup.
+    depends_on:
+      proxy:
+        condition: service_started
+      ds-control-plane:
+        condition: service_started
+      ds-identity-hub:
+        condition: service_started
 
 networks:
   xroad-network:

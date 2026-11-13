@@ -49,7 +49,9 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.niis.xroad.globalconf.GlobalConfProvider;
-import org.niis.xroad.globalconf.model.ApprovedDsTlsCaInfo;
+import org.niis.xroad.globalconf.model.ApprovedConnectorTlsCAInfo;
+import org.niis.xroad.globalconf.model.GlobalConfInitException;
+import org.niis.xroad.globalconf.model.GlobalConfInitState;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -63,6 +65,7 @@ import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
@@ -71,7 +74,13 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -110,7 +119,7 @@ class XRoadTlsOkHttpClientExtensionTest {
         var acceptedServer = startHttpsServer(issueLeaf(listedCa, "accepted"));
         var rejectedServer = startHttpsServer(issueLeaf(unlistedCa, "rejected"));
 
-        stubContext(List.of(dsTlsCaInfo("listed", listedCa.certificate())));
+        stubContext(List.of(connectorTlsCaInfo("listed", listedCa.certificate())));
         var client = new XRoadTlsOkHttpClientExtension().okHttpClient(context);
 
         assertThat(get(client, acceptedServer)).isEqualTo(200);
@@ -131,6 +140,46 @@ class XRoadTlsOkHttpClientExtensionTest {
         assertThatThrownBy(() -> get(client, wouldBeAcceptedServer)).isInstanceOf(IOException.class);
     }
 
+    @Test
+    void globalConfThatIsNotInitializedAtBootIsWarnedAboutOnceWithoutAStackTrace() {
+        when(globalConfProvider.getInstanceIdentifier()).thenThrow(new GlobalConfInitException(GlobalConfInitState.UNINITIALIZED));
+        stubContextServices();
+        var extension = new XRoadTlsOkHttpClientExtension();
+        extension.okHttpClient(context);
+        extension.shutdown();
+        verify(monitor, times(1)).warning(anyString());
+        verify(monitor, never()).severe(anyString(), any(Throwable[].class));
+    }
+
+    @Test
+    void anyOtherFailureToLoadTheCaListAtBootIsStillSevereWithTheStackTrace() {
+        var failure = new IllegalStateException("malformed globalconf");
+        when(globalConfProvider.getInstanceIdentifier()).thenThrow(failure);
+        stubContextServices();
+        var extension = new XRoadTlsOkHttpClientExtension();
+        extension.okHttpClient(context);
+        extension.shutdown();
+        verify(monitor).severe(anyString(), eq(failure));
+    }
+
+    @Test
+    void aClientBuiltWhileGlobalConfIsUnreadableStartsAcceptingListedCasOnThePendingPollNotTheNormalInterval() throws Exception {
+        var ca = selfSignedCa("Listed After Boot CA");
+        var listedServer = startHttpsServer(issueLeaf(ca, "listed-after-boot"));
+        when(globalConfProvider.getInstanceIdentifier())
+                .thenThrow(new IllegalStateException("globalconf unreachable"))
+                .thenReturn(INSTANCE_IDENTIFIER);
+        when(globalConfProvider.getApprovedConnectorTlsCAs(INSTANCE_IDENTIFIER))
+                .thenReturn(List.of(connectorTlsCaInfo("listed", ca.certificate())));
+        stubContextServices();
+        var extension = new XRoadTlsOkHttpClientExtension(Duration.ofSeconds(1));
+
+        var client = extension.okHttpClient(context);
+
+        assertThatThrownBy(() -> get(client, listedServer)).isInstanceOf(IOException.class);
+        await().atMost(Duration.ofSeconds(10)).ignoreExceptions().untilAsserted(() -> assertThat(get(client, listedServer)).isEqualTo(200));
+        extension.shutdown();
+    }
     /**
      * The exact key and default are a contract other layers rely on without compiling against this class:
      * ansible/compose test-environment overrides (needed because CS-side globalconf registration only takes
@@ -141,7 +190,7 @@ class XRoadTlsOkHttpClientExtensionTest {
     void theReloadIntervalSettingKeyAndDefaultAreQueriedFromContext() throws Exception {
         var ca = selfSignedCa("Any CA");
         startHttpsServer(issueLeaf(ca, "any"));
-        stubContext(List.of(dsTlsCaInfo("any", ca.certificate())));
+        stubContext(List.of(connectorTlsCaInfo("any", ca.certificate())));
 
         new XRoadTlsOkHttpClientExtension().okHttpClient(context);
 
@@ -149,19 +198,49 @@ class XRoadTlsOkHttpClientExtensionTest {
     }
 
     @Test
+    void theBuiltClientDefaultsToTenSecondConnectAndReadTimeouts() throws Exception {
+        var ca = selfSignedCa("Any CA");
+        startHttpsServer(issueLeaf(ca, "any"));
+        stubContext(List.of(connectorTlsCaInfo("any", ca.certificate())));
+
+        var client = new XRoadTlsOkHttpClientExtension().okHttpClient(context);
+
+        assertThat(client.connectTimeoutMillis()).isEqualTo(10_000);
+        assertThat(client.readTimeoutMillis()).isEqualTo(10_000);
+        verify(context).getSetting("edc.http.client.timeout.connect", 10L);
+        verify(context).getSetting("edc.http.client.timeout.read", 10L);
+    }
+
+    @Test
+    void theEdcClientTimeoutSettingsOverrideTheDefaults() throws Exception {
+        var ca = selfSignedCa("Any CA");
+        startHttpsServer(issueLeaf(ca, "any"));
+        stubContext(List.of(connectorTlsCaInfo("any", ca.certificate())));
+        lenient().when(context.getSetting(ArgumentMatchers.eq("edc.http.client.timeout.connect"), ArgumentMatchers.anyLong()))
+                .thenReturn(3L);
+        lenient().when(context.getSetting(ArgumentMatchers.eq("edc.http.client.timeout.read"), ArgumentMatchers.anyLong()))
+                .thenReturn(45L);
+
+        var client = new XRoadTlsOkHttpClientExtension().okHttpClient(context);
+
+        assertThat(client.connectTimeoutMillis()).isEqualTo(3_000);
+        assertThat(client.readTimeoutMillis()).isEqualTo(45_000);
+    }
+
+    @Test
     void shutdownClosesTheReloaderWithoutThrowing() throws Exception {
         var ca = selfSignedCa("Any CA");
         startHttpsServer(issueLeaf(ca, "any"));
-        stubContext(List.of(dsTlsCaInfo("any", ca.certificate())));
+        stubContext(List.of(connectorTlsCaInfo("any", ca.certificate())));
         var extension = new XRoadTlsOkHttpClientExtension();
         extension.okHttpClient(context);
 
         assertThatCode(extension::shutdown).doesNotThrowAnyException();
     }
 
-    private void stubContext(List<ApprovedDsTlsCaInfo> cas) {
+    private void stubContext(List<ApprovedConnectorTlsCAInfo> cas) {
         when(globalConfProvider.getInstanceIdentifier()).thenReturn(INSTANCE_IDENTIFIER);
-        when(globalConfProvider.getApprovedDsTlsCas(INSTANCE_IDENTIFIER)).thenReturn(cas);
+        when(globalConfProvider.getApprovedConnectorTlsCAs(INSTANCE_IDENTIFIER)).thenReturn(cas);
         stubContextServices();
     }
 
@@ -183,8 +262,8 @@ class XRoadTlsOkHttpClientExtensionTest {
         }
     }
 
-    private static ApprovedDsTlsCaInfo dsTlsCaInfo(String name, X509Certificate certificate) {
-        return new ApprovedDsTlsCaInfo(name, certificate, List.of(), null, null, null);
+    private static ApprovedConnectorTlsCAInfo connectorTlsCaInfo(String name, X509Certificate certificate) {
+        return new ApprovedConnectorTlsCAInfo(name, certificate, List.of(), null, null, null);
     }
 
     private HttpsServer startHttpsServer(TestLeaf leaf) throws Exception {

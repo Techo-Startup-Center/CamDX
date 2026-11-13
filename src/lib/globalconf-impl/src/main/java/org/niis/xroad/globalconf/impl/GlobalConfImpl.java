@@ -50,11 +50,12 @@ import org.niis.xroad.globalconf.cert.CertChain;
 import org.niis.xroad.globalconf.extension.GlobalConfExtensions;
 import org.niis.xroad.globalconf.impl.cert.CertChainFactory;
 import org.niis.xroad.globalconf.model.ApprovedCAInfo;
-import org.niis.xroad.globalconf.model.ApprovedDsTlsCaInfo;
+import org.niis.xroad.globalconf.model.ApprovedConnectorTlsCAInfo;
 import org.niis.xroad.globalconf.model.GlobalConfInitException;
 import org.niis.xroad.globalconf.model.GlobalGroupInfo;
 import org.niis.xroad.globalconf.model.MemberInfo;
 import org.niis.xroad.globalconf.model.PrivateParameters;
+import org.niis.xroad.globalconf.model.ServerSystemValues;
 import org.niis.xroad.globalconf.model.SharedParameters;
 import org.niis.xroad.globalconf.model.SharedParametersCache;
 import org.niis.xroad.globalconf.util.GlobalConfUtils;
@@ -562,16 +563,16 @@ public class GlobalConfImpl implements GlobalConfProvider {
     }
 
     @Override
-    public Collection<ApprovedDsTlsCaInfo> getApprovedDsTlsCas(
+    public Collection<ApprovedConnectorTlsCAInfo> getApprovedConnectorTlsCAs(
             String instanceIdentifier) {
-        return getSharedParameters(instanceIdentifier).getApprovedDsTlsCas()
+        return getSharedParameters(instanceIdentifier).getApprovedConnectorTlsCAs()
                 .stream()
-                .map(this::createApprovedDsTlsCaInfo)
+                .map(this::createApprovedConnectorTlsCAInfo)
                 .toList();
     }
 
-    private ApprovedDsTlsCaInfo createApprovedDsTlsCaInfo(SharedParameters.ApprovedDsTlsCa ca) {
-        return new ApprovedDsTlsCaInfo(
+    private ApprovedConnectorTlsCAInfo createApprovedConnectorTlsCAInfo(SharedParameters.ApprovedConnectorTlsCA ca) {
+        return new ApprovedConnectorTlsCAInfo(
                 ca.getName(),
                 CryptoUtils.readCertificate(ca.getTopCA().getCert()),
                 ca.getIntermediateCas().stream()
@@ -580,8 +581,41 @@ public class GlobalConfImpl implements GlobalConfProvider {
                         .toList(),
                 ca.getAcmeServer() != null ? ca.getAcmeServer().getDirectoryURL() : null,
                 ca.getAcmeServer() != null ? ca.getAcmeServer().getIpAddress() : null,
-                ca.getAcmeServer() != null ? ca.getAcmeServer().getDsTlsCertificateProfileId() : null
+                ca.getAcmeServer() != null ? ca.getAcmeServer().getConnectorTlsCertificateProfileId() : null
         );
+    }
+
+    @Override
+    public Collection<String> getCredentialIssuerDids(String instanceIdentifier) {
+        return getSharedParameters(instanceIdentifier).getCredentialIssuerDids();
+    }
+
+    @Override
+    public boolean isLegacyProtocolDisabled(String instanceIdentifier) {
+        try {
+            return findShared(instanceIdentifier)
+                    .map(SharedParameters::getGlobalSettings)
+                    .map(SharedParameters.GlobalSettings::isLegacyProtocolDisabled)
+                    .orElse(false);
+        } catch (XrdRuntimeException e) {
+            log.warn("Could not read the legacy protocol setting of instance {}, treating it as not disabled",
+                    instanceIdentifier, e);
+            return false;
+        }
+    }
+
+    @Override
+    public Optional<ServerSystemValues> getServerSystemValues(SecurityServerId serverId) {
+        return globalConfSource.findSharedParametersCache(serverId.getXRoadInstance())
+                .map(cache -> cache.getSecurityServersById().get(serverId))
+                .map(SharedParameters.SecurityServer::getSystemValues);
+    }
+
+    @Override
+    public Optional<String> getMemberDid(ClientId memberId, SecurityServerId serverId) {
+        return globalConfSource.findSharedParametersCache(serverId.getXRoadInstance())
+                .map(cache -> cache.getMemberDids().get(memberId.getMemberId()))
+                .map(didsByServer -> didsByServer.get(serverId));
     }
 
     @Override
@@ -653,6 +687,13 @@ public class GlobalConfImpl implements GlobalConfProvider {
     public boolean isSubjectInGlobalGroup(ClientId subjectId, GlobalGroupId groupId) {
         return findGlobalGroup(groupId)
                 .filter(group -> group.getGroupMembers().stream().anyMatch(m -> m.equals(subjectId)))
+                .isPresent();
+    }
+
+    @Override
+    public boolean isMemberInGlobalGroup(ClientId member, GlobalGroupId groupId) {
+        return findGlobalGroup(groupId)
+                .filter(group -> group.getGroupMembers().stream().anyMatch(m -> m.memberEquals(member)))
                 .isPresent();
     }
 

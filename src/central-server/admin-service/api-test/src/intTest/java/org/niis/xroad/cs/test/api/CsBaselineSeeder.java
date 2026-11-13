@@ -37,6 +37,7 @@ import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.niis.xroad.cs.openapi.model.AuthenticationCertificateRegistrationRequestDto;
+import org.niis.xroad.cs.openapi.model.ClientRegistrationRequestDto;
 import org.niis.xroad.cs.openapi.model.ManagementRequestOriginDto;
 import org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto;
 import org.niis.xroad.cs.openapi.model.MemberAddDto;
@@ -48,6 +49,7 @@ import org.niis.xroad.cs.openapi.model.TokenInitStatusDto;
 import org.niis.xroad.cs.test.api.admin.AdminApiSession;
 import org.niis.xroad.cs.test.api.admin.MemberClassesAdminClient;
 import org.niis.xroad.cs.test.api.admin.MembersAdminClient;
+import org.niis.xroad.cs.test.api.admin.SecurityServersAdminClient;
 import org.niis.xroad.cs.test.api.admin.SubsystemsAdminClient;
 import org.niis.xroad.test.apitest.core.junit.Step;
 import org.niis.xroad.test.apitest.core.restassured.RestAssuredFactory;
@@ -102,6 +104,12 @@ public class CsBaselineSeeder {
 
     /** Instance identifier of the initialized CS. */
     public static final String INSTANCE_IDENTIFIER = "CS";
+
+    /**
+     * Issuer Service host set through the admin API during baseline seeding, the compose service
+     * name the DS TLS ACME worker's HTTP-01 challenge must reach through the real public nginx.
+     */
+    private static final String ISSUER_SERVICE_HOST = "cs-admin-service";
 
     private static final String DB_PROPERTIES_PATH = "/etc/xroad/db.properties";
     private static final String DB_NAME = "centerui_production";
@@ -245,6 +253,144 @@ public class CsBaselineSeeder {
     }
 
     /**
+     * Inserts a row into {@code issuer_dids} directly, binding the issuer identity. Idempotent: does
+     * nothing if a row is already present. This stack has no reachable Issuer Service to run set-up
+     * against, so destructive tests that need a bound issuer seed the row directly.
+     */
+    public void bindIssuerIdentity() {
+        var dbMapping = stack.getContainerMapping(CsApiTestContainerSetup.CS, Port.DB);
+        var jdbcUrl = "jdbc:postgresql://%s:%d/%s?currentSchema=centerui,public"
+                .formatted(dbMapping.host(), dbMapping.port(), DB_NAME);
+        var username = readContainerProperty("spring.datasource.username");
+        var password = readContainerProperty("spring.datasource.password");
+
+        try (var conn = DriverManager.getConnection(jdbcUrl, username, password);
+                var stmt = conn.prepareStatement("""
+                        INSERT INTO centerui.issuer_dids (did, host, did_port, issuance_url, statuslist_base_url, created_at, updated_at)
+                        SELECT ?, ?, ?, ?, ?, now(), now()
+                        WHERE NOT EXISTS (SELECT 1 FROM centerui.issuer_dids)
+                        """)) {
+            stmt.setString(1, "did:web:issuer-service-api-test-binding");
+            stmt.setString(2, "issuer-service-api-test-binding");
+            stmt.setInt(3, 6183);
+            stmt.setString(4, "https://issuer-service-api-test-binding:6185/api/issuance/v1/participants/issuer");
+            stmt.setString(5, "https://issuer-service-api-test-binding:6187/statuslist");
+            stmt.execute();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to seed issuer_dids binding into CS DB", e);
+        }
+    }
+
+    /**
+     * Stores a SYSTEM DID and DSP base URL on a registered security server directly in the database. The
+     * management request path stores no pair, and this stack has no Issuer Service to publish one, so tests
+     * that edit or read a stored pair seed it here. Overwrites any pair already stored.
+     *
+     * @param serverId     security server identifier in {@code CS:class:code:serverCode} form
+     * @param systemDid    SYSTEM DID to store
+     * @param dspBaseUrl   DSP base URL to store
+     */
+    public void seedSystemPair(String serverId, String systemDid, String dspBaseUrl) {
+        var idParts = serverId.split(":");
+        var ownerClass = idParts[1];
+        var ownerCode = idParts[2];
+        var serverCode = idParts[3];
+        var dbMapping = stack.getContainerMapping(CsApiTestContainerSetup.CS, Port.DB);
+        var jdbcUrl = "jdbc:postgresql://%s:%d/%s?currentSchema=centerui,public"
+                .formatted(dbMapping.host(), dbMapping.port(), DB_NAME);
+        var username = readContainerProperty("spring.datasource.username");
+        var password = readContainerProperty("spring.datasource.password");
+
+        try (var conn = DriverManager.getConnection(jdbcUrl, username, password);
+                var stmt = conn.prepareStatement("""
+                        UPDATE centerui.security_servers s SET system_did = ?, dsp_base_url = ?
+                        FROM centerui.security_server_clients o
+                        JOIN centerui.member_classes mc ON mc.id = o.member_class_id
+                        WHERE s.owner_id = o.id AND mc.code = ? AND o.member_code = ? AND s.server_code = ?
+                        """)) {
+            stmt.setString(1, systemDid);
+            stmt.setString(2, dspBaseUrl);
+            stmt.setString(3, ownerClass);
+            stmt.setString(4, ownerCode);
+            stmt.setString(5, serverCode);
+            if (stmt.executeUpdate() != 1) {
+                throw new IllegalStateException("Expected exactly one security server " + serverId);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to seed the SYSTEM pair of " + serverId, e);
+        }
+    }
+
+    /**
+     * Deletes the stored Issuer Service host row directly, reproducing the "host unset" state of a
+     * fresh install. This stack's baseline seeding always sets a host before any test runs, and there
+     * is no API to unset it, so the caller is responsible for restoring the host afterwards through the
+     * admin API.
+     */
+    public void clearIssuerServiceHost() {
+        var dbMapping = stack.getContainerMapping(CsApiTestContainerSetup.CS, Port.DB);
+        var jdbcUrl = "jdbc:postgresql://%s:%d/%s?currentSchema=centerui,public"
+                .formatted(dbMapping.host(), dbMapping.port(), DB_NAME);
+        var username = readContainerProperty("spring.datasource.username");
+        var password = readContainerProperty("spring.datasource.password");
+
+        try (var conn = DriverManager.getConnection(jdbcUrl, username, password);
+                var stmt = conn.prepareStatement("DELETE FROM centerui.system_parameters WHERE key = ?")) {
+            stmt.setString(1, "issuerServiceHost");
+            stmt.execute();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear the Issuer Service host from the CS DB", e);
+        }
+    }
+
+    /**
+     * Claims the single-flight Issuer Service set-up lease directly, as if a run on {@code ownerNode}
+     * had just started it. The caller is responsible for releasing it afterwards with
+     * {@link #releaseIssuerSetUpLease()}; this stack has no reachable Issuer Service to run a real
+     * set-up that would hold the lease itself.
+     */
+    public void acquireIssuerSetUpLease(String ownerNode) {
+        var dbMapping = stack.getContainerMapping(CsApiTestContainerSetup.CS, Port.DB);
+        var jdbcUrl = "jdbc:postgresql://%s:%d/%s?currentSchema=centerui,public"
+                .formatted(dbMapping.host(), dbMapping.port(), DB_NAME);
+        var username = readContainerProperty("spring.datasource.username");
+        var password = readContainerProperty("spring.datasource.password");
+
+        try (var conn = DriverManager.getConnection(jdbcUrl, username, password);
+                var stmt = conn.prepareStatement("""
+                        INSERT INTO centerui.issuer_set_up_lease (id, owner_node, started_at, expires_at)
+                        VALUES (1, ?, now(), now() + interval '5 minutes')
+                        ON CONFLICT (id) DO UPDATE
+                            SET owner_node = excluded.owner_node,
+                                started_at = excluded.started_at,
+                                expires_at = excluded.expires_at
+                        """)) {
+            stmt.setString(1, ownerNode);
+            stmt.execute();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to claim the issuer set-up lease in the CS DB", e);
+        }
+    }
+
+    /**
+     * Releases the issuer set-up lease claimed by {@link #acquireIssuerSetUpLease(String)}.
+     */
+    public void releaseIssuerSetUpLease() {
+        var dbMapping = stack.getContainerMapping(CsApiTestContainerSetup.CS, Port.DB);
+        var jdbcUrl = "jdbc:postgresql://%s:%d/%s?currentSchema=centerui,public"
+                .formatted(dbMapping.host(), dbMapping.port(), DB_NAME);
+        var username = readContainerProperty("spring.datasource.username");
+        var password = readContainerProperty("spring.datasource.password");
+
+        try (var conn = DriverManager.getConnection(jdbcUrl, username, password);
+                var stmt = conn.prepareStatement("DELETE FROM centerui.issuer_set_up_lease WHERE id = 1")) {
+            stmt.execute();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to release the issuer set-up lease in the CS DB", e);
+        }
+    }
+
+    /**
      * Seeds the bootstrap API key, initialises the CS if needed, and verifies the stack is reachable.
      * Called once per JVM before any test starts. All HTTP here is silent (no Allure attachment).
      */
@@ -260,6 +406,7 @@ public class CsBaselineSeeder {
         var session = new AdminApiSession(adminBaseUrl);
         ensureInitialized(session);
         ensureBaselineMemberClass(session);
+        ensureIssuerServiceHost(session);
         seedConfigurationTestData();
 
         log.info("Central Server baseline is ready");
@@ -396,6 +543,48 @@ public class CsBaselineSeeder {
     }
 
     /**
+     * Registers the given client (a member or one of its subsystems) as a client of the given security
+     * server through a client registration management request, approved immediately. Idempotent: if the
+     * client is already registered on the server, no request is made.
+     *
+     * @param session   authenticated admin session to use
+     * @param namespace per-test identifier used only to label the Allure step
+     * @param serverId  security server identifier (CS:class:code:serverCode) the client registers on
+     * @param clientId  X-Road client identifier (CS:class:code or CS:class:code:subsystemCode) to register
+     */
+    public synchronized void seedClientRegistration(AdminApiSession session, String namespace, String serverId, String clientId) {
+        Step.given("test environment seeded: client registration ns='%s' client='%s'".formatted(namespace, clientId), () -> {
+            var servers = new SecurityServersAdminClient(session);
+            var registered = servers.getClients(serverId).extract().jsonPath().getList("client_id.encoded_id", String.class);
+            if (registered.contains(clientId)) {
+                return;
+            }
+
+            var registrationRequest = new ClientRegistrationRequestDto().clientId(clientId);
+            registrationRequest.setType(ManagementRequestTypeDto.CLIENT_REGISTRATION_REQUEST);
+            registrationRequest.setOrigin(ManagementRequestOriginDto.SECURITY_SERVER);
+            registrationRequest.setSecurityServerId(serverId);
+
+            var requestId = session.givenSilent()
+                    .contentType(ContentType.JSON)
+                    .body(registrationRequest)
+                    .post("/management-requests")
+                    .then()
+                    .statusCode(202)
+                    .extract()
+                    .jsonPath()
+                    .getInt("id");
+
+            session.givenSilent()
+                    .post("/management-requests/{id}/approval", requestId)
+                    .then()
+                    .statusCode(200);
+
+            log.debug("Registered and approved client {} on server {}", clientId, serverId);
+        });
+    }
+
+    /**
      * Generates an authentication certificate for the given security server identifier.
      */
     public byte[] generateCertForServer(String serverId) throws Exception {
@@ -519,6 +708,32 @@ public class CsBaselineSeeder {
                 .post("/initialization")
                 .then()
                 .statusCode(200);
+    }
+
+    /**
+     * Sets the Issuer Service host through the admin API, the same way an operator would. Idempotent:
+     * skips the call once the host already matches, so a warm stack that already bound the issuer is
+     * never asked to change it again.
+     */
+    private void ensureIssuerServiceHost(AdminApiSession session) {
+        var currentHost = session.givenSilent()
+                .get("/issuer-service")
+                .jsonPath()
+                .getString("host");
+        if (ISSUER_SERVICE_HOST.equals(currentHost)) {
+            return;
+        }
+        session.givenSilent()
+                .contentType(ContentType.JSON)
+                .body("""
+                        {
+                          "host": "%s"
+                        }
+                        """.formatted(ISSUER_SERVICE_HOST))
+                .put("/issuer-service/host")
+                .then()
+                .statusCode(200);
+        log.info("Issuer Service host set to {}", ISSUER_SERVICE_HOST);
     }
 
     private void ensureBaselineMemberClass(AdminApiSession session) {

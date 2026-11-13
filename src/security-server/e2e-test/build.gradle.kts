@@ -6,12 +6,17 @@ plugins {
 }
 
 dependencies {
+  testImplementation(libs.assertj.core)
+
+  intTestImplementation(libs.junit.jupiter.params)
   intTestImplementation(project(":tool:api-test-core"))
   intTestImplementation(project(":lib:asic-core"))
   intTestImplementation(project(":common:common-test"))
   intTestImplementation(project(":common:common-message"))
   intTestImplementation(project(":lib:globalconf-impl"))
+  intTestImplementation(project(":lib:properties-core"))
   intTestImplementation(project(":lib:vault-core"))
+  intTestImplementation(project(":lib:ds-identity-core"))
   intTestImplementation(project(":service:op-monitor:op-monitor-core")) {
     exclude(group = "org.jboss.slf4j", module = "slf4j-jboss-logmanager")
   }
@@ -37,7 +42,9 @@ intTestComposeEnv {
     "CA_IMG" to "testca-dev",
     "MESSAGE_LOG_ARCHIVER_IMG" to "ss-message-log-archiver",
     "DS_CONTROL_PLANE_IMG" to "ds-control-plane",
-    "DS_IDENTITY_HUB_IMG" to "ds-identity-hub"
+    "DS_IDENTITY_HUB_IMG" to "ds-identity-hub",
+    "SIDECAR_IMG" to "xroad-security-server-sidecar",
+    "DS_GATEWAY_IMG" to "ds-gateway-dev"
   )
 }
 
@@ -63,6 +70,8 @@ val copyComposeFiles by tasks.registering(Copy::class) {
 }
 
 val e2eEnvMode = providers.gradleProperty("e2e.env-mode").getOrElse("compose")
+val e2eSs0Stack = providers.gradleProperty("e2e.ss0-stack").getOrElse("default")
+val e2eAclMode = providers.gradleProperty("e2e.acl-mode").orNull
 
 tasks.register<Test>("e2eTest") {
   // Only the harness-managed compose stack needs the generated env and copied compose files. Pre-provisioned
@@ -76,7 +85,13 @@ tasks.register<Test>("e2eTest") {
   description = "Runs the e2e test suite in scenario order. The target environment is selected by " +
       "-Pe2e.env-mode (default 'compose': harness-boots the shared aux/ss0/ss1 stack via the " +
       "LauncherSessionListener SPI; 'lxd': attaches to a pre-provisioned LXD environment; 'k8s': " +
-      "attaches to a pre-provisioned kind cluster). " +
+      "attaches to a pre-provisioned kind cluster). In 'compose' mode, -Pe2e.ss0-stack selects ss0's " +
+      "stack shape ('default': today's per-service stack; 'sidecar': one full-sidecar " +
+      "container in its place), ignored otherwise. -Pe2e.acl-mode runs the ACL parity scenarios with no fail-fast " +
+      "and writes one verdict per row to build/test-results/e2eTest/acl-parity-<mode>-verdicts.tsv: 'legacy' " +
+      "sends ss1's outgoing calls unnegotiated, 'dsp' negotiates them through the data space protocol, " +
+      "'dsp-refusal' negotiates them and makes ss0 refuse X-Road 7 style calls once the subsystem pool is " +
+      "registered (needs the default ss0 stack); unset, the parity class is skipped. " +
       "Pass --tests <pattern> to run a single class/method directly (IDE-friendly)."
   group = "verification"
 
@@ -109,8 +124,21 @@ tasks.register<Test>("e2eTest") {
   }
 
   systemProperty("test-framework.env-mode", e2eEnvMode)
+  systemProperty("test-framework.ss0-stack", e2eSs0Stack)
+  e2eAclMode?.let {
+    systemProperty("test-framework.acl-mode", it)
+    systemProperty("test-framework.acl-verdicts-file",
+        layout.buildDirectory.file("test-results/e2eTest/acl-parity-$it-verdicts.tsv").get().asFile.path)
+    systemProperty("test-framework.fail-fast.threshold", "0")
+  }
 
   jvmArgs("-XX:MaxMetaspaceSize=200m")
+
+  // The JDK's own InetAddress resolver ignores platform-specific DNS configuration (e.g. macOS
+  // /etc/resolver), so *.lxd names are otherwise unresolvable from a locally run test JVM.
+  providers.gradleProperty("e2e.lxd-hosts-file").orNull?.let {
+    jvmArgs("-Djdk.net.hosts.file=$it")
+  }
 
   maxHeapSize = "256m"
 

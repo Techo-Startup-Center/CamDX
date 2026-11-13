@@ -42,7 +42,9 @@ import ee.ria.xroad.common.request.ClientRenameRequestType;
 import ee.ria.xroad.common.request.ClientRequestType;
 import ee.ria.xroad.common.request.MaintenanceModeDisableRequestType;
 import ee.ria.xroad.common.request.MaintenanceModeEnableRequestType;
+import ee.ria.xroad.common.request.MemberDidRegRequestType;
 import ee.ria.xroad.common.request.ObjectFactory;
+import ee.ria.xroad.common.request.SystemDidRegRequestType;
 
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBElement;
@@ -55,6 +57,7 @@ import org.niis.xroad.common.managementrequest.model.ManagementRequestType;
 
 import javax.xml.namespace.QName;
 
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -95,6 +98,28 @@ public class TestManagementRequestBuilder {
         request.setAddress(address);
 
         return buildMessage(element(ManagementRequestType.ADDRESS_CHANGE_REQUEST, AddressChangeRequestType.class, request));
+    }
+
+    public SoapMessageImpl buildSystemDidRegRequest(SecurityServerId.Conf securityServer, String systemDid, String dspBaseUrl) {
+        var request = FACTORY.createSystemDidRegRequestType();
+        request.setServer(securityServer);
+        request.setSystemDid(systemDid);
+        request.setDspBaseUrl(dspBaseUrl);
+
+        return buildMessage(element(ManagementRequestType.SYSTEM_DID_REGISTRATION_REQUEST, SystemDidRegRequestType.class, request));
+    }
+
+    public SoapMessageImpl buildMemberDidRegRequest(SecurityServerId.Conf securityServer, Map<ClientId.Conf, String> memberDids) {
+        var request = FACTORY.createMemberDidRegRequestType();
+        request.setServer(securityServer);
+        memberDids.forEach((member, did) -> {
+            var entry = FACTORY.createMemberDidRegEntryType();
+            entry.setMember(member);
+            entry.setDid(did);
+            request.getEntry().add(entry);
+        });
+
+        return buildMessage(element(ManagementRequestType.MEMBER_DID_REGISTRATION_REQUEST, MemberDidRegRequestType.class, request));
     }
 
     public SoapMessageImpl buildMaintenanceModeEnableRequest(SecurityServerId.Conf securityServer, String message) {

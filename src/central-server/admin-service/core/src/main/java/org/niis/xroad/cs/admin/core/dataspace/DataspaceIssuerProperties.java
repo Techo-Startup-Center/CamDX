@@ -29,6 +29,7 @@ package org.niis.xroad.cs.admin.core.dataspace;
 import lombok.RequiredArgsConstructor;
 import org.niis.xroad.common.properties.config.XRoadConfig;
 import org.niis.xroad.common.properties.config.keys.DataspaceConfigKeys;
+import org.niis.xroad.cs.admin.api.service.IssuerHostService;
 
 /**
  * Environment-specific configuration for data space issuer provisioning. The X-Road membership
@@ -38,9 +39,14 @@ import org.niis.xroad.common.properties.config.keys.DataspaceConfigKeys;
 public class DataspaceIssuerProperties {
 
     private final XRoadConfig config;
+    private final IssuerHostService issuerHostService;
 
     public String getHost() {
-        return config.value(DataspaceConfigKeys.ISSUER_HOST);
+        return issuerHostService.getState().host();
+    }
+
+    public boolean isHostConfigured() {
+        return getHost() != null;
     }
 
     public int getDidPort() {
@@ -49,6 +55,10 @@ public class DataspaceIssuerProperties {
 
     public int getIssuancePort() {
         return config.value(DataspaceConfigKeys.ISSUER_ISSUANCE_PORT);
+    }
+
+    public int getStatuslistPort() {
+        return config.value(DataspaceConfigKeys.ISSUER_STATUSLIST_PORT);
     }
 
     public String getCredentialJsonSchemaUrl() {

@@ -30,16 +30,24 @@ import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.SecurityServerId;
 
 import lombok.extern.slf4j.Slf4j;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.niis.xroad.common.CostType;
+import org.niis.xroad.common.core.exception.ErrorCode;
+import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.common.properties.NodeProperties;
 import org.niis.xroad.globalconf.model.MemberInfo;
+import org.niis.xroad.globalconf.model.ServerSystemValues;
 import org.niis.xroad.globalconf.model.SharedParameters;
+import org.niis.xroad.restapi.common.backup.service.BackupRestoreEvent;
+import org.niis.xroad.securityserver.restapi.cache.SecurityServerAddressChangeStatus;
 import org.niis.xroad.securityserver.restapi.config.AbstractFacadeMockingTestContext;
 import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties;
+import org.niis.xroad.securityserver.restapi.repository.DsParticipantRepository;
 import org.niis.xroad.securityserver.restapi.service.ClientService;
+import org.niis.xroad.securityserver.restapi.service.DataspaceDidAuthority;
 import org.niis.xroad.securityserver.restapi.service.GlobalConfService;
 import org.niis.xroad.securityserver.restapi.service.ServerConfService;
 import org.niis.xroad.securityserver.restapi.util.CertificateTestUtils;
@@ -49,16 +57,29 @@ import org.niis.xroad.securityserver.restapi.util.TokenTestUtils;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.impl.entity.ClientEntity;
 import org.niis.xroad.serverconf.impl.entity.TimestampingServiceEntity;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
+import org.niis.xroad.serverconf.impl.ownserver.OwnerNotInitialised;
 import org.niis.xroad.serverconf.model.Client;
+import org.niis.xroad.serverconf.model.PublicationState;
 import org.niis.xroad.signer.api.dto.AuthKeyInfo;
 import org.niis.xroad.signer.api.dto.CertificateInfo;
 import org.niis.xroad.signer.api.dto.KeyInfo;
 import org.niis.xroad.signer.api.dto.TokenInfo;
 import org.niis.xroad.signer.protocol.dto.KeyUsageInfo;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.context.transaction.TestTransaction;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -74,13 +95,18 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.niis.xroad.common.properties.NodeProperties.NodeType.SECONDARY;
+import static org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW;
 
 /**
  * Test GlobalConfChecker
@@ -101,6 +127,24 @@ public class GlobalConfCheckerTest extends AbstractFacadeMockingTestContext {
     private MailNotificationHelper mailNotificationHelper;
     @MockitoSpyBean
     private AdminServiceProperties adminServiceProperties;
+    @MockitoSpyBean
+    private OwnSecurityServerResolver ownSecurityServerResolver;
+    @Autowired
+    private SecurityServerAddressChangeStatus addressChangeStatus;
+    @MockitoBean
+    private DataspaceParticipantProvisioningWorker dataspaceParticipantProvisioningWorker;
+    @MockitoBean
+    private DataspaceDidAuthority dataspaceDidAuthority;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    @MockitoSpyBean
+    private DsParticipantRepository dsParticipantRepository;
+
+    private final Map<Long, String> clientStatusSnapshot = new HashMap<>();
 
     private static final ClientId.Conf OWNER_MEMBER =
             TestUtils.getClientId("FI", "GOV", "M1", null);
@@ -110,17 +154,27 @@ public class GlobalConfCheckerTest extends AbstractFacadeMockingTestContext {
             TestUtils.getClientId("FI", "GOV", "M2", null);
     private static final SecurityServerId.Conf SS_ID = SecurityServerId.Conf.create(OWNER_MEMBER, "TEST-INMEM-SS");
     private static final SecurityServerId.Conf NEW_SS_ID = SecurityServerId.Conf.create(NEW_OWNER_MEMBER, "TEST-INMEM-SS");
+    private static final String NEW_ADDRESS = "new.example.org";
     private static final String KEY_OWNER_ID = "key-owner";
     private static final String CERT_OWNER_HASH = "cert-owner";
     private static final String KEY_NEW_OWNER_ID = "key-new-owner";
     private static final String CERT_NEW_OWNER_HASH = "cert-new-owner";
     private static final String KEY_AUTH_ID = "key-auth";
     private static final String CERT_AUTH_HASH = "cert-auth";
+    private static final long SYSTEM_ROW_ID = 9002L;
+    private static final long MEMBER_ROW_ID = 9003L;
+    private static final String MEMBER_DID = "did:web:ss.example.test%3A7183:m1";
+    private static final String SYSTEM_DID = "did:web:ss.example.test%3A7183:system";
+    private static final String DSP_BASE_URL = "https://ss.example.test:7181/dsp";
     private static final List<String> MEMBER_CLASSES = Arrays.asList(TestUtils.MEMBER_CLASS_GOV,
             TestUtils.MEMBER_CLASS_PRO);
 
     @Before
     public void setup() throws Exception {
+        clientStatusSnapshot.clear();
+        jdbcTemplate.query("SELECT id, clientstatus FROM client",
+                (RowCallbackHandler) rs -> clientStatusSnapshot.put(rs.getLong("id"), rs.getString("clientstatus")));
+        addressChangeStatus.clear();
         doAnswer(answer -> null).when(globalConfProvider).verifyValidity();
         doAnswer(answer -> null).when(globalConfProvider).reload();
 
@@ -206,6 +260,27 @@ public class GlobalConfCheckerTest extends AbstractFacadeMockingTestContext {
         globalConfChecker.checkGlobalConf();
         // Subsystem status is changed back to "REGISTERED"
         assertEquals(Client.STATUS_REGISTERED, subsystem.getClientStatus());
+    }
+
+    @Test
+    public void updateClientStatusesNudgesProvisioningWhenClientStatusesChange() {
+        globalConfChecker.checkGlobalConf();
+
+        verify(dataspaceParticipantProvisioningWorker, atLeastOnce()).provisionParticipantAsync();
+    }
+
+    @Test
+    public void updateClientStatusesDoesNotNudgeProvisioningWhenNoClientStatusChanges() {
+        ClientId.Conf ss2 = TestUtils.getClientId(TestUtils.CLIENT_ID_SS2);
+        ClientId.Conf ss5 = TestUtils.getClientId(TestUtils.CLIENT_ID_SS5);
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(true);
+        when(globalConfProvider.isSecurityServerClient(SUBSYSTEM, SS_ID)).thenReturn(true);
+        when(globalConfProvider.isSecurityServerClient(ss2, SS_ID)).thenReturn(true);
+        when(globalConfProvider.isSecurityServerClient(ss5, SS_ID)).thenReturn(true);
+
+        globalConfChecker.checkGlobalConf();
+
+        verify(dataspaceParticipantProvisioningWorker, never()).provisionParticipantAsync();
     }
 
     @Test
@@ -394,6 +469,76 @@ public class GlobalConfCheckerTest extends AbstractFacadeMockingTestContext {
     }
 
     @Test
+    public void registeredWithMatchingAddressClearsPendingAddressChange() {
+        when(globalConfProvider.getSecurityServerAddress(SS_ID)).thenReturn(NEW_ADDRESS);
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        assertFalse(addressChangeStatus.getAddressChangeRequest().isPresent());
+    }
+    @Test
+    public void registeredWithDifferentAddressKeepsPendingAddressChange() {
+        when(globalConfProvider.getSecurityServerAddress(SS_ID)).thenReturn("old.example.org");
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        assertEquals(Optional.of(NEW_ADDRESS), addressChangeStatus.getAddressChangeRequest());
+    }
+    @Test
+    public void notRegisteredKeepsPendingAddressChangeAndSyncContinues() {
+        when(globalConfProvider.getSecurityServerAddress(SS_ID)).thenReturn(null);
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        assertEquals(Optional.of(NEW_ADDRESS), addressChangeStatus.getAddressChangeRequest());
+        verifySyncRan();
+    }
+    @Test
+    public void globalConfUnavailableKeepsPendingAddressChangeAndSyncContinues() {
+        when(globalConfProvider.getSecurityServerAddress(SS_ID))
+                .thenThrow(XrdRuntimeException.systemException(ErrorCode.MALFORMED_GLOBALCONF, "unreadable"));
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        assertEquals(Optional.of(NEW_ADDRESS), addressChangeStatus.getAddressChangeRequest());
+        verifySyncRan();
+    }
+    @Test
+    public void secondCycleWhileNotRegisteredChangesNothingMore() {
+        when(globalConfProvider.getSecurityServerAddress(SS_ID)).thenReturn(null);
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        var subsystemStatusAfterFirstCycle = clientService.getLocalClientEntity(SUBSYSTEM).getClientStatus();
+        globalConfChecker.checkGlobalConf();
+        assertEquals(Optional.of(NEW_ADDRESS), addressChangeStatus.getAddressChangeRequest());
+        assertEquals(subsystemStatusAfterFirstCycle, clientService.getLocalClientEntity(SUBSYSTEM).getClientStatus());
+    }
+    @Test
+    public void ownerNotInitialisedSkipsServerConfUpdate() {
+        doReturn(new OwnerNotInitialised()).when(ownSecurityServerResolver).identity();
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        verifySyncSkipped();
+    }
+    @Test
+    public void secondCycleWhileOwnerNotInitialisedChangesNothingMore() {
+        doReturn(new OwnerNotInitialised()).when(ownSecurityServerResolver).identity();
+        addressChangeStatus.setAddress(NEW_ADDRESS);
+        globalConfChecker.checkGlobalConf();
+        globalConfChecker.checkGlobalConf();
+        verifySyncSkipped();
+    }
+    private void verifySyncRan() {
+        assertEquals(Client.STATUS_GLOBALERR, clientService.getLocalClientEntity(SUBSYSTEM).getClientStatus());
+        verify(signerRpcClient).getTokens();
+        verify(globalConfProvider).getApprovedTsps(any());
+    }
+    private void verifySyncSkipped() {
+        assertEquals(Optional.of(NEW_ADDRESS), addressChangeStatus.getAddressChangeRequest());
+        assertEquals(Client.STATUS_REGISTERED, clientService.getLocalClientEntity(SUBSYSTEM).getClientStatus());
+        verify(ownSecurityServerResolver, never()).address(any(SecurityServerId.class));
+        verify(signerRpcClient, never()).getTokens();
+        verify(globalConfProvider, never()).getApprovedTsps(any());
+        verify(globalConfProvider, never()).getServerOwner(any());
+    }
+
+    @Test
     public void doNotUpdateServerConfOnSecondary() {
         try (MockedStatic<NodeProperties> nodePropertiesMock = mockStatic(NodeProperties.class)) {
             nodePropertiesMock.when(NodeProperties::getServerNodeType).thenReturn(SECONDARY);
@@ -403,6 +548,214 @@ public class GlobalConfCheckerTest extends AbstractFacadeMockingTestContext {
             verify(globalConfProvider).verifyValidity();
             verifyNoMoreInteractions(globalConfProvider);
         }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void submittedSystemValuesBecomePublishedWhenGlobalConfCarriesThem() {
+        insertSystemRow(PublicationState.SUBMITTED);
+        carrySystemValues(SYSTEM_DID, DSP_BASE_URL);
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(PublicationState.PUBLISHED.name(), systemPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void submittedSystemValuesStaySubmittedWhenGlobalConfCarriesDifferentValues() {
+        insertSystemRow(PublicationState.SUBMITTED);
+        carrySystemValues(SYSTEM_DID, "https://old.example.test:7181/dsp");
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(PublicationState.SUBMITTED.name(), systemPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void submittedSystemValuesStaySubmittedOnSecondary() {
+        insertSystemRow(PublicationState.SUBMITTED);
+        carrySystemValues(SYSTEM_DID, DSP_BASE_URL);
+
+        try (MockedStatic<NodeProperties> nodePropertiesMock = mockStatic(NodeProperties.class)) {
+            nodePropertiesMock.when(NodeProperties::getServerNodeType).thenReturn(SECONDARY);
+            globalConfChecker.checkGlobalConf();
+        }
+
+        assertEquals(PublicationState.SUBMITTED.name(), systemPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void submittedSystemValuesStaySubmittedDuringBackupRestore() {
+        insertSystemRow(PublicationState.SUBMITTED);
+        carrySystemValues(SYSTEM_DID, DSP_BASE_URL);
+
+        eventPublisher.publishEvent(BackupRestoreEvent.START);
+        try {
+            globalConfChecker.checkGlobalConf();
+            assertEquals(PublicationState.SUBMITTED.name(), systemPublicationState());
+        } finally {
+            eventPublisher.publishEvent(BackupRestoreEvent.END);
+        }
+
+        globalConfChecker.checkGlobalConf();
+        assertEquals(PublicationState.PUBLISHED.name(), systemPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void aFailingPublicationStepDoesNotUndoTheCommittedClientStatusUpdates() {
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(true);
+        doThrow(new IllegalStateException("database unavailable")).when(dsParticipantRepository)
+                .findActiveSystemParticipant();
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(Client.STATUS_GLOBALERR, clientStatus(SUBSYSTEM));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void submittedMemberDidBecomesPublishedWhenGlobalConfCarriesIt() {
+        insertMemberRow(PublicationState.SUBMITTED);
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(true);
+        when(globalConfProvider.getMemberDid(OWNER_MEMBER, SS_ID)).thenReturn(Optional.of(MEMBER_DID));
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(PublicationState.PUBLISHED.name(), memberPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void submittedMemberDidStaysSubmittedWhenGlobalConfCarriesADifferentDid() {
+        insertMemberRow(PublicationState.SUBMITTED);
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(true);
+        when(globalConfProvider.getMemberDid(OWNER_MEMBER, SS_ID)).thenReturn(Optional.of(MEMBER_DID + "-old"));
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(PublicationState.SUBMITTED.name(), memberPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void publishedMemberDidGoesBackToNotSentWhenGlobalConfLosesItWhileTheMemberIsHostedHere() {
+        insertMemberRow(PublicationState.PUBLISHED);
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(true);
+        when(globalConfProvider.getMemberDid(OWNER_MEMBER, SS_ID)).thenReturn(Optional.empty());
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(PublicationState.NOT_SENT.name(), memberPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void publishedMemberDidStaysPublishedWhenTheSameCheckDropsTheClientRegistrationAndTheDid() {
+        insertMemberRow(PublicationState.PUBLISHED);
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(false);
+        when(globalConfProvider.getMemberDid(OWNER_MEMBER, SS_ID)).thenReturn(Optional.empty());
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(Client.STATUS_GLOBALERR, clientStatus(OWNER_MEMBER));
+        assertEquals(PublicationState.PUBLISHED.name(), memberPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void publishedMemberDidGoesBackToNotSentWhenTheMemberIsHostedOnlyThroughARegisteredSubsystem() {
+        insertMemberRow(PublicationState.PUBLISHED);
+        when(globalConfProvider.isSecurityServerClient(SUBSYSTEM, SS_ID)).thenReturn(true);
+        when(globalConfProvider.getMemberDid(OWNER_MEMBER, SS_ID)).thenReturn(Optional.empty());
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(Client.STATUS_GLOBALERR, clientStatus(OWNER_MEMBER));
+        assertEquals(Client.STATUS_REGISTERED, clientStatus(SUBSYSTEM));
+        assertEquals(PublicationState.NOT_SENT.name(), memberPublicationState());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void aGlobalConfCheckThatRollsBackCommitsNoPublicationTransition() {
+        insertMemberRow(PublicationState.PUBLISHED);
+        when(globalConfProvider.isSecurityServerClient(OWNER_MEMBER, SS_ID)).thenReturn(true);
+        when(globalConfProvider.getMemberDid(OWNER_MEMBER, SS_ID)).thenReturn(Optional.empty());
+        when(globalConfProvider.getApprovedTsps(any())).thenAnswer(_ -> {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return List.of();
+        });
+
+        globalConfChecker.checkGlobalConf();
+
+        assertEquals(Client.STATUS_REGISTERED, clientStatus(SUBSYSTEM));
+        assertEquals(PublicationState.PUBLISHED.name(), memberPublicationState());
+    }
+
+    @After
+    public void deleteSystemRow() {
+        if (TestTransaction.isActive()) {
+            TestTransaction.flagForRollback();
+            TestTransaction.end();
+        }
+        inNewTransaction(() -> {
+            jdbcTemplate.update("DELETE FROM ds_participant WHERE id IN (?, ?)", SYSTEM_ROW_ID, MEMBER_ROW_ID);
+            clientStatusSnapshot.forEach((id, status) ->
+                    jdbcTemplate.update("UPDATE client SET clientstatus = ? WHERE id = ?", status, id));
+        });
+    }
+
+    private void insertMemberRow(PublicationState state) {
+        inNewTransaction(() -> jdbcTemplate.update("INSERT INTO ds_participant"
+                + " (id, participant_type, member_identifier, ctx_id, did, scheme_version, state, publication_state,"
+                + " created_at, updated_at)"
+                + " VALUES (?, 'MEMBER', (SELECT id FROM identifier WHERE object_type = 'MEMBER'"
+                + " AND xroad_instance = ? AND member_class = ? AND member_code = ?),"
+                + " 'm1', ?, 'v1', 'ACTIVE', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                MEMBER_ROW_ID, OWNER_MEMBER.getXRoadInstance(), OWNER_MEMBER.getMemberClass(),
+                OWNER_MEMBER.getMemberCode(), MEMBER_DID, state.name()));
+    }
+
+    private void insertSystemRow(PublicationState state) {
+        inNewTransaction(() -> jdbcTemplate.update("INSERT INTO ds_participant"
+                + " (id, participant_type, ctx_id, did, scheme_version, state, publication_state, created_at, updated_at)"
+                + " VALUES (?, 'SYSTEM', 'system', ?, 'v1', 'ACTIVE', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                SYSTEM_ROW_ID, SYSTEM_DID, state.name()));
+    }
+
+    private void inNewTransaction(Runnable work) {
+        new TransactionTemplate(transactionManager, new DefaultTransactionDefinition(PROPAGATION_REQUIRES_NEW))
+                .executeWithoutResult(_ -> work.run());
+    }
+
+    private void carrySystemValues(String did, String dspBaseUrl) {
+        when(dataspaceDidAuthority.dspBaseUrlIfValid()).thenReturn(Optional.of(DSP_BASE_URL));
+        when(globalConfProvider.getServerSystemValues(SS_ID)).thenReturn(Optional.of(new ServerSystemValues(did, dspBaseUrl)));
+    }
+
+    private String memberPublicationState() {
+        return jdbcTemplate.queryForObject(
+                "SELECT publication_state FROM ds_participant WHERE id = ?", String.class, MEMBER_ROW_ID);
+    }
+
+    private String clientStatus(ClientId clientId) {
+        var query = "SELECT c.clientstatus FROM client c JOIN identifier i ON c.identifier = i.id"
+                + " WHERE i.xroad_instance = ? AND i.member_class = ? AND i.member_code = ?";
+        return clientId.getSubsystemCode() == null
+                ? jdbcTemplate.queryForObject(query + " AND i.subsystem_code IS NULL", String.class,
+                        clientId.getXRoadInstance(), clientId.getMemberClass(), clientId.getMemberCode())
+                : jdbcTemplate.queryForObject(query + " AND i.subsystem_code = ?", String.class,
+                        clientId.getXRoadInstance(), clientId.getMemberClass(), clientId.getMemberCode(),
+                        clientId.getSubsystemCode());
+    }
+
+    private String systemPublicationState() {
+        return jdbcTemplate.queryForObject(
+                "SELECT publication_state FROM ds_participant WHERE participant_type = 'SYSTEM'", String.class);
     }
 
 }

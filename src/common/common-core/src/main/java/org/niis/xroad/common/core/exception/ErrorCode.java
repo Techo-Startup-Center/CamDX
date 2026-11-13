@@ -41,11 +41,13 @@ public enum ErrorCode implements DeviationBuilder.ErrorDeviationBuilder {
     INTERNAL_ERROR("internal_error"),
     BAD_REQUEST("bad_request"),
     NOT_FOUND("not_found"),
+    INVALID_PROPERTY_VALUE("invalid_property_value"),
     HTTP_ERROR("http_error"),
     UNKNOWN_HOST("unknown_host"),
     DATABASE_ERROR("database_error"),
     INVALID_RESPONSE("invalid_response"),
     INVALID_REQUEST("invalid_request"),
+    REQUEST_TOO_LARGE("request_too_large"),
     CRYPTO_ERROR("cryptography_error"),
     // ===== VERIFICATION ERRORS =====
     CANNOT_CREATE_SIGNATURE("cannot_create_signature"),
@@ -155,6 +157,9 @@ public enum ErrorCode implements DeviationBuilder.ErrorDeviationBuilder {
     GLOBAL_CONF_PART_FILE_HASH_FAILURE("global_conf_part_file_hash_failure"),
     GLOBAL_CONF_PART_FILE_SAVE_FAILURE("global_conf_part_file_save_failure"),
     GLOBAL_CONF_PART_FILE_EXPIRATION_DATE_UPDATE_FAILURE("global_conf_part_file_expiration_date_update_failure"),
+    GLOBAL_CONF_OWNER_REFERENCES_NON_MEMBER("global_conf_owner_references_non_member"),
+    GLOBAL_CONF_CLIENT_REFERENCES_SERVER("global_conf_client_references_server"),
+    GLOBAL_CONF_MEMBER_DID_REFERENCES_NON_SERVER("global_conf_member_did_references_non_server"),
 
     // ===== SIGNER ERRORS =====
     KEY_NOT_FOUND("key_not_found"),
@@ -226,6 +231,13 @@ public enum ErrorCode implements DeviationBuilder.ErrorDeviationBuilder {
     INVALID_DISTINGUISHED_NAME("invalid_distinguished_name"),
     INVALID_CHARACTERS("invalid_characters"),
     INVALID_PEM_CSR("invalid_pem_csr"),
+
+    // ===== DIAGNOSTICS ERRORS =====
+    OPERATIONAL_DATA_INTERVALS_OUT_OF_RANGE("operational_data_intervals_out_of_range"),
+
+    // ===== OPERATIONAL MONITORING ERRORS =====
+    OPERATIONAL_DATA_RESPONSE_TOO_LARGE("operational_data_response_too_large"),
+    OP_MONITOR_TRUST_FAILURE("op_monitor_trust_failure"),
 
     // ===== BUSINESS LOGIC ERRORS =====
     DUPLICATE_ENTRY("duplicate_entry"),
@@ -314,19 +326,25 @@ public enum ErrorCode implements DeviationBuilder.ErrorDeviationBuilder {
     // ===== DATASPACE / DSP =====
     DSP_CATALOG_FETCH_FAILED("dsp_catalog_fetch_failed"),
     DSP_CATALOG_PARSE_FAILED("dsp_catalog_parse_failed"),
+    DSP_PROVIDER_NOT_FOUND("dsp_provider_not_found"),
     DSP_DATASET_NOT_FOUND("dsp_dataset_not_found"),
     DSP_OFFERS_NOT_FOUND("dsp_offers_not_found"),
     DSP_PULL_DISTRIBUTION_MISSING("dsp_pull_distribution_missing"),
     DSP_PARTICIPANT_CONTEXT_FAILED("dsp_participant_context_failed"),
+    DSP_PARTICIPANT_CONTEXT_CONFLICT("dsp_participant_context_conflict"),
     DSP_DATAADDRESS_INVALID("dsp_dataaddress_invalid"),
     DSP_ACQUISITION_TIMEOUT("dsp_acquisition_timeout"),
     DSP_NEGOTIATION_FAILED("dsp_negotiation_failed"),
     DSP_TRANSFER_FAILED("dsp_transfer_failed"),
+    DSP_ACCESS_REFUSED("dsp_access_refused"),
     DSP_ACQUISITION_FAILED("dsp_acquisition_failed"),
+    DSP_DATA_PLANE_UNREACHABLE("dsp_data_plane_unreachable"),
     DSP_PROVISIONING_FAILED("dsp_provisioning_failed"),
-    DSP_PARTICIPANT_IDENTIFIER_MISMATCH("dsp_participant_identifier_mismatch"),
     DSP_PARTICIPANT_SCHEME_VERSION_UNSUPPORTED("dsp_participant_scheme_version_unsupported"),
     DSP_PARTICIPANT_DID_DRIFT("dsp_participant_did_drift"),
+    SYSTEM_DID_FINAL_CONFLICT("system_did_final_conflict"),
+    SYSTEM_DID_FIXABLE_CONFLICT("system_did_fixable_conflict"),
+    SYSTEM_DID_NOT_RESOLVED("system_did_not_resolved"),
 
     // ===== DS TLS CERTIFICATE ERRORS =====
     DS_TLS_KEY_NOT_GENERATED("ds_tls_key_not_generated"),
@@ -334,7 +352,32 @@ public enum ErrorCode implements DeviationBuilder.ErrorDeviationBuilder {
     DS_TLS_CERTIFICATE_NOT_YET_VALID("ds_tls_certificate_not_yet_valid"),
     DS_TLS_CERTIFICATE_EXPIRED("ds_tls_certificate_expired"),
     DS_TLS_KEY_CERTIFICATE_MISMATCH("ds_tls_key_certificate_mismatch"),
-    DS_TLS_CERTIFICATE_NOT_CONFIGURED("ds_tls_certificate_not_configured");
+    DS_TLS_CERTIFICATE_NOT_CONFIGURED("ds_tls_certificate_not_configured"),
+    DS_TLS_CA_NOT_FOUND("ds_tls_ca_not_found"),
+    DS_TLS_INVALID_SUBJECT_ALT_NAME("ds_tls_invalid_subject_alt_name"),
+    DS_TLS_ACME_ORDER_FAILED("ds_tls_acme_order_failed"),
+
+    // ===== CERTIFICATE AUTHORITY ERRORS =====
+    EXTERNAL_RPC_CA_NOT_AVAILABLE("external_rpc_ca_not_available"),
+    CA_CERT_EMPTY("ca_cert_empty"),
+    CA_CERT_NOT_A_CERTIFICATE("ca_cert_not_a_certificate"),
+    CA_CERT_MULTIPLE_CERTIFICATES("ca_cert_multiple_certificates"),
+    CA_CERT_KEY_MATERIAL("ca_cert_key_material"),
+    CA_CERT_NOT_A_CA("ca_cert_not_a_ca"),
+    CA_CERT_UNSUPPORTED_KEY_ALGORITHM("ca_cert_unsupported_key_algorithm"),
+    CA_CERT_EXPIRED("ca_cert_expired"),
+    CA_CERT_NOT_YET_VALID("ca_cert_not_yet_valid"),
+
+    // ===== AGREEMENT TOKEN ERRORS =====
+    AGREEMENT_TOKEN_KEY_NOT_AVAILABLE("agreement_token_key_not_available"),
+    AGREEMENT_TOKEN_SIGNING_KEY_STALE("agreement_token_signing_key_stale"),
+    AGREEMENT_TOKEN_SIGNING_FAILED("agreement_token_signing_failed"),
+    AGREEMENT_TOKEN_KEY_STORE_FAILED("agreement_token_key_store_failed"),
+    AGREEMENT_TOKEN_KEY_GENERATION_FAILED("agreement_token_key_generation_failed"),
+    AGREEMENT_TOKEN_REJECTED("agreement_token_rejected"),
+
+    // ===== LEGACY CALL REFUSAL ERRORS =====
+    LEGACY_CALL_REFUSED("legacy_call_refused");
 
     private final String code;
 

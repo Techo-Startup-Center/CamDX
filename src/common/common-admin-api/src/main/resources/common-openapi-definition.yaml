@@ -19,6 +19,8 @@ tags:
     description: user endpoints
   - name: ds-tls-certificate
     description: resources related to the manually or automatically provisioned DataSpace TLS certificate
+  - name: configurable-properties
+    description: server-wide configurable system parameters
 paths:
   /ds-tls-certificate:
     get:
@@ -77,7 +79,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DistinguishedName'
+              $ref: '#/components/schemas/DsTlsCertificateSigningRequest'
         required: true
       responses:
         '200':
@@ -87,6 +89,41 @@ paths:
               schema:
                 type: string
                 format: binary
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: no DataSpace TLS key has been generated yet
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+  /ds-tls-certificate/acme-order:
+    post:
+      tags:
+        - ds-tls-certificate
+      summary: order the DataSpace TLS certificate via ACME
+      operationId: orderDsTlsCertificate
+      description: <h3>Administrator orders the DataSpace TLS certificate from a named, ACME-capable designated
+        certification authority for an entered distinguished name and one DNS subject alternative name, reusing
+        the stored DataSpace TLS key. Runs synchronously against the CA's ACME server; on success the certificate
+        replaces any existing one and is stored as ACME-enrolled.</h3>
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DsTlsCertificateOrder'
+        required: true
+      responses:
+        '200':
+          description: DataSpace TLS certificate ordered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateDetails'
         '400':
           description: request was invalid
         '401':
@@ -158,6 +195,33 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
+  /ds-tls-certificate/enrollment-status:
+    get:
+      tags:
+        - ds-tls-certificate
+      summary: view the DataSpace TLS certificate's enrollment status
+      operationId: getDsTlsCertificateEnrollmentStatus
+      description: <h3>Administrator views how the DataSpace TLS certificate was obtained (manually or via ACME),
+        when it is next due for ACME renewal, and its last enrollment/renewal error.</h3>
+      responses:
+        '200':
+          description: DataSpace TLS certificate enrollment status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DsTlsCertificateEnrollmentStatus'
+        '400':
+          description: request was invalid
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
   /user:
     get:
       tags:
@@ -184,6 +248,94 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
+  /system/property:
+    get:
+      tags:
+        - configurable-properties
+      operationId: getConfigurableProperties
+      summary: Get configurable system parameters.
+      description: <h3>Administrator views the server's configurable system parameters</h3>
+      responses:
+        '200':
+          description: List of configurable properties.
+          content:
+            application/json:
+              schema:
+                type: array
+                description: List of configurable properties.
+                uniqueItems: true
+                items:
+                  $ref: '#/components/schemas/ConfigurablePropertyDto'
+        '400':
+          description: request was invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+                error_metadata_response:
+                  $ref: '#/components/examples/ErrorWithMetadataExample'
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_metadata_response:
+                  $ref: '#/components/examples/ErrorWithMetadataExample'
+    patch:
+      tags:
+        - configurable-properties
+      operationId: updateConfigurableProperty
+      summary: Update configurable property with new property value.
+      description: <h3>Administrator updates a selected configurable system parameter</h3>
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigurablePropertyUpdateDto'
+      responses:
+        '204':
+          description: property updated successfully
+        '400':
+          description: request was invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+                error_metadata_response:
+                  $ref: '#/components/examples/ErrorWithMetadataExample'
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_metadata_response:
+                  $ref: '#/components/examples/ErrorWithMetadataExample'
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -332,6 +484,73 @@ components:
           maxLength: 255
       required:
         - name
+    DsTlsCertificateSigningRequest:
+      type: object
+      description: distinguished name and optional single DNS subject alternative name for a DataSpace TLS
+        certificate signing request
+      properties:
+        name:
+          type: string
+          format: text
+          description: distinguished name
+          example: C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=ds.example.org
+          minLength: 1
+          maxLength: 255
+        subject_alt_name:
+          type: string
+          format: text
+          description: single DNS subject alternative name; when present the CSR carries it as its only
+            dNSName, when absent the CSR carries the distinguished name only
+          example: ds.example.org
+          minLength: 1
+          maxLength: 255
+      required:
+        - name
+    DsTlsCertificateOrder:
+      type: object
+      description: names to order the DataSpace TLS certificate under, from a named ACME-capable designated
+        certification authority
+      properties:
+        ca_name:
+          type: string
+          format: text
+          description: name of the ACME-capable designated DataSpace TLS certification authority to order from
+          example: X-Road Test DS TLS CA
+          minLength: 1
+          maxLength: 255
+        distinguished_name:
+          type: string
+          format: text
+          description: distinguished name
+          example: C=FI, O=X-Road Test, OU=X-Road Test CA OU, CN=ds.example.org
+          minLength: 1
+          maxLength: 255
+        subject_alt_name:
+          type: string
+          format: text
+          description: single DNS subject alternative name; becomes both the ACME order's identifier and the
+            CSR's only dNSName. No minLength - blank/whitespace-only input must reach
+            DsTlsCertificateService.validateSubjectAltName() so its specific ds_tls_invalid_subject_alt_name
+            error wins over a generic bean-validation failure.
+          example: ds.example.org
+          maxLength: 255
+      required:
+        - ca_name
+        - distinguished_name
+        - subject_alt_name
+    DsTlsAcmeCertificationAuthority:
+      type: object
+      description: an ACME-capable designated DataSpace TLS certification authority
+      properties:
+        name:
+          type: string
+          format: text
+          description: certification authority name
+          example: X-Road Test DS TLS CA
+          minLength: 1
+          maxLength: 255
+      required:
+        - name
     DsTlsCertificateFile:
       type: object
       description: certificate chain file, leaf certificate first
@@ -342,6 +561,47 @@ components:
           type: string
       required:
         - certificate
+    DsTlsCertificateEnrollmentStatus:
+      type: object
+      description: how the DataSpace TLS certificate was enrolled, and its renewal bookkeeping
+      required:
+        - enrollment_method
+        - acme_available
+      properties:
+        enrollment_method:
+          type: string
+          readOnly: true
+          description: how the currently stored DataSpace TLS certificate was obtained, or NONE if none has
+            been configured yet
+          enum:
+            - NONE
+            - MANUAL
+            - ACME
+        next_renewal_time:
+          type: string
+          format: date-time
+          readOnly: true
+          description: when the certificate is next due for ACME renewal, absent when not applicable
+        last_error:
+          type: string
+          readOnly: true
+          description: the last enrollment/renewal error, absent when the last attempt succeeded
+        acme_available:
+          type: boolean
+          readOnly: true
+          description: whether ACME ordering is currently available for the DataSpace TLS certificate — at
+            least one designated certification authority carries an ACME server and the public hostname resolves
+        acme_cas:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/DsTlsAcmeCertificationAuthority'
+          description: the ACME-capable designated DataSpace TLS certification authorities an order may name
+        public_hostname:
+          type: string
+          readOnly: true
+          format: text
+          description: this server's public DataSpace-facing hostname, absent when it cannot be resolved
     CertificateDetails:
       type: object
       description: certificate details for the DataSpace TLS certificate
@@ -481,7 +741,6 @@ components:
         - subject_alternative_names
     KeyUsage:
       type: string
-      format: enum
       description: certificate key usage
       example: NON_REPUDIATION
       enum:
@@ -494,6 +753,54 @@ components:
         - CRL_SIGN
         - ENCIPHER_ONLY
         - DECIPHER_ONLY
+    ConfigurablePropertyDto:
+      type: object
+      description: A single configurable property, including metadata for UI rendering and current value.
+      properties:
+        property_name:
+          type: string
+          format: text
+          description: name of the property
+          minLength: 1
+          maxLength: 1024
+          example: xroad.proxy-ui-api.rate-limit-requests-per-second
+        current_value:
+          type: string
+          format: text
+          description: textual representation of property's current value
+          minLength: 1
+          maxLength: 4096
+        default_value:
+          type: string
+          format: text
+          description: textual representation of property's default value
+        scope:
+          type: string
+          description: scope of the property
+          example: proxy-ui-api
+    ConfigurablePropertyUpdateDto:
+      type: object
+      description: request object for updating a configurable property
+      required:
+       - property_name
+       - property_value
+      properties:
+        property_name:
+          type: string
+          description: name of the property to be updated
+          minLength: 1
+          maxLength: 1024
+          example: xroad.proxy-ui-api.rate-limit-requests-per-second
+        property_value:
+          type: string
+          description: new value of the property
+          minLength: 1
+          maxLength: 4096
+          example: 60
+        scope:
+          type: string
+          description: scope of the property
+          example: proxy-ui-api
   examples:
     ErrorExample:
       summary: Error response body example

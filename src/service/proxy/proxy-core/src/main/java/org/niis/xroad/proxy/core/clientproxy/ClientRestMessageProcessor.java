@@ -38,12 +38,14 @@ import ee.ria.xroad.common.util.RequestWrapper;
 import ee.ria.xroad.common.util.ResponseWrapper;
 
 import io.opentelemetry.instrumentation.annotations.WithSpan;
+import jakarta.annotation.Nullable;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.Header;
 import org.apache.http.entity.AbstractHttpEntity;
 import org.apache.http.message.BasicHeader;
@@ -59,6 +61,7 @@ import org.niis.xroad.globalconf.cert.CertChain;
 import org.niis.xroad.globalconf.impl.ocsp.OcspVerifierFactory;
 import org.niis.xroad.opmonitor.api.OpMonitoringData;
 import org.niis.xroad.proxy.core.configuration.ProxyProperties;
+import org.niis.xroad.proxy.core.dsp.AssetAccessResponse;
 import org.niis.xroad.proxy.core.dsp.DspRequest;
 import org.niis.xroad.proxy.core.dsp.DspRequestProcessor;
 import org.niis.xroad.proxy.core.messagelog.MessageLog;
@@ -67,6 +70,7 @@ import org.niis.xroad.proxy.core.protocol.ProxyMessageDecoder;
 import org.niis.xroad.proxy.core.protocol.ProxyMessageEncoder;
 import org.niis.xroad.proxy.core.service.ClientVerificationService;
 import org.niis.xroad.proxy.core.service.HttpSenderProvider;
+import org.niis.xroad.proxy.core.service.LegacyCallRefusalPolicy;
 import org.niis.xroad.proxy.core.service.MessageSigningService;
 import org.niis.xroad.proxy.core.util.CachingStream;
 import org.niis.xroad.proxy.core.util.IdentifierValidationService;
@@ -89,11 +93,14 @@ import java.util.stream.Collectors;
 
 import static ee.ria.xroad.common.ErrorCodes.X_SERVICE_FAILED_X;
 import static ee.ria.xroad.common.util.HeaderValueUtils.getBoundary;
+import static ee.ria.xroad.common.util.MimeUtils.HEADER_AGREEMENT_TOKEN;
 import static ee.ria.xroad.common.util.MimeUtils.HEADER_MESSAGE_TYPE;
 import static ee.ria.xroad.common.util.MimeUtils.HEADER_ORIGINAL_CONTENT_TYPE;
 import static ee.ria.xroad.common.util.MimeUtils.HEADER_REQUEST_ID;
 import static ee.ria.xroad.common.util.MimeUtils.VALUE_MESSAGE_TYPE_REST;
 import static ee.ria.xroad.common.util.TimeUtils.getEpochMillisecond;
+import static org.niis.xroad.common.core.exception.ErrorCode.ACCESS_DENIED;
+import static org.niis.xroad.common.core.exception.ErrorCode.AGREEMENT_TOKEN_REJECTED;
 import static org.niis.xroad.common.core.exception.ErrorCode.INCONSISTENT_RESPONSE;
 import static org.niis.xroad.common.core.exception.ErrorCode.IO_ERROR;
 import static org.niis.xroad.common.core.exception.ErrorCode.MISSING_REST;
@@ -118,6 +125,8 @@ public class ClientRestMessageProcessor {
     private final ClientRequestPreparationService clientRequestPreparationService;
     private final DspRequestProcessor consumerSideDspProcessor;
     private final IdentifierValidationService identifierValidationService;
+    private final LegacyCallRefusalPolicy legacyCallRefusalPolicy;
+    private final DspFailover dspFailover;
 
     /**
      * Processes a REST message exchange described by the given request context.
@@ -181,9 +190,9 @@ public class ClientRestMessageProcessor {
         identifierValidationService.checkIdentifier(restRequest.getTargetSecurityServer());
     }
 
-    private ProxyMessage processRequest(RequestWrapper jRequest, OpMonitoringData opMonitoringData,
-                                        RestRequest restRequest, ClientId senderId, ServiceId requestServiceId,
-                                        String xRequestId, ProxyRequestContext ctx) throws Exception {
+    ProxyMessage processRequest(RequestWrapper jRequest, OpMonitoringData opMonitoringData,
+                                RestRequest restRequest, ClientId senderId, ServiceId requestServiceId,
+                                String xRequestId, ProxyRequestContext ctx) throws Exception {
         if (restRequest.getQueryId() == null) {
             restRequest.setQueryId(globalConfProvider.getInstanceIdentifier() + "-" + UUID.randomUUID());
         }
@@ -192,40 +201,68 @@ public class ClientRestMessageProcessor {
                 requestServiceId, restRequest.getTargetSecurityServer(), ctx, opMonitoringData);
 
         ProxyMessage response;
-        var sentRequest = executeWithRetry(jRequest, opMonitoringData, restRequest, senderId,
-                requestServiceId, xRequestId, ctx);
-        try (var httpSender = sentRequest.httpSender()) {
+        var sentRequest = send(jRequest, opMonitoringData, restRequest, senderId, requestServiceId, xRequestId, ctx);
+        try (var httpSender = sentRequest.getHttpSender()) {
             var hashAlgoId = ProxyMessageUtils.getHashAlgoId(httpSender);
             response = parseResponse(httpSender, opMonitoringData, requestServiceId);
-            checkConsistency(hashAlgoId, restRequest, sentRequest.restBodyDigest(), response);
+            checkConsistency(hashAlgoId, restRequest, sentRequest.getRestBodyDigest(), response);
+        } catch (XrdRuntimeException e) {
+            dropAssetAccessOnTokenRejection(e, restRequest, requestServiceId, sentRequest.isTokenPresented());
+            throw e;
         }
         logResponseMessage(restRequest, response, xRequestId);
         return response;
     }
 
+    void dropAssetAccessOnTokenRejection(XrdRuntimeException failure, RestRequest restRequest, ServiceId requestServiceId,
+                                         boolean tokenPresented) {
+        if (proxyProperties.dspEnabled() && (failure.isCausedBy(AGREEMENT_TOKEN_REJECTED)
+                || tokenPresented && failure.isCausedBy(ACCESS_DENIED))) {
+            consumerSideDspProcessor.invalidateAssetAccess(new DspRequest(requestServiceId, restRequest.getClientId(),
+                    restRequest.getTargetSecurityServer(), isManagementRequest(requestServiceId)));
+        }
+    }
+
     /**
-     * Sends the request, transparently retrying towards another security server when a TLS
-     * handshake failure surfaces mid-request (e.g. a TLS 1.3 server proxy rejecting the client
-     * certificate after the handshake completed). The request entity is created on the first
-     * attempt and replayed byte-identically by subsequent attempts. Returns the sender of the
-     * successful attempt, left open so the response can be parsed from it; failed attempts'
-     * senders are closed here.
+     * Sends the request and returns the sender of the successful attempt, left open so the response
+     * can be parsed from it. Requests that go through DSP move to a sibling Security Server only when nothing
+     * was sent; all other requests use the TLS handshake retry across the resolved addresses.
      */
-    private SentRequest executeWithRetry(RequestWrapper jRequest, OpMonitoringData opMonitoringData,
-                                         RestRequest restRequest, ClientId senderId, ServiceId requestServiceId,
-                                         String xRequestId, ProxyRequestContext ctx) throws Exception {
+    SentRequest send(RequestWrapper jRequest, OpMonitoringData opMonitoringData, RestRequest restRequest,
+                     ClientId senderId, ServiceId requestServiceId, String xRequestId, ProxyRequestContext ctx)
+            throws Exception {
+        var dspRequest = new DspRequest(requestServiceId, restRequest.getClientId(),
+                restRequest.getTargetSecurityServer(), isManagementRequest(requestServiceId));
+        if (proxyProperties.dspEnabled() && !consumerSideDspProcessor.bypassesDsp(dspRequest)) {
+            return sendWithDspFailover(dspRequest, jRequest, opMonitoringData, restRequest, senderId,
+                    requestServiceId, xRequestId, ctx);
+        }
+        return sendWithHandshakeRetry(jRequest, opMonitoringData, restRequest, senderId, requestServiceId, xRequestId, ctx);
+    }
+
+    /**
+     * Sends the request to the provider over the X-Road 7 path, transparently retrying towards another
+     * security server when a TLS handshake failure surfaces mid-request (e.g. a TLS 1.3 server proxy
+     * rejecting the client certificate after the handshake completed). The request entity is created
+     * once and replayed byte-identically by subsequent attempts. Failed attempts' senders are closed here.
+     */
+    private SentRequest sendWithHandshakeRetry(RequestWrapper jRequest, OpMonitoringData opMonitoringData,
+                                               RestRequest restRequest, ClientId senderId, ServiceId requestServiceId,
+                                               String xRequestId, ProxyRequestContext ctx) throws Exception {
         final boolean retryEnabled = proxyProperties.clientProxy().enableRequestRetry();
-        SigningProxyMessageEntity entity = null;
+        var entity = createRequestEntity(jRequest, opMonitoringData, restRequest, senderId, xRequestId, retryEnabled);
         try {
             for (int attempt = 1; ; attempt++) {
                 var httpSender = httpSenderProvider.createClientHttpSender();
                 try {
-                    if (entity == null) {
-                        entity = createRequestEntity(jRequest, opMonitoringData, restRequest, senderId, xRequestId,
-                                retryEnabled);
+                    var addresses = clientRequestPreparationService.prepareRequest(httpSender, requestServiceId,
+                            restRequest.getTargetSecurityServer(), ctx, opMonitoringData, null);
+                    if (!proxyProperties.dspEnabled()) {
+                        checkUnnegotiatedCallAllowed(requestServiceId);
                     }
-                    sendRequest(httpSender, entity, opMonitoringData, restRequest, requestServiceId, xRequestId, ctx);
-                    return new SentRequest(httpSender, entity.getRestBodyDigest());
+                    addRequestHeaders(httpSender, xRequestId, null);
+                    post(httpSender, addresses, entity, opMonitoringData);
+                    return new SentRequest(httpSender, entity.getRestBodyDigest(), false);
                 } catch (Exception e) {
                     var targets = httpSender.getAttribute(ID_TARGETS);
                     var failedAddress = httpSender.getAttribute(ID_SELECTED_TARGET);
@@ -239,9 +276,29 @@ public class ClientRestMessageProcessor {
                 }
             }
         } finally {
-            if (entity != null) {
-                entity.consume();
-            }
+            entity.consume();
+        }
+    }
+
+    /**
+     * Sends the request to the provider over DSP. When the chosen Security Server never received the request,
+     * it goes to the Security Server that a new acquisition selects. Failures of the acquisition and of the
+     * request preparation are thrown as they are.
+     */
+    private SentRequest sendWithDspFailover(DspRequest dspRequest, RequestWrapper jRequest,
+                                            OpMonitoringData opMonitoringData, RestRequest restRequest,
+                                            ClientId senderId, ServiceId requestServiceId, String xRequestId,
+                                            ProxyRequestContext ctx) throws Exception {
+        final boolean retryEnabled = proxyProperties.clientProxy().enableRequestRetry();
+        var entity = createRequestEntity(jRequest, opMonitoringData, restRequest, senderId, xRequestId, retryEnabled);
+        try {
+            return dspFailover.run(dspRequest, xRequestId, retryEnabled, entity::isReplayable, (httpSender, access) -> {
+                var addresses = prepareDspSender(httpSender, access, requestServiceId, opMonitoringData, xRequestId, ctx);
+                post(httpSender, addresses, entity, opMonitoringData);
+                return new SentRequest(httpSender, entity.getRestBodyDigest(), StringUtils.isNotBlank(access.authorization()));
+            });
+        } finally {
+            entity.consume();
         }
     }
 
@@ -262,29 +319,31 @@ public class ClientRestMessageProcessor {
      * remaining) and the request entity must still be replayable.
      */
     private boolean canRetry(Exception exception, SigningProxyMessageEntity entity, Object targets, int attempt) {
-        return clientRequestPreparationService.shouldRetry(exception, targets, attempt)
-                && entity != null && entity.isReplayable();
+        return clientRequestPreparationService.shouldRetry(exception, targets, attempt) && entity.isReplayable();
     }
 
-    private void sendRequest(HttpSender httpSender, SigningProxyMessageEntity entity, OpMonitoringData opMonitoringData,
-                             RestRequest restRequest, ServiceId requestServiceId, String xRequestId,
-                             ProxyRequestContext ctx) throws Exception {
-        log.trace("sendRequest()");
+    void checkUnnegotiatedCallAllowed(ServiceId requestServiceId) {
+        legacyCallRefusalPolicy.checkConsumerCallAllowed(requestServiceId);
+    }
 
-        // MANAGEMENT requests target the mgmt participant context; all others use the host context.
-        final URI[] addresses;
-        if (proxyProperties.dspEnabled()) {
-            var assetAccess = consumerSideDspProcessor.execute(new DspRequest(requestServiceId,
-                    restRequest.getTargetSecurityServer(), isManagementRequest(requestServiceId)));
-            addresses = clientRequestPreparationService.prepareRequest(
-                    httpSender, requestServiceId, URI.create(assetAccess.endpoint()), ctx, opMonitoringData, null);
-        } else {
-            addresses = clientRequestPreparationService.prepareRequest(
-                    httpSender, requestServiceId, restRequest.getTargetSecurityServer(), ctx, opMonitoringData, null);
-        }
+    private URI[] prepareDspSender(HttpSender httpSender, AssetAccessResponse access, ServiceId requestServiceId,
+                                   OpMonitoringData opMonitoringData, String xRequestId, ProxyRequestContext ctx) {
+        var addresses = clientRequestPreparationService.prepareRequest(
+                httpSender, requestServiceId, URI.create(access.endpoint()), ctx, opMonitoringData, null);
+        addRequestHeaders(httpSender, xRequestId, access.authorization());
+        return addresses;
+    }
+
+    private static void addRequestHeaders(HttpSender httpSender, String xRequestId, @Nullable String agreementToken) {
         httpSender.addHeader(HEADER_MESSAGE_TYPE, VALUE_MESSAGE_TYPE_REST);
         httpSender.addHeader(HEADER_REQUEST_ID, xRequestId);
+        if (StringUtils.isNotBlank(agreementToken)) {
+            httpSender.addHeader(HEADER_AGREEMENT_TOKEN, agreementToken);
+        }
+    }
 
+    private void post(HttpSender httpSender, URI[] addresses, SigningProxyMessageEntity entity,
+                      OpMonitoringData opMonitoringData) throws Exception {
         try {
             httpSender.doPost(getServiceAddress(addresses), entity);
         } catch (Exception e) {
@@ -297,10 +356,15 @@ public class ClientRestMessageProcessor {
     }
 
     /**
-     * Outcome of a successful send: the (still open) sender to parse the response from and the
-     * digest of the streamed request body.
+     * Outcome of a successful send: the (still open) sender to parse the response from, the
+     * digest of the streamed request body and whether an agreement token was sent with it.
      */
-    private record SentRequest(HttpSender httpSender, byte[] restBodyDigest) {
+    @Getter
+    @RequiredArgsConstructor
+    static final class SentRequest {
+        private final HttpSender httpSender;
+        private final byte[] restBodyDigest;
+        private final boolean tokenPresented;
     }
 
     private ProxyMessage parseResponse(HttpSender httpSender, OpMonitoringData opMonitoringData,

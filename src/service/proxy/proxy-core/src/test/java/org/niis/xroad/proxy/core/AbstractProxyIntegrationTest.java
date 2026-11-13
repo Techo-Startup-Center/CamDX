@@ -42,17 +42,19 @@ import org.junit.jupiter.api.extension.BeforeEachCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.niis.xroad.common.properties.CommonProperties;
+import org.niis.xroad.common.properties.config.XRoadConfig;
 import org.niis.xroad.common.properties.config.impl.XRoadConfigBuilder;
 import org.niis.xroad.common.properties.config.impl.XRoadConfigCommonProperties;
 import org.niis.xroad.common.properties.config.keys.CommonConfigKeys;
 import org.niis.xroad.common.properties.config.keys.ProxyConfigKeys;
 import org.niis.xroad.common.rpc.NoopVaultKeyProvider;
-import org.niis.xroad.common.vault.NoopVaultClient;
+import org.niis.xroad.common.rpc.client.RpcChannelFactory;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.globalconf.impl.cert.CertHelper;
 import org.niis.xroad.globalconf.impl.ocsp.OcspVerifierFactory;
 import org.niis.xroad.keyconf.KeyConfProvider;
 import org.niis.xroad.monitor.rpc.MonitorRpcClient;
+import org.niis.xroad.opmonitor.client.OpMonitorChannelTrustResolver;
 import org.niis.xroad.proxy.core.addon.opmonitoring.NoOpMonitoringBuffer;
 import org.niis.xroad.proxy.core.antidos.AntiDosConfiguration;
 import org.niis.xroad.proxy.core.clientproxy.AuthTrustVerifier;
@@ -60,17 +62,23 @@ import org.niis.xroad.proxy.core.clientproxy.ClientProxy;
 import org.niis.xroad.proxy.core.clientproxy.ClientRequestPreparationService;
 import org.niis.xroad.proxy.core.clientproxy.ClientRestMessageHandler;
 import org.niis.xroad.proxy.core.clientproxy.ClientRestMessageProcessor;
+import org.niis.xroad.proxy.core.clientproxy.DspFailover;
+import org.niis.xroad.proxy.core.clientproxy.DspSendFailureHandler;
 import org.niis.xroad.proxy.core.clientproxy.ReloadingSSLSocketFactory;
 import org.niis.xroad.proxy.core.clientproxy.UnusableAddressTracker;
 import org.niis.xroad.proxy.core.conf.SigningCtxProvider;
+import org.niis.xroad.proxy.core.configuration.AgreementTokenKeyMaterial;
+import org.niis.xroad.proxy.core.configuration.ProxyAgreementTokenProperties;
 import org.niis.xroad.proxy.core.configuration.ProxyClientConfig;
 import org.niis.xroad.proxy.core.configuration.ProxyProperties;
 import org.niis.xroad.proxy.core.dsp.DspRequestProcessor;
 import org.niis.xroad.proxy.core.messagelog.MessageLog;
 import org.niis.xroad.proxy.core.messagelog.NullLogManager;
+import org.niis.xroad.proxy.core.serverproxy.AgreementTokenAccessCheck;
 import org.niis.xroad.proxy.core.serverproxy.ClientProxyVersionVerifier;
 import org.niis.xroad.proxy.core.serverproxy.HttpClientCreator;
 import org.niis.xroad.proxy.core.serverproxy.IdleConnectionMonitorThread;
+import org.niis.xroad.proxy.core.serverproxy.ServerConfGroupAccess;
 import org.niis.xroad.proxy.core.serverproxy.ServerProxy;
 import org.niis.xroad.proxy.core.serverproxy.ServerProxyHandler;
 import org.niis.xroad.proxy.core.serverproxy.ServerRestMessageProcessor;
@@ -79,6 +87,7 @@ import org.niis.xroad.proxy.core.serverproxy.ServiceHandlerLoader;
 import org.niis.xroad.proxy.core.service.ClientVerificationService;
 import org.niis.xroad.proxy.core.service.DefaultServiceAddressResolver;
 import org.niis.xroad.proxy.core.service.HttpSenderProvider;
+import org.niis.xroad.proxy.core.service.LegacyCallRefusalPolicy;
 import org.niis.xroad.proxy.core.service.MessageSigningService;
 import org.niis.xroad.proxy.core.service.ProviderSecurityServerResolver;
 import org.niis.xroad.proxy.core.service.ServiceAddressResolver;
@@ -89,6 +98,8 @@ import org.niis.xroad.proxy.core.util.CertHashBasedOcspResponderClient;
 import org.niis.xroad.proxy.core.util.ClientAuthenticationService;
 import org.niis.xroad.proxy.core.util.IdentifierValidationService;
 import org.niis.xroad.proxy.core.util.OpMonitoringDataHelper;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
+import org.niis.xroad.serverconf.impl.ownserver.ServerConfProviderIdentitySource;
 import org.niis.xroad.test.globalconf.TestGlobalConf;
 import org.niis.xroad.test.globalconf.TestGlobalConfWrapper;
 import org.niis.xroad.test.keyconf.TestKeyConf;
@@ -111,6 +122,7 @@ import java.util.Set;
 
 import static java.lang.String.valueOf;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 
 /**
  * Base class for proxy integration tests.
@@ -149,6 +161,12 @@ public abstract class AbstractProxyIntegrationTest {
     protected static final TestServerConfWrapper TEST_SERVER_CONF = new TestServerConfWrapper(new TestServiceServerConf());
     protected static final TestGlobalConfWrapper TEST_GLOBAL_CONF = new TestGlobalConfWrapper(new TestGlobalConf());
     protected static final OcspVerifierFactory OCSP_VERIFIER_FACTORY = new OcspVerifierFactory();
+    /** The consumer-side DSP dependency of the client proxy; reset after each test. */
+    protected static final DspRequestProcessor CONSUMER_SIDE_DSP_PROCESSOR = mock(DspRequestProcessor.class);
+    /** The key material of the server-side agreement token check; reset after each test. */
+    protected static final AgreementTokenKeyMaterial AGREEMENT_TOKEN_KEY_MATERIAL = mock(AgreementTokenKeyMaterial.class);
+    /** The agreement token properties of the server-side agreement token check; reset after each test. */
+    protected static final ProxyAgreementTokenProperties AGREEMENT_TOKEN_PROPERTIES = mock(ProxyAgreementTokenProperties.class);
     protected static TestKeyConf clientKeyConf;
     protected static TestKeyConf serverKeyConf;
     protected static LoggingAuthTrustVerifier clientAuthTrustVerifier;
@@ -226,7 +244,8 @@ public abstract class AbstractProxyIntegrationTest {
         var unusableAddressTracker = new UnusableAddressTracker(proxyProperties);
         var httpClient = new ProxyClientConfig.ProxyHttpClientInitializer()
                 .proxyHttpClient(proxyProperties, clientAuthTrustVerifier, reloadingSSLSocketFactory, unusableAddressTracker);
-        var opMonitoringDataHelperClient = new OpMonitoringDataHelper(TEST_GLOBAL_CONF, TEST_SERVER_CONF);
+        var opMonitoringDataHelperClient = new OpMonitoringDataHelper(TEST_GLOBAL_CONF, TEST_SERVER_CONF,
+                new OwnSecurityServerResolver(new ServerConfProviderIdentitySource(TEST_SERVER_CONF), TEST_GLOBAL_CONF));
         var httpSenderProviderClient = new HttpSenderProvider(httpClient, httpClient, proxyProperties);
         var messageSigningServiceClient = new MessageSigningService(clientKeyConf, signingCtxProvider);
         var serviceAddressResolverClient = serviceAddressResolverOverride != null
@@ -246,7 +265,10 @@ public abstract class AbstractProxyIntegrationTest {
                 clientVerificationServiceClient, opMonitoringDataHelperClient,
                 TEST_GLOBAL_CONF, proxyProperties, commonProperties,
                 OCSP_VERIFIER_FACTORY, clientRequestPreparationServiceClient,
-                mock(DspRequestProcessor.class), identifierValidationService);
+                CONSUMER_SIDE_DSP_PROCESSOR, identifierValidationService,
+                new LegacyCallRefusalPolicy(proxyProperties, TEST_GLOBAL_CONF),
+                new DspFailover(CONSUMER_SIDE_DSP_PROCESSOR, httpSenderProviderClient,
+                        new DspSendFailureHandler(CONSUMER_SIDE_DSP_PROCESSOR)));
 
         ClientRestMessageHandler restMessageHandler = new ClientRestMessageHandler(clientRestMessageProcessor,
                 proxyProperties, TEST_GLOBAL_CONF, clientKeyConf, new NoOpMonitoringBuffer(),
@@ -265,7 +287,8 @@ public abstract class AbstractProxyIntegrationTest {
                 proxyProperties.clientProxy().clientTlsProtocols(), proxyProperties.clientProxy().clientTlsCiphers());
         ClientAuthenticationService clientAuthenticationService = new ClientAuthenticationService(
                 TEST_SERVER_CONF, new NoopVaultKeyProvider(), proxyProperties);
-        var opMonitoringDataHelperServer = new OpMonitoringDataHelper(TEST_GLOBAL_CONF, TEST_SERVER_CONF);
+        var opMonitoringDataHelperServer = new OpMonitoringDataHelper(TEST_GLOBAL_CONF, TEST_SERVER_CONF,
+                new OwnSecurityServerResolver(new ServerConfProviderIdentitySource(TEST_SERVER_CONF), TEST_GLOBAL_CONF));
         var httpSenderProviderServer = new HttpSenderProvider(httpClientCreator.getHttpClient(), httpClientCreator.getHttpClient(),
                 proxyProperties);
         var messageSigningServiceServer = new MessageSigningService(serverKeyConf, signingCtxProvider);
@@ -274,21 +297,27 @@ public abstract class AbstractProxyIntegrationTest {
 
         ServiceHandlerLoader serviceHandlerLoader = new ServiceHandlerLoader(
                 TEST_SERVER_CONF, TEST_GLOBAL_CONF, proxyProperties, commonProperties,
-                new NoopVaultClient(), mock(MonitorRpcClient.class),
+                mock(RpcChannelFactory.class), mock(XRoadConfig.class), mock(OpMonitorChannelTrustResolver.class),
+                mock(MonitorRpcClient.class),
                 httpSenderProviderServer, httpClientCreator.getHttpClient());
         serviceHandlerLoader.init();
 
         var identifierValidationService = new IdentifierValidationService(proxyProperties);
 
+        var legacyCallRefusalPolicy = new LegacyCallRefusalPolicy(proxyProperties, TEST_GLOBAL_CONF);
+
+        var agreementTokenAccessCheck = new AgreementTokenAccessCheck(AGREEMENT_TOKEN_KEY_MATERIAL, AGREEMENT_TOKEN_PROPERTIES,
+                legacyCallRefusalPolicy, new ServerConfGroupAccess(TEST_SERVER_CONF, TEST_GLOBAL_CONF));
+
         var serverRestMessageProcessor = new ServerRestMessageProcessor(
                 messageSigningServiceServer, clientVerificationServiceServer, opMonitoringDataHelperServer,
                 TEST_GLOBAL_CONF, TEST_SERVER_CONF, proxyProperties, commonProperties,
-                OCSP_VERIFIER_FACTORY, serviceHandlerLoader, identifierValidationService);
+                OCSP_VERIFIER_FACTORY, serviceHandlerLoader, identifierValidationService, agreementTokenAccessCheck);
 
         var serverSoapMessageProcessor = new ServerSoapMessageProcessor(
                 messageSigningServiceServer, clientVerificationServiceServer, opMonitoringDataHelperServer,
                 TEST_GLOBAL_CONF, TEST_SERVER_CONF, proxyProperties, commonProperties,
-                OCSP_VERIFIER_FACTORY, serviceHandlerLoader, identifierValidationService);
+                OCSP_VERIFIER_FACTORY, serviceHandlerLoader, identifierValidationService, agreementTokenAccessCheck);
 
         ServerProxyHandler serverProxyHandler = new ServerProxyHandler(serverRestMessageProcessor,
                 serverSoapMessageProcessor, proxyProperties.server(),
@@ -313,6 +342,7 @@ public abstract class AbstractProxyIntegrationTest {
     public void after() {
         TEST_SERVER_CONF.setServerConfProvider(new TestServiceServerConf());
         TEST_GLOBAL_CONF.setGlobalConfProvider(new TestGlobalConf());
+        reset(CONSUMER_SIDE_DSP_PROCESSOR, AGREEMENT_TOKEN_KEY_MATERIAL, AGREEMENT_TOKEN_PROPERTIES);
         clientAuthTrustVerifier.clearVerifiedCertificates();
     }
 

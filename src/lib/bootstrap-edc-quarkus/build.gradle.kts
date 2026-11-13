@@ -1,5 +1,6 @@
 plugins {
   id("xroad.java-conventions")
+  id("xroad.test-fixtures-conventions")
   alias(libs.plugins.jandex)
 }
 
@@ -9,9 +10,14 @@ dependencies {
   implementation(project(":lib:edc-tls-trust"))
 
   implementation(libs.edc.boot)
-  implementation(libs.edc.lib.http)
+  implementation(libs.edc.lib.core)
   implementation(libs.edc.spi.core)
   implementation(libs.bundles.quarkus.core)
+  implementation(libs.quarkus.health)
+
+  testFixturesImplementation(libs.edc.boot)
+  testFixturesApi(libs.edc.spi.core)
+  testFixturesImplementation(libs.smallrye.config.yaml)
 
   testImplementation(project(":common:common-test"))
   testImplementation(libs.bouncyCastle.bcpkix)

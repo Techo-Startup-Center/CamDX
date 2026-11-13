@@ -32,8 +32,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.niis.xroad.restapi.config.audit.AuditDataHelper;
-import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerConfigurablePropertyDto;
-import org.niis.xroad.securityserver.restapi.repository.ConfigurationPropertyRepository;
+import org.niis.xroad.restapi.entity.ConfigurationPropertyEntity;
+import org.niis.xroad.restapi.openapi.model.ConfigurablePropertyDto;
+import org.niis.xroad.restapi.repository.ConfigurationPropertyRepository;
+import org.niis.xroad.restapi.service.ConfigurablePropertiesService;
 
 import java.util.Arrays;
 import java.util.List;
@@ -129,14 +131,14 @@ class ConfigurablePropertiesCatalogueTest {
 
     @BeforeEach
     void setup() {
-        service = new ConfigurablePropertiesService(repository, auditDataHelper);
+        service = new ConfigurablePropertiesService(auditDataHelper, repository, new SsConfigurablePropertySource());
         when(repository.findAll()).thenReturn(List.of());
     }
 
     @Test
     void catalogueIncludesCrossModuleKeysWithExpectedScopeAndDefault() {
         var actual = service.getConfigurationProperties().stream()
-                .collect(Collectors.toMap(SecurityServerConfigurablePropertyDto::getPropertyName, dto -> dto,
+                .collect(Collectors.toMap(ConfigurablePropertyDto::getPropertyName, dto -> dto,
                         (first, second) -> first));
 
         assertThat(expectedCrossModuleProperties())
@@ -151,7 +153,7 @@ class ConfigurablePropertiesCatalogueTest {
     @Test
     void catalogueScopesAreLimitedToSecurityServerProcessNames() {
         var scopes = service.getConfigurationProperties().stream()
-                .map(SecurityServerConfigurablePropertyDto::getScope)
+                .map(ConfigurablePropertyDto::getScope)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
@@ -161,7 +163,7 @@ class ConfigurablePropertiesCatalogueTest {
     @Test
     void catalogueOffersAcmeWaitKeysUnderTheNamesTheCodeReads() {
         var keys = service.getConfigurationProperties().stream()
-                .map(SecurityServerConfigurablePropertyDto::getPropertyName)
+                .map(ConfigurablePropertyDto::getPropertyName)
                 .collect(Collectors.toSet());
 
         assertThat(keys)
@@ -174,9 +176,22 @@ class ConfigurablePropertiesCatalogueTest {
     }
 
     @Test
+    void catalogueOffersLegacyProtocolDisabledInProxyScopeDefaultingToFalse() {
+        var properties = service.getConfigurationProperties();
+
+        assertThat(properties)
+                .filteredOn(dto -> "xroad.proxy.legacy-protocol-disabled".equals(dto.getPropertyName()))
+                .singleElement()
+                .satisfies(dto -> {
+                    assertThat(dto.getScope()).isEqualTo("proxy");
+                    assertThat(dto.getDefaultValue()).isEqualTo("false");
+                });
+    }
+
+    @Test
     void catalogueOmitsDocumentValuedKeys() {
         var keys = service.getConfigurationProperties().stream()
-                .map(SecurityServerConfigurablePropertyDto::getPropertyName)
+                .map(ConfigurablePropertyDto::getPropertyName)
                 .collect(Collectors.toSet());
 
         assertThat(keys)
@@ -184,6 +199,37 @@ class ConfigurablePropertiesCatalogueTest {
                 .doesNotContain(
                         "xroad.signer.modules",
                         "xroad.message-log-encryption.archive.grouping-keys");
+    }
+
+    @Test
+    void storedOpMonitorRpcPortIsListedInCatalogue() {
+        when(repository.findAll()).thenReturn(List.of(row()));
+
+        var properties = service.getConfigurationProperties();
+
+        assertThat(properties).filteredOn(dto -> "xroad.op-monitor.rpc.port".equals(dto.getPropertyName()))
+                .singleElement()
+                .satisfies(dto -> assertThat(dto.getCurrentValue()).isEqualTo("2091"));
+    }
+
+    @Test
+    void allowedClientNamesIsListedUnderOpMonitorScopeWithEmptyDefault() {
+        var properties = service.getConfigurationProperties();
+
+        assertThat(properties)
+                .filteredOn(dto -> "xroad.op-monitor.rpc.allowed-client-names".equals(dto.getPropertyName()))
+                .singleElement()
+                .satisfies(dto -> {
+                    assertThat(dto.getScope()).isEqualTo("op-monitor-daemon");
+                    assertThat(dto.getDefaultValue()).isEmpty();
+                });
+    }
+
+    private static ConfigurationPropertyEntity row() {
+        var entity = new ConfigurationPropertyEntity();
+        entity.setPropertyKey("xroad.op-monitor.rpc.port");
+        entity.setPropertyValue("2091");
+        return entity;
     }
 
     private static Map<String, ExpectedProperty> expectedCrossModuleProperties() {

@@ -1,4 +1,7 @@
 quarkus:
+  vault:
+    health:
+      enabled: false
   application:
     name: ds-issuer-service
   config:
@@ -36,7 +39,9 @@ xroad:
     boot:
       # jetty-core is also excluded from the runtime classpath entirely (see
       # xroad.edc-owned-jetty-conventions); this setting is defense in depth.
-      excluded-service-extensions: org.eclipse.edc.web.jetty.JettyExtension
+      excluded-service-extensions: >-
+        org.eclipse.edc.web.jetty.JettyExtension,
+        org.eclipse.edc.iam.decentralizedclaims.sts.StsClientTokenGeneratorExtension
 
 web:
   http:
@@ -45,21 +50,34 @@ web:
     did:
       port: 6183
       path: /
-    sts:
-      port: 6184
-      path: /api/sts
+      host: ${xroad.dataspace.issuer.listen-address:}
     issuance:
       port: 6185
       path: /api/issuance
+      host: ${xroad.dataspace.issuer.listen-address:}
     statuslist:
       port: 6187
       path: /statuslist
+      host: ${xroad.dataspace.issuer.listen-address:}
 
 edc:
   hostname: ${HOSTNAME}
   issuance:
     anonymous:
       allowed: true # Bypass mandatory creation of a holder as X-Road credential issuance trust model doesn't require it
+  issuer:
+    dcp:
+      profile: vc20-bssl/jwt
+    issuance:
+      # A full batch must finish shorter than the lease: batch-size x call-timeout < lease-duration.
+      state-machine:
+        lease-duration-millis: 300000
+        batch-size: 10
+      send:
+        call-timeout:
+          ms: 15000
+        connect-timeout:
+          ms: 5000
   vault:
     hashicorp:
       url: "${XROAD_SECRET_STORE_SCHEME:https}://${XROAD_SECRET_STORE_HOST:127.0.0.1}:${XROAD_SECRET_STORE_PORT:8200}"
@@ -69,8 +87,7 @@ edc:
       folder: ds
       health:
         check:
-          standby:
-            ok: true
+          enabled: false
       api:
         secret:
           path: /v1/xrd-ds-secret

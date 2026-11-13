@@ -47,11 +47,13 @@ import org.niis.xroad.cs.admin.api.domain.ClientRegistrationRequest;
 import org.niis.xroad.cs.admin.api.domain.MaintenanceModeDisableRequest;
 import org.niis.xroad.cs.admin.api.domain.MaintenanceModeEnableRequest;
 import org.niis.xroad.cs.admin.api.domain.ManagementRequestStatus;
+import org.niis.xroad.cs.admin.api.domain.MemberDidRegistrationRequest;
 import org.niis.xroad.cs.admin.api.domain.MemberId;
 import org.niis.xroad.cs.admin.api.domain.Origin;
 import org.niis.xroad.cs.admin.api.domain.Request;
 import org.niis.xroad.cs.admin.api.domain.RequestWithProcessing;
 import org.niis.xroad.cs.admin.api.domain.SecurityServerId;
+import org.niis.xroad.cs.admin.api.domain.SystemDidRegistrationRequest;
 import org.niis.xroad.cs.admin.rest.api.converter.AbstractDtoConverterTest;
 import org.niis.xroad.cs.admin.rest.api.converter.model.ManagementRequestDtoTypeConverter;
 import org.niis.xroad.cs.admin.rest.api.converter.model.ManagementRequestDtoTypeConverterImpl;
@@ -68,9 +70,15 @@ import org.niis.xroad.cs.openapi.model.ManagementRequestDto;
 import org.niis.xroad.cs.openapi.model.ManagementRequestOriginDto;
 import org.niis.xroad.cs.openapi.model.ManagementRequestStatusDto;
 import org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto;
+import org.niis.xroad.cs.openapi.model.MemberDidRegistrationEntryDto;
+import org.niis.xroad.cs.openapi.model.MemberDidRegistrationRequestDto;
+import org.niis.xroad.cs.openapi.model.MemberDidRegistrationStatusDto;
+import org.niis.xroad.cs.openapi.model.SystemDidRegistrationRequestDto;
 import org.niis.xroad.restapi.converter.ClientIdConverter;
 import org.niis.xroad.restapi.converter.SecurityServerIdConverter;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -86,9 +94,14 @@ import static org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto.CLIENT_DE
 import static org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto.CLIENT_REGISTRATION_REQUEST;
 import static org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto.MAINTENANCE_MODE_DISABLE_REQUEST;
 import static org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto.MAINTENANCE_MODE_ENABLE_REQUEST;
+import static org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto.MEMBER_DID_REGISTRATION_REQUEST;
+import static org.niis.xroad.cs.openapi.model.ManagementRequestTypeDto.SYSTEM_DID_REGISTRATION_REQUEST;
 
 @ExtendWith(MockitoExtension.class)
 class ManagementRequestDtoConverterTest extends AbstractDtoConverterTest implements WithInOrder {
+    private static final String SYSTEM_DID = "did:web:ss.example.org:v1:system";
+    private static final String DSP_BASE_URL = "https://ss.example.org:7183/dsp";
+    private static final String MEMBER_DID = "did:web:ss.example.org:v1:member:FI:GOV:M1";
     private final byte[] authCertBytes = "authCertBytes".getBytes();
     private final Origin origin = Origin.SECURITY_SERVER;
     private final ManagementRequestOriginDto originDto = ManagementRequestOriginDto.SECURITY_SERVER;
@@ -228,6 +241,62 @@ class ManagementRequestDtoConverterTest extends AbstractDtoConverterTest impleme
                 inOrder.verify(request).getServerAddress();
                 verifyCommon(inOrder, request);
             });
+        }
+
+        @Test
+        @DisplayName("should successfully perform SystemDidRegistration conversion")
+        void testSystemDidRegistrationRequestConversion() {
+            SystemDidRegistrationRequest request = mock(SystemDidRegistrationRequest.class);
+            doReturn(SYSTEM_DID).when(request).getSystemDid();
+            doReturn(DSP_BASE_URL).when(request).getDspBaseUrl();
+            doReturn(authCertBytes).when(request).getCertificate();
+            prepareCommonStubs(request, ManagementRequestType.SYSTEM_DID_REGISTRATION_REQUEST);
+
+            ManagementRequestDto converted = converter.toDto(request);
+
+            assertCommon(converted, SYSTEM_DID_REGISTRATION_REQUEST);
+            SystemDidRegistrationRequestDto casted =
+                    assertInstanceOf(SystemDidRegistrationRequestDto.class, converted);
+            assertEquals(SYSTEM_DID, casted.getSystemDid());
+            assertEquals(DSP_BASE_URL, casted.getDspBaseUrl());
+            assertArrayEquals(authCertBytes, casted.getCertificate());
+        }
+
+        @Test
+        @DisplayName("should successfully perform MemberDidRegistration conversion")
+        void testMemberDidRegistrationRequestConversion() {
+            MemberDidRegistrationRequest request = mock(MemberDidRegistrationRequest.class);
+            doReturn(List.of(new MemberDidRegistrationRequest.Entry(clientIdConf, MEMBER_DID))).when(request).getEntries();
+            doReturn(List.of(new MemberDidRegistrationRequest.Result(
+                    clientIdConf, MemberDidRegistrationRequest.Status.FIXABLE_CONFLICT, "VALUE_DIFFERS"))).when(request).getResults();
+            doReturn(encodedClientId).when(clientIdConverter).convertId(clientIdConf);
+            prepareCommonStubs(request, ManagementRequestType.MEMBER_DID_REGISTRATION_REQUEST);
+
+            ManagementRequestDto converted = converter.toDto(request);
+
+            assertCommon(converted, MEMBER_DID_REGISTRATION_REQUEST);
+            MemberDidRegistrationRequestDto casted = assertInstanceOf(MemberDidRegistrationRequestDto.class, converted);
+            assertEquals(1, casted.getEntries().size());
+            assertEquals(encodedClientId, casted.getEntries().getFirst().getMemberId());
+            assertEquals(MEMBER_DID, casted.getEntries().getFirst().getDid());
+            assertEquals(1, casted.getResults().size());
+            assertEquals(encodedClientId, casted.getResults().getFirst().getMemberId());
+            assertEquals(MemberDidRegistrationStatusDto.FIXABLE_CONFLICT, casted.getResults().getFirst().getStatus());
+            assertEquals("VALUE_DIFFERS", casted.getResults().getFirst().getReason());
+        }
+
+        @Test
+        @DisplayName("should carry the request id of a MemberDidRegistration request")
+        void testMemberDidRegistrationRequestCarriesTheId() {
+            MemberDidRegistrationRequest request = mock(MemberDidRegistrationRequest.class);
+            doReturn(List.of()).when(request).getEntries();
+            doReturn(List.of()).when(request).getResults();
+            prepareCommonStubs(request, ManagementRequestType.MEMBER_DID_REGISTRATION_REQUEST);
+
+            ManagementRequestDto converted = converter.toDto(request);
+
+            assertEquals(ID, converted.getId());
+            assertEquals(originDto, converted.getOrigin());
         }
 
         @Test
@@ -417,6 +486,43 @@ class ManagementRequestDtoConverterTest extends AbstractDtoConverterTest impleme
                 verifyCommon(inOrder, requestDto);
                 inOrder.verify(requestDto).getServerAddress();
             });
+        }
+
+        @Test
+        @DisplayName("should successfully perform SystemDidRegistrationRequestDto conversion")
+        void shouldSuccessfullyPerformSystemDidRegistrationRequestDtoConversion() {
+            SystemDidRegistrationRequestDto requestDto = mock(SystemDidRegistrationRequestDto.class);
+            prepareCommonStubs(requestDto);
+            doReturn(SYSTEM_DID).when(requestDto).getSystemDid();
+            doReturn(DSP_BASE_URL).when(requestDto).getDspBaseUrl();
+            doReturn(authCertBytes).when(requestDto).getCertificate();
+
+            Request converted = converter.fromDto(requestDto);
+
+            assertCommon(converted);
+            SystemDidRegistrationRequest request =
+                    assertInstanceOf(SystemDidRegistrationRequest.class, converted);
+            assertEquals(SYSTEM_DID, request.getSystemDid());
+            assertEquals(DSP_BASE_URL, request.getDspBaseUrl());
+            assertArrayEquals(authCertBytes, request.getCertificate());
+        }
+
+        @Test
+        @DisplayName("should successfully perform MemberDidRegistrationRequestDto conversion")
+        void shouldSuccessfullyPerformMemberDidRegistrationRequestDtoConversion() {
+            MemberDidRegistrationRequestDto requestDto = mock(MemberDidRegistrationRequestDto.class);
+            prepareCommonStubs(requestDto);
+            doReturn(List.of(new MemberDidRegistrationEntryDto().memberId(encodedClientId).did(MEMBER_DID)))
+                    .when(requestDto).getEntries();
+            doReturn(clientIdConf).when(clientIdConverter).convertId(encodedClientId);
+
+            Request converted = converter.fromDto(requestDto);
+
+            assertCommon(converted);
+            MemberDidRegistrationRequest request = assertInstanceOf(MemberDidRegistrationRequest.class, converted);
+            assertEquals(1, request.getEntries().size());
+            assertEquals(clientIdConf, request.getEntries().getFirst().memberId());
+            assertEquals(MEMBER_DID, request.getEntries().getFirst().did());
         }
 
         @Test

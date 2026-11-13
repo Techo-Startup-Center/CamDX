@@ -30,11 +30,15 @@ import org.eclipse.edc.participantcontext.spi.config.service.ParticipantContextC
 import org.eclipse.edc.participantcontext.spi.service.ParticipantContextService;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.sql.QueryExecutor;
+import org.eclipse.edc.transaction.datasource.spi.DataSourceRegistry;
+import org.eclipse.edc.transaction.spi.TransactionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.edc.extension.catalog.CatalogCacheInvalidator;
 import org.niis.xroad.edc.extension.rpc.GrpcServiceRegistry;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -48,7 +52,15 @@ class ControlPlaneProvisioningExtensionTest {
     @Mock
     private ParticipantContextConfigService participantContextConfigService;
     @Mock
+    private CatalogCacheInvalidator catalogCacheInvalidator;
+    @Mock
     private GrpcServiceRegistry grpcServiceRegistry;
+    @Mock
+    private DataSourceRegistry dataSourceRegistry;
+    @Mock
+    private TransactionContext transactionContext;
+    @Mock
+    private QueryExecutor queryExecutor;
     @Mock
     private Monitor monitor;
     @Mock
@@ -61,7 +73,12 @@ class ControlPlaneProvisioningExtensionTest {
         extension = new ControlPlaneProvisioningExtension();
         setField(extension, "participantContextService", participantContextService);
         setField(extension, "participantContextConfigService", participantContextConfigService);
+        setField(extension, "catalogCacheInvalidator", catalogCacheInvalidator);
         setField(extension, "grpcServiceRegistry", grpcServiceRegistry);
+        setField(extension, "participantContextConfigDataSourceName", DataSourceRegistry.DEFAULT_DATASOURCE);
+        setField(extension, "dataSourceRegistry", dataSourceRegistry);
+        setField(extension, "transactionContext", transactionContext);
+        setField(extension, "queryExecutor", queryExecutor);
         setField(extension, "monitor", monitor);
     }
 

@@ -36,6 +36,7 @@ import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import org.niis.xroad.common.identifiers.jpa.entity.ClientIdEntity;
 import org.niis.xroad.common.identifiers.jpa.entity.XRoadIdEntity_;
+import org.niis.xroad.cs.admin.core.entity.MemberRow;
 import org.niis.xroad.cs.admin.core.entity.SecurityServerClientEntity;
 import org.niis.xroad.cs.admin.core.entity.SecurityServerClientEntity_;
 import org.niis.xroad.cs.admin.core.entity.SecurityServerEntity;
@@ -51,8 +52,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -65,6 +68,33 @@ public interface JpaSecurityServerRepository extends
     }
 
     Optional<SecurityServerEntity> findByOwnerIdAndServerCode(Integer ownerId, String serverCode);
+
+    @Override
+    @Query(value = "SELECT id FROM " + SecurityServerEntity.TABLE_NAME + " WHERE id = :id FOR UPDATE", nativeQuery = true)
+    Optional<Integer> lockForUpdateById(Integer id);
+
+    @Query(value = "SELECT s.id FROM " + SecurityServerEntity.TABLE_NAME + " s "
+            + "JOIN " + SecurityServerClientEntity.TABLE_NAME + " o ON o.id = s.owner_id "
+            + "JOIN identifier i ON i.id = o.server_client_id "
+            + "WHERE i.object_type = 'MEMBER' AND i.xroad_instance = :xRoadInstance AND i.member_class = :memberClass "
+            + "AND i.member_code = :memberCode AND s.server_code = :serverCode FOR UPDATE OF s", nativeQuery = true)
+    Optional<Integer> lockForUpdateByOwnerAndServerCode(String xRoadInstance, String memberClass, String memberCode,
+                                                        String serverCode);
+
+    @Override
+    default Optional<Integer> lockForUpdateBy(SecurityServerId serverId) {
+        return lockForUpdateByOwnerAndServerCode(serverId.getXRoadInstance(), serverId.getMemberClass(),
+                serverId.getMemberCode(), serverId.getServerCode());
+    }
+
+    @Override
+    @Query("select distinct new org.niis.xroad.cs.admin.core.entity.MemberRow("
+            + "m.id, mi.xRoadInstance, mi.memberClass, mi.memberCode) "
+            + "from ServerClientEntity sc join sc.securityServerClient c join c.identifier ci, "
+            + "XRoadMemberEntity m join m.identifier mi "
+            + "where sc.securityServer.id = :securityServerId "
+            + "and mi.xRoadInstance = ci.xRoadInstance and mi.memberClass = ci.memberClass and mi.memberCode = ci.memberCode")
+    List<MemberRow> findServedMembers(Integer securityServerId);
 
     default Optional<SecurityServerEntity> findBy(SecurityServerId serverId, ClientId clientId) {
         return findOne(serverIdSpec(serverId).and(clientIdSpec(clientId)));
@@ -133,10 +163,13 @@ public interface JpaSecurityServerRepository extends
         final Join<SecurityServerEntity, XRoadMemberEntity> owner = root.join(SecurityServerEntity_.owner);
         final Join<XRoadMemberEntity, ClientIdEntity> identifier =
                 owner.join(SecurityServerClientEntity_.identifier);
+        // XRoadMemberEntity is a SINGLE_TABLE subtype of SecurityServerClientEntity; an explicit treat() is
+        // required to reach a subtype-only attribute such as "name" via this association.
+        final Join<SecurityServerEntity, XRoadMemberEntity> ownerAsMember = builder.treat(owner, XRoadMemberEntity.class);
 
         return builder.or(
                 CriteriaBuilderUtil.caseInsensitiveLike(builder, q, root.get(SecurityServerEntity_.serverCode)),
-                CriteriaBuilderUtil.caseInsensitiveLike(builder, q, owner.get(XRoadMemberEntity_.name)),
+                CriteriaBuilderUtil.caseInsensitiveLike(builder, q, ownerAsMember.get(XRoadMemberEntity_.NAME)),
                 CriteriaBuilderUtil.caseInsensitiveLike(builder, q, identifier.get(XRoadMemberEntity_.MEMBER_CLASS)),
                 CriteriaBuilderUtil.caseInsensitiveLike(builder, q, identifier.get(XRoadMemberEntity_.MEMBER_CODE))
         );

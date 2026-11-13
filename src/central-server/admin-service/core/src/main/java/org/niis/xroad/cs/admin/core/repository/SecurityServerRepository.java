@@ -29,10 +29,12 @@ package org.niis.xroad.cs.admin.core.repository;
 import ee.ria.xroad.common.identifier.ClientId;
 import ee.ria.xroad.common.identifier.SecurityServerId;
 
+import org.niis.xroad.cs.admin.core.entity.MemberRow;
 import org.niis.xroad.cs.admin.core.entity.SecurityServerEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface SecurityServerRepository extends
@@ -49,5 +51,36 @@ public interface SecurityServerRepository extends
     long count(SecurityServerId id);
 
     boolean existsBy(SecurityServerId serverId);
+
+    /**
+     * Locks the server row for the rest of the transaction, so writers and removers of the server's published
+     * values serialise. The query touches the server row alone: no entity is loaded and nothing is joined.
+     * Call it before reading or writing any row that belongs to the server; with several servers, in id order.
+     *
+     * @param id the id of the server row
+     * @return the id when the row exists, locked; empty when there is no such row
+     */
+    Optional<Integer> lockForUpdateById(Integer id);
+
+    /**
+     * Locks the server row like {@link #lockForUpdateById}, for the server named by its identifier. Call it
+     * before loading the server entity, so the loaded state is the state under the lock.
+     *
+     * @param serverId the identifier of the server
+     * @return the id of the row when it exists, locked; empty when there is no such row
+     */
+    Optional<Integer> lockForUpdateBy(SecurityServerId serverId);
+
+    /**
+     * Selects the row id and identifier of every member that has a client on the server, disabled clients
+     * included, in one SQL statement and without loading any entity. A member with several clients on the
+     * server appears once.
+     */
+    List<MemberRow> findServedMembers(Integer securityServerId);
+
+    /**
+     * Tells whether the SYSTEM DID is stored for a server other than the given one.
+     */
+    boolean existsBySystemDidAndIdNot(String systemDid, Integer id);
 
 }

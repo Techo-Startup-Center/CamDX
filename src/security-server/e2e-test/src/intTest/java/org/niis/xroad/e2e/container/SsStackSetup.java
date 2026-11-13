@@ -29,11 +29,8 @@ import com.github.dockerjava.api.model.ContainerNetwork;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.niis.xroad.test.apitest.core.config.ApiTestCoreProperties;
-import org.niis.xroad.test.apitest.core.container.BaseComposeSetup;
 import org.testcontainers.containers.ComposeContainer;
-import org.testcontainers.containers.output.Slf4jLogConsumer;
 
-import java.io.File;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,7 +48,7 @@ import static org.testcontainers.containers.wait.strategy.Wait.forListeningPort;
  */
 @Slf4j
 @SuppressWarnings("checkstyle:magicnumber")
-public class SsStackSetup extends BaseComposeSetup {
+public class SsStackSetup extends AbstractSsStack {
 
     public static final String UI = "ui";
     public static final String PROXY = "proxy";
@@ -64,8 +61,12 @@ public class SsStackSetup extends BaseComposeSetup {
     public static final String MONITOR = "monitor";
     public static final String OP_MONITOR_SERVICE = "op-monitor";
     public static final String DB_MESSAGELOG = "db-messagelog";
+    public static final String DB_SERVERCONF = "db-serverconf";
     public static final String DS_CONTROL_PLANE = "ds-control-plane";
     public static final String DS_IDENTITY_HUB = "ds-identity-hub";
+    /** Not a compose service of this stack: a service-key token for {@code E2eEnvironment}'s test CA env. */
+    public static final String CA = "ca";
+    public static final String DS_GATEWAY = "ds-gateway";
 
     private static final String COMPOSE_SS_FILE = "compose.main.yaml";
     private static final String COMPOSE_SS_E2E_FILE = "compose.e2e.yaml";
@@ -99,14 +100,10 @@ public class SsStackSetup extends BaseComposeSetup {
         var env = new ComposeContainer(composeProjectName(), files)
                 .withEnv("ENV_PREFIX", composeProjectName())
                 .withEnv("DSP_PARTICIPANT_ID", "xrd-" + name)
-                .withEnv("DSP_MGMT_CONTEXT", "true")
+                .withEnv("SS_ADDRESS", "xrd-" + name)
                 .withExposedService(PROXY, Port.PROXY, forListeningPort())
                 .withExposedService(PROXY, Port.PROXY_HEALTHCHECK, forListeningPort())
                 .withExposedService(UI, Port.UI, forListeningPort())
-                // No start-time waits on the ds-* services: they block at startup on the
-                // empty tls/ds-https vault slot until setup.hurl provisions the certificate
-                // through the admin API, which runs after all stacks are up; the hurl
-                // scenario's DSP readiness gates assert their convergence.
                 .withLogConsumer(DB_MESSAGELOG, createLogConsumer(name, DB_MESSAGELOG))
                 .withLogConsumer(UI, createLogConsumer(name, UI))
                 .withLogConsumer(PROXY, createLogConsumer(name, PROXY))
@@ -117,7 +114,8 @@ public class SsStackSetup extends BaseComposeSetup {
                 .withLogConsumer(MESSAGE_LOG_CLI, createLogConsumer(name, MESSAGE_LOG_CLI))
                 .withLogConsumer(MONITOR, createLogConsumer(name, MONITOR))
                 .withLogConsumer(DS_IDENTITY_HUB, createLogConsumer(name, DS_IDENTITY_HUB))
-                .withLogConsumer(DS_CONTROL_PLANE, createLogConsumer(name, DS_CONTROL_PLANE));
+                .withLogConsumer(DS_CONTROL_PLANE, createLogConsumer(name, DS_CONTROL_PLANE))
+                .withLogConsumer(DS_GATEWAY, createLogConsumer(name, DS_GATEWAY));
 
         if (features.contains(Feature.SOFTTOKEN_SIGNER)) {
             env.withLogConsumer(SOFTTOKEN_SIGNER, createLogConsumer(name, SOFTTOKEN_SIGNER));
@@ -141,9 +139,7 @@ public class SsStackSetup extends BaseComposeSetup {
         }
     }
 
-    /**
-     * Blocks until this stack's proxy reports readiness, including OCSP status for the auth key.
-     */
+    @Override
     public void awaitProxyReadiness() {
         var mapping = getContainerMapping(PROXY, Port.PROXY_HEALTHCHECK);
         var readinessUrl = "http://%s:%d/q/health/ready".formatted(mapping.host(), mapping.port());
@@ -174,11 +170,10 @@ public class SsStackSetup extends BaseComposeSetup {
                     .orElseThrow(() -> new IllegalStateException("Could not find external network '%s'".formatted(XROAD_NETWORK)))
                     .getId();
 
+            // The xrd-{name} registered-address alias lives on the ds-gateway service
+            // (compose.e2e.ds.yaml), which fans the address's ports out per backend.
             var aliases = new ArrayList<String>();
             aliases.add("%s-%s".formatted(name, serviceName));
-            if (PROXY.equals(serviceName)) {
-                aliases.add("xrd-" + name);
-            }
 
             dockerClient.connectToNetworkCmd()
                     .withContainerId(containerState.getContainerId())
@@ -195,14 +190,6 @@ public class SsStackSetup extends BaseComposeSetup {
                 "payload=@/gpg-keys/public-keys.asc");
     }
 
-    private Slf4jLogConsumer createLogConsumer(String envName, String containerName) {
-        return createLogConsumer("%s-%s".formatted(envName, containerName));
-    }
-
-    private File composeFile(String fileName) {
-        return new File(coreProperties.resourceDir() + fileName);
-    }
-
     /**
      * Exposed ports on an SS stack's containers.
      */
@@ -210,6 +197,8 @@ public class SsStackSetup extends BaseComposeSetup {
         public static final int UI = 4000;
         public static final int PROXY = 8080;
         public static final int PROXY_HEALTHCHECK = 5588;
+        /** Test CA's cert-issuance/serving port (the {@code ca-api} service port in the k8s fixtures chart). */
+        public static final int CA_API = 8888;
 
         private Port() {
         }
@@ -223,7 +212,9 @@ public class SsStackSetup extends BaseComposeSetup {
         BATCH_SIGNATURES("compose.ss-batch-signature-enabled.e2e.yaml"),
         SOFTTOKEN_SIGNER("compose.ss-softtoken-signer-enabled.e2e.yaml"),
         MESSAGE_LOG_ENCRYPTION("compose.ss-msglog-encryption.e2e.yaml"),
-        OP_MONITOR("compose.ss-opmonitor.e2e.yaml");
+        OP_MONITOR("compose.ss-opmonitor.e2e.yaml"),
+        LEGACY_PROTOCOL("compose.ss-acl-legacy.e2e.yaml"),
+        AGREEMENT_TOKEN_KEY_PRUNING("compose.ss-agreement-token-key-pruning.e2e.yaml");
 
         private final String composeFile;
 

@@ -38,6 +38,8 @@ import org.niis.xroad.common.exception.BadRequestException;
 import org.niis.xroad.common.exception.ConflictException;
 import org.niis.xroad.common.exception.InternalServerErrorException;
 import org.niis.xroad.common.properties.NodeProperties;
+import org.niis.xroad.restapi.openapi.model.ConfigurablePropertyDto;
+import org.niis.xroad.restapi.openapi.model.ConfigurablePropertyUpdateDto;
 import org.niis.xroad.securityserver.restapi.dto.AnchorFile;
 import org.niis.xroad.securityserver.restapi.dto.MaintenanceMode;
 import org.niis.xroad.securityserver.restapi.dto.VersionInfo;
@@ -49,8 +51,6 @@ import org.niis.xroad.securityserver.restapi.openapi.model.MaintenanceModeMessag
 import org.niis.xroad.securityserver.restapi.openapi.model.MaintenanceModeStatusDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.NodeTypeDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.NodeTypeResponseDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerConfigurablePropertyDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.SecurityServerPropertyUpdateDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.ServicePrioritizationStrategyDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.TimestampingServiceDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.VersionInfoDto;
@@ -77,6 +77,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.Optional;
 import java.util.Set;
 
 import static junit.framework.TestCase.fail;
@@ -167,8 +168,8 @@ public class SystemApiControllerTest extends AbstractApiControllerTestContext {
     @Test
     @WithMockUser(authorities = {"CHANGE_CONFIGURATION_PROPERTY"})
     public void getConfigurableProperties() {
-        when(configurablePropertiesService.getConfigurationProperties()).thenReturn(Set.of(new SecurityServerConfigurablePropertyDto()));
-        ResponseEntity<Set<SecurityServerConfigurablePropertyDto>> systemProperties = systemApiController.getConfigurableProperties();
+        when(configurablePropertiesService.getConfigurationProperties()).thenReturn(Set.of(new ConfigurablePropertyDto()));
+        ResponseEntity<Set<ConfigurablePropertyDto>> systemProperties = systemApiController.getConfigurableProperties();
 
         assertEquals(HttpStatus.OK, systemProperties.getStatusCode());
         assertEquals(1, systemProperties.getBody().size());
@@ -177,13 +178,13 @@ public class SystemApiControllerTest extends AbstractApiControllerTestContext {
     @Test(expected = AccessDeniedException.class)
     @WithMockUser(authorities = {"NON_CHANGE_SYSTEM_PROPERTY"})
     public void updateConfigurablePropertyWrongPermissions() {
-        systemApiController.updateConfigurableProperty(new SecurityServerPropertyUpdateDto());
+        systemApiController.updateConfigurableProperty(new ConfigurablePropertyUpdateDto());
     }
 
     @Test
     @WithMockUser(authorities = {"CHANGE_CONFIGURATION_PROPERTY"})
     public void updateConfigurableProperty() {
-        var dto = new SecurityServerPropertyUpdateDto();
+        var dto = new ConfigurablePropertyUpdateDto();
         dto.setPropertyValue(PROPERTY_VALUE);
         dto.setPropertyName(PROPERTY_NAME);
         dto.setScope(SCOPE);
@@ -458,6 +459,24 @@ public class SystemApiControllerTest extends AbstractApiControllerTestContext {
         var response = systemApiController.disableMaintenanceMode();
         assertEquals(HttpStatusCode.valueOf(204), response.getStatusCode());
         verify(systemService).disableMaintenanceMode();
+    }
+
+    @Test
+    @WithMockUser(authorities = {"CHANGE_SS_ADDRESS"})
+    public void getServerAddressRegistered() {
+        when(systemService.registeredAddress()).thenReturn(Optional.of("ss.example.org"));
+        var response = systemApiController.getServerAddress();
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("ss.example.org", response.getBody().getCurrentAddress().getAddress());
+    }
+
+    @Test
+    @WithMockUser(authorities = {"CHANGE_SS_ADDRESS"})
+    public void getServerAddressNotRegistered() {
+        when(systemService.registeredAddress()).thenReturn(Optional.empty());
+        var response = systemApiController.getServerAddress();
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNull(response.getBody().getCurrentAddress());
     }
 
     private void getSystemCertificate() throws IOException {

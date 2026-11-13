@@ -27,9 +27,13 @@ package org.niis.xroad.e2e.container;
 
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.niis.xroad.common.properties.config.keys.ProxyConfigKeys;
+import org.niis.xroad.e2e.AclParityProperties;
 import org.niis.xroad.e2e.E2eEnvironment;
 import org.niis.xroad.e2e.MessagelogArchiveOps;
 import org.niis.xroad.e2e.MessagelogDbOps;
+import org.niis.xroad.e2e.parity.acl.AclMode;
+import org.niis.xroad.e2e.parity.acl.AclModeProbe;
 import org.niis.xroad.test.apitest.core.config.ApiTestCoreProperties;
 import org.niis.xroad.test.apitest.core.container.BaseComposeSetup;
 import org.testcontainers.containers.Container;
@@ -37,6 +41,7 @@ import org.testcontainers.containers.Container;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -54,10 +59,13 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
     private static final Pattern PROCESSED_FILES_PATTERN = Pattern.compile("Processed (\\d+) files\\.");
     private static final String MESSAGELOG_ARCHIVES_FILE = "messagelog-archives.tar.gz";
 
+    private static final String AUX_ENV = "aux";
     private static final Duration GLOBALCONF_PROPAGATION_GRACE_PERIOD = Duration.ofSeconds(20);
+    private static final Duration PROXY_RESTART_TIMEOUT = Duration.ofMinutes(5);
+    private static final Duration PROXY_RESTART_POLL_INTERVAL = Duration.ofSeconds(5);
 
     private AuxStackSetup aux;
-    private SsStackSetup ss0;
+    private AbstractSsStack ss0;
     private SsStackSetup ss1;
 
     public E2eEnvSetup(ApiTestCoreProperties coreProperties) {
@@ -66,15 +74,16 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
 
     @Override
     public void start() {
+        AclParityProperties.configuredMode().ifPresent(mode -> AclModeProbe.verifyProviderStack(mode,
+                coreProperties.ss0Stack() == ApiTestCoreProperties.Ss0Stack.SIDECAR));
+
         aux = new AuxStackSetup(coreProperties);
         aux.start();
 
-        ss0 = new SsStackSetup(coreProperties, "ss0",
-                Set.of(SsStackSetup.Feature.BATCH_SIGNATURES, SsStackSetup.Feature.SOFTTOKEN_SIGNER, SsStackSetup.Feature.OP_MONITOR));
+        ss0 = buildSs0Stack(coreProperties);
         ss0.start();
 
-        ss1 = new SsStackSetup(coreProperties, "ss1",
-                Set.of(SsStackSetup.Feature.HSM, SsStackSetup.Feature.MESSAGE_LOG_ENCRYPTION));
+        ss1 = new SsStackSetup(coreProperties, "ss1", ss1Features());
         ss1.start();
 
         aux.waitForHurlToFinish();
@@ -85,6 +94,35 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
         await().pollDelay(GLOBALCONF_PROPAGATION_GRACE_PERIOD)
                 .timeout(GLOBALCONF_PROPAGATION_GRACE_PERIOD.plusMinutes(1))
                 .until(() -> true);
+    }
+
+    /**
+     * Makes ss0 refuse X-Road 7 style calls: stores {@code xroad.proxy.legacy-protocol-disabled} in its serverconf and
+     * restarts its proxy, which reads the setting once at start, then waits until the proxy is ready again.
+     * Only the per-service ss0 stack has a proxy container of its own to restart.
+     */
+    @SneakyThrows
+    public void refuseLegacyCallsOnSs0() {
+        if (!(ss0 instanceof SsStackSetup stack)) {
+            throw new IllegalStateException(
+                    "legacy refusal needs the default ss0 stack; the sidecar stack has no proxy container");
+        }
+        var upsert = """
+                INSERT INTO configuration_properties (property_key, property_value, created_at, updated_at)
+                VALUES ('%s', 'true', now(), now())
+                ON CONFLICT (property_key, ha_node_name) DO UPDATE SET property_value = EXCLUDED.property_value, updated_at = now()
+                """.formatted(ProxyConfigKeys.LEGACY_PROTOCOL_DISABLED.key());
+        var stored = stack.execInContainer(SsStackSetup.DB_SERVERCONF, "psql", "-U", "postgres", "-d", "serverconf",
+                "-v", "ON_ERROR_STOP=1", "-c", upsert);
+        if (stored.getExitCode() != 0) {
+            throw new IllegalStateException(
+                    "storing legacy-protocol-disabled in the serverconf of ss0 failed: " + stored.getStderr());
+        }
+        stack.restartService(SsStackSetup.PROXY);
+        await().atMost(PROXY_RESTART_TIMEOUT).pollInterval(PROXY_RESTART_POLL_INTERVAL).ignoreExceptions()
+                .until(() -> stack.execInContainer(SsStackSetup.PROXY, "curl", "-fs",
+                        "http://localhost:5588/q/health/ready").getExitCode() == 0);
+        log.info("ss0 proxy is ready with legacy calls refused");
     }
 
     @Override
@@ -112,7 +150,12 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
 
     @Override
     public ContainerMapping getContainerMapping(String envName, String service, int originalPort) {
-        return mapEnvironment(envName).getContainerMapping(service, originalPort);
+        return mapEnvironment(envName).getContainerMapping(composeServiceName(envName, service), originalPort);
+    }
+
+    /** The aux stack's admin UI is the compose service {@code cs}; the other environments' is {@code ui}. */
+    private static String composeServiceName(String envName, String service) {
+        return AUX_ENV.equals(envName) && SsStackSetup.UI.equals(service) ? AuxStackSetup.CS : service;
     }
 
     /**
@@ -130,6 +173,10 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
     @Override
     @SneakyThrows
     public String execMessagelogSql(String envName, String sql) {
+        var sidecar = sidecarSs0(envName);
+        if (sidecar != null) {
+            return sidecar.execMessagelogSql(sql);
+        }
         var result = execInEnvContainer(envName, SsStackSetup.DB_MESSAGELOG,
                 "psql", "-U", "postgres", "-d", "messagelog", "-tAX", "-c", sql);
         if (result.getExitCode() != 0) {
@@ -141,6 +188,11 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
     @Override
     @SneakyThrows
     public void triggerMessageLogCommand(String envName, String command) {
+        var sidecar = sidecarSs0(envName);
+        if (sidecar != null) {
+            sidecar.triggerMessageLogCommand(command);
+            return;
+        }
         var javaCmd = "java -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
                 + " -Dquarkus.profile=containerized"
                 + " -jar /opt/app/quarkus-run.jar " + command
@@ -154,12 +206,21 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
 
     @Override
     public void downloadMessageLogArchives(String envName, String localDir) {
+        var sidecar = sidecarSs0(envName);
+        if (sidecar != null) {
+            sidecar.downloadMessageLogArchives(localDir);
+            return;
+        }
         downloadArchivesTarball(envName, "/var/lib/xroad", localDir);
     }
 
     @Override
     @SneakyThrows
     public int decryptArchives(String envName, String filePrefix, String keyId, String passphrase, String outputDir) {
+        var sidecar = sidecarSs0(envName);
+        if (sidecar != null) {
+            return sidecar.decryptArchives(filePrefix, keyId, passphrase, outputDir);
+        }
         var keyFile = "/gpg-keys/%s.asc".formatted(keyId);
         var remoteOutputDir = "/tmp/decrypt-" + UUID.randomUUID();
 
@@ -189,13 +250,45 @@ public class E2eEnvSetup extends BaseComposeSetup implements E2eEnvironment, Mes
         throw new IllegalStateException("Could not find processed files count in decrypt-archives.sh output: " + output);
     }
 
+    /**
+     * ss1's optional stack features. In a legacy ACL parity run ss1 sends unnegotiated calls; in a DSP run it keeps
+     * its default and negotiates. ss0 is the same in both.
+     */
+    private static Set<SsStackSetup.Feature> ss1Features() {
+        var features = EnumSet.of(SsStackSetup.Feature.HSM, SsStackSetup.Feature.MESSAGE_LOG_ENCRYPTION);
+        if (AclParityProperties.configuredMode().orElse(null) == AclMode.LEGACY) {
+            features.add(SsStackSetup.Feature.LEGACY_PROTOCOL);
+        }
+        return features;
+    }
+
     private BaseComposeSetup mapEnvironment(String name) {
         return switch (name) {
             case "ss0" -> ss0;
             case "ss1" -> ss1;
-            case "aux" -> aux;
+            case AUX_ENV -> aux;
             default -> throw new IllegalArgumentException("Unknown environment: " + name);
         };
+    }
+
+    private AbstractSsStack buildSs0Stack(ApiTestCoreProperties coreProperties) {
+        return switch (coreProperties.ss0Stack()) {
+            case DEFAULT -> new SsStackSetup(coreProperties, "ss0",
+                    Set.of(SsStackSetup.Feature.BATCH_SIGNATURES, SsStackSetup.Feature.SOFTTOKEN_SIGNER,
+                            SsStackSetup.Feature.OP_MONITOR, SsStackSetup.Feature.AGREEMENT_TOKEN_KEY_PRUNING));
+            case SIDECAR -> new SidecarSsStackSetup(coreProperties, "ss0");
+        };
+    }
+
+    /**
+     * Returns {@code ss0} when it is running the sidecar stack variant, so messagelog DB and archive
+     * operations can route to its single-container exec-based implementation instead of the
+     * {@code db-messagelog}/{@code message-log-cli} containers the multi-container stack exposes.
+     * Returns {@code null} for every other environment name (including {@code ss0} when it is the
+     * multi-container stack).
+     */
+    private SidecarSsStackSetup sidecarSs0(String envName) {
+        return "ss0".equals(envName) && ss0 instanceof SidecarSsStackSetup sidecar ? sidecar : null;
     }
 
     @Override

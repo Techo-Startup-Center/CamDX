@@ -27,16 +27,27 @@
 package org.niis.xroad.securityserver.restapi.service;
 
 import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.SecurityServerId;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import com.apicatalog.did.Did;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.niis.xroad.common.core.exception.ErrorCode;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
 import org.niis.xroad.common.identifiers.jpa.ClientIdEntityFactory;
 import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
+import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties;
 import org.niis.xroad.securityserver.restapi.config.AdminServiceProperties.Dataspace;
 import org.niis.xroad.securityserver.restapi.repository.ClientRepository;
@@ -44,17 +55,22 @@ import org.niis.xroad.securityserver.restapi.repository.DsParticipantRepository;
 import org.niis.xroad.securityserver.restapi.repository.ServerConfRepository;
 import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningService.CredentialStatus;
 import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningService.IdentityStatus;
+import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningService.ParticipantContext;
 import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningService.ParticipantKind;
+import org.niis.xroad.securityserver.restapi.service.IdentityHubProvisioningClient.CreateParticipantContextRequest;
 import org.niis.xroad.serverconf.impl.entity.ClientEntity;
 import org.niis.xroad.serverconf.impl.entity.DsParticipantEntity;
 import org.niis.xroad.serverconf.impl.entity.ServerConfEntity;
+import org.niis.xroad.serverconf.impl.ownserver.OwnSecurityServerResolver;
 import org.niis.xroad.serverconf.model.Client;
 import org.niis.xroad.serverconf.model.ParticipantState;
 import org.niis.xroad.serverconf.model.ParticipantType;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -62,25 +78,41 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class DataspaceProvisioningServiceTest {
 
+    private static final String INSTANCE_IDENTIFIER = "TEST";
     private static final String PARTICIPANT_ID = "test-participant";
-    private static final String HOLDER_PID_SLOT0 = PARTICIPANT_ID + "-xroad-membership-credential-request";
-    private static final String HOLDER_PID_SLOT1 = PARTICIPANT_ID + "-xroad-membership-credential-request-1";
-    private static final String HOLDER_PID_SLOT2 = PARTICIPANT_ID + "-xroad-membership-credential-request-2";
 
     private static final ClientId OWNER = ClientId.Conf.create("TEST", "ORG", "OWNER");
     private static final ClientId MEMBER = ClientId.Conf.create("TEST", "ORG", "MEMBER");
     private static final ClientId OTHER_MEMBER = ClientId.Conf.create("TEST", "ORG", "OTHER");
-    private static final String SS_HOST = "ih.example.test:7183";
+    private static final SecurityServerId.Conf SERVER_ID = SecurityServerId.Conf.create(OWNER, "SS0");
+    private static final String HOLDER_PID_SLOT0 = holderPidBase(PARTICIPANT_ID, OWNER, "SS0");
+    private static final String HOLDER_PID_SLOT1 = HOLDER_PID_SLOT0 + "-1";
+    private static final String HOLDER_PID_SLOT2 = HOLDER_PID_SLOT0 + "-2";
+    private static final String SS_ADDRESS = "ss.example.test";
+    private static final String SS_HOST = SS_ADDRESS + ":7183";
+
+    private static final ParticipantContext MEMBER_CONTEXT =
+            new ParticipantContext(ParticipantIdentifierScheme.memberCtxId(MEMBER), ParticipantKind.MEMBER, MEMBER);
+    private static final ParticipantContext GENERIC_CONTEXT =
+            new ParticipantContext(PARTICIPANT_ID, ParticipantKind.MEMBER, OWNER);
+    private static final ParticipantContext SYSTEM_CONTEXT =
+            new ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ParticipantKind.SYSTEM, OWNER);
+    private static final ParticipantContext SYSTEM_CONTEXT_OTHER_OWNER =
+            new ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ParticipantKind.SYSTEM, OTHER_MEMBER);
+    private static final ParticipantContext SYSTEM_CONTEXT_NO_OWNER =
+            new ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ParticipantKind.SYSTEM, null);
 
     @Mock
     private AdminServiceProperties adminServiceProperties;
@@ -96,23 +128,55 @@ class DataspaceProvisioningServiceTest {
     private ServerConfRepository serverConfRepository;
     @Mock
     private DsParticipantRepository dsParticipantRepository;
+    @Mock
+    private GlobalConfProvider globalConfProvider;
 
     private DataspaceProvisioningService service;
 
+    private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    private final Logger logger = (Logger) LoggerFactory.getLogger(DataspaceProvisioningService.class);
+
     @BeforeEach
     void setUp() {
-        lenient().when(dataspace.getParticipantId()).thenReturn(PARTICIPANT_ID);
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.DEBUG);
         lenient().when(dataspace.getIdentityHubUrl()).thenReturn("https://ih.example.test");
-        lenient().when(dataspace.getIssuerDid()).thenReturn("did:web:issuer.example.test");
         lenient().when(dataspace.getCredentialDefinitionId()).thenReturn("xroad-membership-credential-definition");
         lenient().when(dataspace.getMaxHolderPidSlots()).thenReturn(20);
-        lenient().when(dataspace.getIdentityHubDidPort()).thenReturn(7183);
+        lenient().when(dataspace.getDidPort()).thenReturn(7183);
+        lenient().when(dataspace.getDspPort()).thenReturn(8183);
         lenient().when(dataspace.getIdentityHubStsPort()).thenReturn(7184);
         lenient().when(dataspace.getIdentityHubCredentialsPort()).thenReturn(7185);
         lenient().when(adminServiceProperties.getDataspace()).thenReturn(dataspace);
         lenient().when(identityHubClient.contextDid(anyString())).thenReturn(Optional.empty());
+        var ownerEntity = mock(ClientEntity.class);
+        lenient().when(ownerEntity.getIdentifier()).thenReturn(ClientIdEntityFactory.create(OWNER));
+        var serverConf = mock(ServerConfEntity.class);
+        lenient().when(serverConf.getOwner()).thenReturn(ownerEntity);
+        lenient().when(serverConf.getServerCode()).thenReturn(SERVER_ID.getServerCode());
+        lenient().when(serverConfRepository.getServerConf()).thenReturn(serverConf);
+        lenient().when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(SS_ADDRESS);
+        lenient().when(globalConfProvider.getInstanceIdentifier()).thenReturn(INSTANCE_IDENTIFIER);
+        lenient().when(globalConfProvider.getCredentialIssuerDids(INSTANCE_IDENTIFIER))
+                .thenReturn(List.of("did:web:issuer.example.test%3A6183:issuer"));
+        var ownSecurityServerResolver = new OwnSecurityServerResolver(
+                new ServerConfRepositoryIdentitySource(serverConfRepository), globalConfProvider);
         service = new DataspaceProvisioningService(adminServiceProperties, identityHubClient, controlPlaneClient,
-                clientRepository, serverConfRepository, dsParticipantRepository);
+                clientRepository, ownSecurityServerResolver, dsParticipantRepository, globalConfProvider,
+                new DataspaceDidAuthority(ownSecurityServerResolver, adminServiceProperties));
+    }
+
+    private DataspaceDidAuthority didAuthority() {
+        return new DataspaceDidAuthority(new OwnSecurityServerResolver(
+                new ServerConfRepositoryIdentitySource(serverConfRepository), globalConfProvider), adminServiceProperties);
+    }
+
+    @AfterEach
+    void tearDownLogging() {
+        logger.detachAppender(appender);
+        appender.stop();
+        logger.setLevel(null);
     }
 
     // --- ensureMembershipCredential ---
@@ -121,17 +185,18 @@ class DataspaceProvisioningServiceTest {
     void ensureMembershipCredentialSubmitsIntoSlot0WhenNoExistingRequest() {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(null);
 
-        assertThat(service.ensureMembershipCredential(PARTICIPANT_ID)).isEqualTo(CredentialStatus.PENDING);
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.PENDING);
 
-        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), anyString(), eq(HOLDER_PID_SLOT0),
+        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), any(), eq(HOLDER_PID_SLOT0),
                 anyString(), anyString(), anyString());
     }
 
-    @Test
-    void ensureMembershipCredentialNoOpWhenSlot0IsPending() {
-        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.PENDING.name());
+    @ParameterizedTest
+    @ValueSource(strings = {"CREATED", "REQUESTING", "REQUESTED"})
+    void ensureMembershipCredentialNoOpWhenSlot0IsInFlight(String hubState) {
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(hubState);
 
-        assertThat(service.ensureMembershipCredential(PARTICIPANT_ID)).isEqualTo(CredentialStatus.PENDING);
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.PENDING);
 
         verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
     }
@@ -140,7 +205,7 @@ class DataspaceProvisioningServiceTest {
     void ensureMembershipCredentialNoOpWhenSlot0IsIssued() {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ISSUED.name());
 
-        assertThat(service.ensureMembershipCredential(PARTICIPANT_ID)).isEqualTo(CredentialStatus.ISSUED);
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.ISSUED);
 
         verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
     }
@@ -150,9 +215,9 @@ class DataspaceProvisioningServiceTest {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ERROR.name());
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(null);
 
-        service.ensureMembershipCredential(PARTICIPANT_ID);
+        service.ensureMembershipCredential(GENERIC_CONTEXT);
 
-        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), anyString(), eq(HOLDER_PID_SLOT1),
+        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), any(), eq(HOLDER_PID_SLOT1),
                 anyString(), anyString(), anyString());
     }
 
@@ -162,9 +227,9 @@ class DataspaceProvisioningServiceTest {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(CredentialStatus.ERROR.name());
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT2)).thenReturn(null);
 
-        service.ensureMembershipCredential(PARTICIPANT_ID);
+        service.ensureMembershipCredential(GENERIC_CONTEXT);
 
-        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), anyString(), eq(HOLDER_PID_SLOT2),
+        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), any(), eq(HOLDER_PID_SLOT2),
                 anyString(), anyString(), anyString());
     }
 
@@ -174,9 +239,31 @@ class DataspaceProvisioningServiceTest {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ERROR.name());
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(CredentialStatus.ERROR.name());
 
-        assertThat(service.ensureMembershipCredential(PARTICIPANT_ID)).isEqualTo(CredentialStatus.ERROR);
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.ERROR);
 
         verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialReturnsAbsentAndAttemptsNothingWhenNoIssuerDidsAreDistributed() {
+        when(globalConfProvider.getCredentialIssuerDids(INSTANCE_IDENTIFIER)).thenReturn(List.of());
+
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.ABSENT);
+
+        verify(identityHubClient, never()).getCredentialRequestState(any(), any());
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialPassesTheFullTrustedIssuerSetToTheIdentityHub() {
+        var trustedDids = Set.of("did:web:cs1.example.test%3A6183:issuer", "did:web:cs2.example.test%3A6183:issuer");
+        when(globalConfProvider.getCredentialIssuerDids(INSTANCE_IDENTIFIER)).thenReturn(List.copyOf(trustedDids));
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(null);
+
+        service.ensureMembershipCredential(GENERIC_CONTEXT);
+
+        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), eq(trustedDids), eq(HOLDER_PID_SLOT0),
+                anyString(), anyString(), anyString());
     }
 
     // --- readCredentialStatus ---
@@ -186,7 +273,7 @@ class DataspaceProvisioningServiceTest {
         when(dataspace.getMaxHolderPidSlots()).thenReturn(2);
         when(identityHubClient.getCredentialRequestState(eq(PARTICIPANT_ID), anyString())).thenReturn(null);
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isNull();
     }
@@ -195,16 +282,17 @@ class DataspaceProvisioningServiceTest {
     void readCredentialStatusReturnsIssuedWhenSlot0Issued() {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ISSUED.name());
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isEqualTo(CredentialStatus.ISSUED);
     }
 
-    @Test
-    void readCredentialStatusReturnsPendingWhenSlot0Pending() {
-        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.PENDING.name());
+    @ParameterizedTest
+    @ValueSource(strings = {"CREATED", "REQUESTING", "REQUESTED"})
+    void readCredentialStatusMapsInFlightHubStateToPending(String hubState) {
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(hubState);
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isEqualTo(CredentialStatus.PENDING);
     }
@@ -212,9 +300,9 @@ class DataspaceProvisioningServiceTest {
     @Test
     void readCredentialStatusSkipsErrorSlotAndReturnsNextActiveStatus() {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ERROR.name());
-        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(CredentialStatus.PENDING.name());
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn("REQUESTED");
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isEqualTo(CredentialStatus.PENDING);
     }
@@ -225,7 +313,7 @@ class DataspaceProvisioningServiceTest {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ERROR.name());
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(CredentialStatus.ERROR.name());
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isEqualTo(CredentialStatus.ERROR);
     }
@@ -236,7 +324,7 @@ class DataspaceProvisioningServiceTest {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(null);
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(null);
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isNull();
     }
@@ -246,7 +334,7 @@ class DataspaceProvisioningServiceTest {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ERROR.name());
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(CredentialStatus.ISSUED.name());
 
-        var status = service.readCredentialStatus(PARTICIPANT_ID);
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
 
         assertThat(status).isEqualTo(CredentialStatus.ISSUED);
         // slot2..N are not queried
@@ -257,59 +345,104 @@ class DataspaceProvisioningServiceTest {
     void readCredentialStatusMapsUnrecognizedHubStateToUnknown() {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn("APPROVED");
 
-        assertThat(service.readCredentialStatus(PARTICIPANT_ID)).isEqualTo(CredentialStatus.UNKNOWN);
+        assertThat(service.readCredentialStatus(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.UNKNOWN);
     }
 
     @Test
-    void ensureMembershipCredentialAdvancesPastUnrecognizedHubState() {
+    void ensureMembershipCredentialLeavesUnrecognizedHubStateUntouched() {
         when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn("APPROVED");
-        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1)).thenReturn(null);
 
-        assertThat(service.ensureMembershipCredential(PARTICIPANT_ID)).isEqualTo(CredentialStatus.PENDING);
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.UNKNOWN);
 
-        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), anyString(), eq(HOLDER_PID_SLOT1),
-                anyString(), anyString(), anyString());
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
     }
 
     // --- participantContexts ---
 
     @Test
-    void participantContextsReturnsOnlyHostAndOwnerWhenManagementNotRegisteredAndNoOtherClients() {
+    void participantContextsReturnsOnlySystemWhenNoClientIsRegisteredYet() {
         givenServerConfWithOwner(OWNER);
-        when(clientRepository.getAllLocalClients()).thenReturn(List.of());
+        var savedOwner = clientWith(OWNER, Client.STATUS_SAVED);
+        when(clientRepository.getAllLocalClients()).thenReturn(List.of(savedOwner));
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
         assertThat(contexts).containsExactly(
-                new DataspaceProvisioningService.ParticipantContext(PARTICIPANT_ID, ParticipantKind.HOST, OWNER),
+                new DataspaceProvisioningService.ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT,
+                        ParticipantKind.SYSTEM, OWNER));
+    }
+
+    @Test
+    void participantContextsAddsOwnerMemberContextOnceItsOwnClientIsRegistered() {
+        givenServerConfWithOwner(OWNER);
+        var ownerClient = clientWith(OWNER);
+        when(clientRepository.getAllLocalClients()).thenReturn(List.of(ownerClient));
+
+        var contexts = service.participantContexts();
+
+        assertThat(contexts).containsExactly(
+                new DataspaceProvisioningService.ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT,
+                        ParticipantKind.SYSTEM, OWNER),
                 new DataspaceProvisioningService.ParticipantContext(ParticipantIdentifierScheme.memberCtxId(OWNER),
                         ParticipantKind.MEMBER, OWNER));
     }
 
     @Test
-    void participantContextsIncludesManagementContextWhenManagementRegistered() {
+    void participantContextsNeverIncludesHostOrManagementKind() {
+        givenServerConfWithOwner(OWNER);
+        var ownerClient = clientWith(OWNER);
+        var memberClient = clientWith(MEMBER);
+        when(clientRepository.getAllLocalClients()).thenReturn(List.of(ownerClient, memberClient));
+
+        var contexts = service.participantContexts();
+
+        assertThat(contexts).extracting(DataspaceProvisioningService.ParticipantContext::kind)
+                .containsOnly(ParticipantKind.SYSTEM, ParticipantKind.MEMBER);
+    }
+
+    @Test
+    void participantContextsCarriesOwnerAsSystemCredentialSubjectWhenOwnerKnown() {
         givenServerConfWithOwner(OWNER);
         when(clientRepository.getAllLocalClients()).thenReturn(List.of());
 
-        var contexts = service.participantContexts(true);
+        var contexts = service.participantContexts();
 
-        assertThat(contexts).extracting(DataspaceProvisioningService.ParticipantContext::kind)
-                .containsExactly(ParticipantKind.HOST, ParticipantKind.MANAGEMENT, ParticipantKind.MEMBER);
-        assertThat(contexts.get(1).participantId()).isEqualTo(PARTICIPANT_ID + "-mgmt");
+        assertThat(contexts).filteredOn(ctx -> ctx.kind() == ParticipantKind.SYSTEM)
+                .extracting(DataspaceProvisioningService.ParticipantContext::memberId)
+                .containsExactly(OWNER);
     }
 
     @Test
     void participantContextsAddsOneMemberContextPerHostedMember() {
         givenServerConfWithOwner(OWNER);
+        var ownerClient = clientWith(OWNER);
         var memberClient = clientWith(MEMBER);
-        when(clientRepository.getAllLocalClients()).thenReturn(List.of(memberClient));
+        when(clientRepository.getAllLocalClients()).thenReturn(List.of(ownerClient, memberClient));
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
         assertThat(contexts).extracting(DataspaceProvisioningService.ParticipantContext::kind)
-                .containsExactly(ParticipantKind.HOST, ParticipantKind.MEMBER, ParticipantKind.MEMBER);
+                .containsExactly(ParticipantKind.SYSTEM, ParticipantKind.MEMBER, ParticipantKind.MEMBER);
         assertThat(contexts).extracting(DataspaceProvisioningService.ParticipantContext::participantId)
                 .contains(ParticipantIdentifierScheme.memberCtxId(OWNER), ParticipantIdentifierScheme.memberCtxId(MEMBER));
+    }
+
+    @Test
+    void participantContextsExcludesMemberWithUnconvergedTombstone() {
+        givenServerConfWithOwner(OWNER);
+        var ownerClient = clientWith(OWNER);
+        var memberClient = clientWith(MEMBER);
+        when(clientRepository.getAllLocalClients()).thenReturn(List.of(ownerClient, memberClient));
+        var decommissioned = boundParticipant(MEMBER, SS_HOST);
+        decommissioned.setState(ParticipantState.DECOMMISSIONED);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(decommissioned));
+        lenient().when(dsParticipantRepository.findByMemberIdentifier(OWNER)).thenReturn(Optional.empty());
+
+        var contexts = service.participantContexts();
+
+        assertThat(contexts).filteredOn(ctx -> ctx.kind() == ParticipantKind.MEMBER)
+                .extracting(DataspaceProvisioningService.ParticipantContext::participantId)
+                .containsExactly(ParticipantIdentifierScheme.memberCtxId(OWNER));
     }
 
     @Test
@@ -320,28 +453,28 @@ class DataspaceProvisioningServiceTest {
         var subsystemClient = clientWith(subsystem);
         when(clientRepository.getAllLocalClients()).thenReturn(List.of(memberClient, subsystemClient));
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
-        // owner + MEMBER once, even though a subsystem of MEMBER is also a local client
-        assertThat(contexts).hasSize(3);
+        // SYSTEM + MEMBER once, even though a subsystem of MEMBER is also a local client
+        assertThat(contexts).hasSize(2);
         assertThat(contexts).filteredOn(ctx -> ctx.kind() == ParticipantKind.MEMBER)
                 .extracting(DataspaceProvisioningService.ParticipantContext::participantId)
-                .containsExactlyInAnyOrder(ParticipantIdentifierScheme.memberCtxId(OWNER), ParticipantIdentifierScheme.memberCtxId(MEMBER));
+                .containsExactly(ParticipantIdentifierScheme.memberCtxId(MEMBER));
     }
 
     @Test
     void participantContextsSkipsMembersWithoutAnyRegisteredClient() {
         givenServerConfWithOwner(OWNER);
+        var savedOwner = clientWith(OWNER, Client.STATUS_SAVED);
         var savedClient = clientWith(MEMBER, Client.STATUS_SAVED);
         var registeredOther = clientWith(OTHER_MEMBER, Client.STATUS_REGISTERED);
-        when(clientRepository.getAllLocalClients()).thenReturn(List.of(savedClient, registeredOther));
+        when(clientRepository.getAllLocalClients()).thenReturn(List.of(savedOwner, savedClient, registeredOther));
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
         assertThat(contexts).filteredOn(ctx -> ctx.kind() == ParticipantKind.MEMBER)
                 .extracting(DataspaceProvisioningService.ParticipantContext::participantId)
-                .containsExactlyInAnyOrder(
-                        ParticipantIdentifierScheme.memberCtxId(OWNER), ParticipantIdentifierScheme.memberCtxId(OTHER_MEMBER));
+                .containsExactly(ParticipantIdentifierScheme.memberCtxId(OTHER_MEMBER));
     }
 
     @Test
@@ -352,35 +485,36 @@ class DataspaceProvisioningServiceTest {
         var registeredSubsystemClient = clientWith(subsystem, Client.STATUS_REGISTERED);
         when(clientRepository.getAllLocalClients()).thenReturn(List.of(savedMemberClient, registeredSubsystemClient));
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
         assertThat(contexts).filteredOn(ctx -> ctx.kind() == ParticipantKind.MEMBER)
                 .extracting(DataspaceProvisioningService.ParticipantContext::participantId)
-                .containsExactlyInAnyOrder(
-                        ParticipantIdentifierScheme.memberCtxId(OWNER), ParticipantIdentifierScheme.memberCtxId(MEMBER));
+                .containsExactly(ParticipantIdentifierScheme.memberCtxId(MEMBER));
     }
 
     @Test
-    void participantContextsReturnsOnlyHostWhenOwnerNotYetSet() {
+    void participantContextsReturnsOnlySystemWithNullSubjectWhenOwnerNotYetSet() {
         var serverConf = mock(ServerConfEntity.class);
         when(serverConf.getOwner()).thenReturn(null);
         when(serverConfRepository.getServerConf()).thenReturn(serverConf);
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
         assertThat(contexts).containsExactly(
-                new DataspaceProvisioningService.ParticipantContext(PARTICIPANT_ID, ParticipantKind.HOST, null));
+                new DataspaceProvisioningService.ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT,
+                        ParticipantKind.SYSTEM, null));
     }
 
     @Test
-    void participantContextsReturnsOnlyHostWhenServerConfNotInitialized() {
+    void participantContextsReturnsOnlySystemWhenServerConfNotInitialized() {
         when(serverConfRepository.getServerConf())
                 .thenThrow(XrdRuntimeException.systemException(ErrorCode.MALFORMED_SERVERCONF).build());
 
-        var contexts = service.participantContexts(false);
+        var contexts = service.participantContexts();
 
         assertThat(contexts).containsExactly(
-                new DataspaceProvisioningService.ParticipantContext(PARTICIPANT_ID, ParticipantKind.HOST, null));
+                new DataspaceProvisioningService.ParticipantContext(ParticipantIdentifierScheme.SYSTEM_SEGMENT,
+                        ParticipantKind.SYSTEM, null));
     }
 
     @Test
@@ -388,86 +522,108 @@ class DataspaceProvisioningServiceTest {
         when(serverConfRepository.getServerConf())
                 .thenThrow(XrdRuntimeException.systemException(ErrorCode.INTERNAL_ERROR).build());
 
-        assertThatThrownBy(() -> service.participantContexts(false))
+        assertThatThrownBy(() -> service.participantContexts())
                 .isInstanceOf(XrdRuntimeException.class)
                 .satisfies(e -> assertThat(((XrdRuntimeException) e).getErrorCode())
                         .isEqualTo(ErrorCode.INTERNAL_ERROR.code()));
     }
 
-    // --- ensureParticipantContext (HOST / MANAGEMENT) ---
-
-    @Test
-    void ensureParticipantContextCreatesIhAndCpForHostParticipant() {
-        service.ensureParticipantContext(PARTICIPANT_ID, ParticipantKind.HOST, OWNER);
-
-        verify(identityHubClient).createParticipantContext(eq(PARTICIPANT_ID), any(), eq(slashForm(OWNER)), any(), any(), any());
-        verify(controlPlaneClient).createParticipantContext(eq(PARTICIPANT_ID), any());
-        verify(controlPlaneClient).putParticipantContextConfig(eq(PARTICIPANT_ID), any(), any());
-        verify(dsParticipantRepository, never()).findByMemberIdentifier(any());
-    }
-
-    @Test
-    void ensureParticipantContextUsesMgmtDidSuffixForManagementParticipant() {
-        var mgmtId = PARTICIPANT_ID + "-mgmt";
-
-        service.ensureParticipantContext(mgmtId, ParticipantKind.MANAGEMENT, OWNER);
-
-        verify(identityHubClient).createParticipantContext(eq(mgmtId), argThatEndsWith(":mgmt"), eq(slashForm(OWNER)), any(), any(), any());
-    }
-
     // --- ensureParticipantContext (MEMBER) ---
 
     @Test
-    void ensureParticipantContextDerivesUnboundDidWhenNoRowExists() {
+    void ensureParticipantContextRefusesAMemberWithNoBindingRowBeforeAnyWrite() {
         when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.empty());
-        var expectedDid = ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST);
 
-        service.ensureParticipantContext(ParticipantIdentifierScheme.memberCtxId(MEMBER), ParticipantKind.MEMBER, MEMBER);
-
-        verify(identityHubClient).createParticipantContext(any(), eq(expectedDid), eq(slashForm(MEMBER)), any(), any(), any());
+        assertRefusedForMissingBinding(MEMBER_CONTEXT);
     }
 
     @Test
-    void ensureParticipantContextUsesConfiguredIdentityHubPorts() {
-        when(dataspace.getIdentityHubDidPort()).thenReturn(8183);
+    void ensureParticipantContextUsesConfiguredStsAndCredentialsPorts() {
         when(dataspace.getIdentityHubStsPort()).thenReturn(8184);
         when(dataspace.getIdentityHubCredentialsPort()).thenReturn(8185);
-        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
         var ctxId = ParticipantIdentifierScheme.memberCtxId(MEMBER);
-        var expectedDid = ParticipantIdentifierScheme.memberDid(MEMBER, "ih.example.test:8183");
+        var expectedDid = ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST);
 
-        service.ensureParticipantContext(ctxId, ParticipantKind.MEMBER, MEMBER);
+        service.ensureParticipantContext(new ParticipantContext(ctxId, ParticipantKind.MEMBER, MEMBER));
 
-        verify(identityHubClient).createParticipantContext(eq(ctxId), eq(expectedDid), any(),
-                argThat(url -> url.startsWith("https://ih.example.test:8185/api/credentials/")), any(), any());
+        var request = capturedIhCreateRequest();
+        assertThat(request.participantContextId()).isEqualTo(ctxId);
+        assertThat(request.did()).isEqualTo(expectedDid);
+        assertThat(request.credentialServiceUrl()).startsWith("https://ih.example.test:8185/api/credentials/");
+        assertThat(request.reanchorMemberIdOnConflict()).isFalse();
         verify(controlPlaneClient).putParticipantContextConfig(eq(ctxId), eq(expectedDid),
                 eq("https://ih.example.test:8184/api/sts/token"));
+    }
+
+    @Test
+    void dspBaseUrlUsesRegisteredAddressAndDefaultDspPort() {
+        assertThat(didAuthority().dspBaseUrl()).contains("https://ss.example.test:8183/api/dsp");
+    }
+
+    @Test
+    void dspBaseUrlUsesConfiguredDspPort() {
+        when(dataspace.getDspPort()).thenReturn(18183);
+
+        assertThat(didAuthority().dspBaseUrl()).contains("https://ss.example.test:18183/api/dsp");
+    }
+
+    @Test
+    void dspBaseUrlIsEmptyWithoutRegisteredAddress() {
+        when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(null);
+
+        assertThat(didAuthority().dspBaseUrl()).isEmpty();
+    }
+
+    @Test
+    void ensureParticipantContextBuildsTheCredentialServiceUrlFromTheIdentityHubHost() {
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
+        var ctxId = ParticipantIdentifierScheme.memberCtxId(MEMBER);
+
+        service.ensureParticipantContext(new ParticipantContext(ctxId, ParticipantKind.MEMBER, MEMBER));
+
+        var request = capturedIhCreateRequest();
+        assertThat(request.participantContextId()).isEqualTo(ctxId);
+        assertThat(request.did()).isEqualTo(ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST));
+        assertThat(request.credentialServiceUrl()).startsWith("https://ih.example.test:7185/api/credentials/");
+    }
+
+    @Test
+    void ensureParticipantContextProvisionsABoundMemberWhileTheRegisteredAddressIsUnknown() {
+        lenient().when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(null);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
+
+        service.ensureParticipantContext(MEMBER_CONTEXT);
+
+        verify(identityHubClient).createParticipantContext(any());
     }
 
     @Test
     void ensureParticipantContextRefusesToProvisionWhenIdentityHubUrlHasNoHost() {
         when(dataspace.getIdentityHubUrl()).thenReturn("identity-hub-placeholder");
 
-        assertThatThrownBy(() -> service.ensureParticipantContext(
-                ParticipantIdentifierScheme.memberCtxId(MEMBER), ParticipantKind.MEMBER, MEMBER))
+        assertThatThrownBy(() -> service.ensureParticipantContext(MEMBER_CONTEXT))
                 .isInstanceOf(XrdRuntimeException.class)
                 .satisfies(e -> assertThat(((XrdRuntimeException) e).getErrorCode())
                         .isEqualTo(ErrorCode.VALIDATION_ERROR.code()));
 
-        verify(identityHubClient, never()).createParticipantContext(any(), any(), any(), any(), any(), any());
+        verify(identityHubClient, never()).createParticipantContext(any());
     }
 
     @Test
     void ensureParticipantContextReencodesPercentEscapedCtxIdInCredentialServiceUrl() {
         var memberWithPlus = ClientId.Conf.create("TEST", "ORG", "222+A");
-        when(dsParticipantRepository.findByMemberIdentifier(memberWithPlus)).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findByMemberIdentifier(memberWithPlus))
+                .thenReturn(Optional.of(boundParticipant(memberWithPlus, SS_HOST)));
         var ctxId = ParticipantIdentifierScheme.memberCtxId(memberWithPlus);
         assertThat(ctxId).isEqualTo("TEST:ORG:222%2BA");
 
-        service.ensureParticipantContext(ctxId, ParticipantKind.MEMBER, memberWithPlus);
+        service.ensureParticipantContext(new ParticipantContext(ctxId, ParticipantKind.MEMBER, memberWithPlus));
 
-        verify(identityHubClient).createParticipantContext(eq(ctxId), any(), any(),
-                argThat(url -> url.endsWith("/api/credentials/v1/participants/TEST:ORG:222%252BA")), any(), any());
+        var request = capturedIhCreateRequest();
+        assertThat(request.participantContextId()).isEqualTo(ctxId);
+        assertThat(request.credentialServiceUrl()).endsWith("/api/credentials/v1/participants/TEST:ORG:222%252BA");
+        assertThat(request.reanchorMemberIdOnConflict()).isFalse();
     }
 
     @Test
@@ -475,98 +631,742 @@ class DataspaceProvisioningServiceTest {
         var bound = boundParticipant(MEMBER, SS_HOST);
         when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
 
-        service.ensureParticipantContext(ParticipantIdentifierScheme.memberCtxId(MEMBER), ParticipantKind.MEMBER, MEMBER);
+        service.ensureParticipantContext(MEMBER_CONTEXT);
 
-        verify(identityHubClient).createParticipantContext(any(), eq(bound.getDid()), eq(slashForm(MEMBER)), any(), any(), any());
+        var request = capturedIhCreateRequest();
+        assertThat(request.did()).isEqualTo(Did.parse(bound.getDid()));
+        assertThat(request.memberId()).isEqualTo(slashForm(MEMBER));
+        assertThat(request.reanchorMemberIdOnConflict()).isFalse();
     }
 
     @Test
-    void ensureParticipantContextThrowsWhenBoundRowNoLongerMatchesDerivation() {
+    void ensureParticipantContextUsesBoundDidWhenRegisteredAddressDiffersFromBoundRow() {
         var bound = boundParticipant(MEMBER, "ih.other.test:7183");
         when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
 
-        var memberCtxId = ParticipantIdentifierScheme.memberCtxId(MEMBER);
-        assertThatThrownBy(() ->
-                service.ensureParticipantContext(memberCtxId, ParticipantKind.MEMBER, MEMBER))
+        service.ensureParticipantContext(MEMBER_CONTEXT);
+
+        assertThat(capturedIhCreateRequest().did()).isEqualTo(Did.parse(bound.getDid()));
+    }
+
+    @Test
+    void ensureParticipantContextUsesBoundDidWhenRegisteredAddressIsNonAscii() {
+        lenient().when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn("b\u00fccher.example");
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+
+        service.ensureParticipantContext(MEMBER_CONTEXT);
+
+        assertThat(capturedIhCreateRequest().did()).isEqualTo(Did.parse(bound.getDid()));
+    }
+
+    @Test
+    void ensureParticipantContextRefusesBoundRowUnderUnsupportedSchemeVersion() {
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        bound.setSchemeVersion("v0");
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+
+        assertThatThrownBy(() -> service.ensureParticipantContext(MEMBER_CONTEXT))
+                .isInstanceOf(XrdRuntimeException.class)
+                .satisfies(e -> assertThat(((XrdRuntimeException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.DSP_PARTICIPANT_SCHEME_VERSION_UNSUPPORTED.code()));
+
+        verify(identityHubClient, never()).createParticipantContext(any());
+    }
+
+    @Test
+    void ensureParticipantContextRefusesBoundRowWhoseDidEncodesAnotherMember() {
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        bound.setDid(ParticipantIdentifierScheme.memberDid(OTHER_MEMBER, SS_HOST).toString());
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+
+        assertThatThrownBy(() -> service.ensureParticipantContext(MEMBER_CONTEXT))
+                .isInstanceOf(XrdRuntimeException.class)
+                .satisfies(e -> assertThat(((XrdRuntimeException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.VALIDATION_ERROR.code()));
+
+        verify(identityHubClient, never()).createParticipantContext(any());
+        verify(controlPlaneClient, never()).createParticipantContext(any(), any());
+    }
+
+    @Test
+    void ensureParticipantContextRefusesBoundRowWhoseCtxIdDiffersFromItsMember() {
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        bound.setCtxId(ParticipantIdentifierScheme.memberCtxId(OTHER_MEMBER));
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+
+        assertThatThrownBy(() -> service.ensureParticipantContext(MEMBER_CONTEXT))
                 .isInstanceOf(XrdRuntimeException.class);
 
-        verify(identityHubClient, never()).createParticipantContext(any(), any(), any(), any(), any(), any());
+        verify(identityHubClient, never()).createParticipantContext(any());
+        verify(controlPlaneClient, never()).createParticipantContext(any(), any());
+    }
+
+    @Test
+    void readContextStatusReportsUnknownForABoundRowWhoseDidEncodesAnotherMember() {
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        bound.setDid(ParticipantIdentifierScheme.memberDid(OTHER_MEMBER, SS_HOST).toString());
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+
+        var status = service.readContextStatus(MEMBER_CONTEXT);
+
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.UNKNOWN);
+        assertThat(status.intendedDid()).isNull();
+    }
+
+    @Test
+    void readContextStatusReportsUnknownForABoundRowWhoseCtxIdDiffersFromItsMember() {
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        bound.setCtxId(ParticipantIdentifierScheme.memberCtxId(OTHER_MEMBER));
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+
+        assertThat(service.readContextStatus(MEMBER_CONTEXT).identityStatus()).isEqualTo(IdentityStatus.UNKNOWN);
+    }
+
+    @Test
+    void readContextStatusReportsUnknownForABoundSystemRowHoldingAMemberDid() {
+        var bound = boundSystemParticipant(SS_HOST);
+        bound.setDid(ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST).toString());
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(bound));
+
+        assertThat(service.readContextStatus(SYSTEM_CONTEXT).identityStatus()).isEqualTo(IdentityStatus.UNKNOWN);
+    }
+
+    @Test
+    void readContextStatusKeepsTheContextAndCredentialReadsWhenTheIdentityAssessmentFails() {
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenThrow(new IllegalStateException("unexpected"));
+
+        var status = service.readContextStatus(MEMBER_CONTEXT);
+
+        assertThat(status.contextCreated()).isFalse();
+        assertThat(status.contextDidUnreadable()).isFalse();
+        assertThat(status.credentialStatus()).isEqualTo(CredentialStatus.ABSENT);
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.UNKNOWN);
+    }
+
+    @Test
+    void readContextStatusPropagatesADatabaseFailure() {
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenThrow(new DataAccessResourceFailureException("db down"));
+
+        assertThatThrownBy(() -> service.readContextStatus(MEMBER_CONTEXT)).isInstanceOf(DataAccessResourceFailureException.class);
+    }
+
+    @Test
+    void readContextStatusKeepsTheObservedContextWhenTheCredentialReadFails() {
+        when(identityHubClient.contextDid(MEMBER_CONTEXT.participantId()))
+                .thenReturn(Optional.of(ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST)));
+        when(identityHubClient.getCredentialRequestState(eq(MEMBER_CONTEXT.participantId()), anyString()))
+                .thenThrow(new IllegalStateException("identity hub down"));
+
+        var status = service.readContextStatus(MEMBER_CONTEXT);
+
+        assertThat(status.contextCreated()).isTrue();
+        assertThat(status.credentialStatus()).isEqualTo(CredentialStatus.UNKNOWN);
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
+    }
+
+    @Test
+    void readContextStatusReportsUnknownCredentialStatusWhenTheContextDidIsUnreadable() {
+        when(identityHubClient.contextDid(MEMBER_CONTEXT.participantId()))
+                .thenThrow(new IllegalStateException("identity hub down"));
+
+        var status = service.readContextStatus(MEMBER_CONTEXT);
+
+        assertThat(status.contextCreated()).isFalse();
+        assertThat(status.contextDidUnreadable()).isTrue();
+        assertThat(status.credentialStatus()).isEqualTo(CredentialStatus.UNKNOWN);
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
+    }
+
+    @Test
+    void readContextStatusReportsTheDidDerivedForASystemContext() {
+        var systemDid = ParticipantIdentifierScheme.systemDid(SS_HOST);
+        when(identityHubClient.contextDid(SYSTEM_CONTEXT.participantId())).thenReturn(Optional.of(systemDid));
+
+        var status = service.readContextStatus(SYSTEM_CONTEXT);
+
+        assertThat(status.intendedDid()).isEqualTo(systemDid);
+        assertThat(status.contextDidMatchesIntended()).isTrue();
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
+    }
+
+    @Test
+    void readContextStatusReportsTheBoundDidAsIntendedForASystemContext() {
+        var bound = boundSystemParticipant(SS_HOST);
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(bound));
+        when(identityHubClient.contextDid(SYSTEM_CONTEXT.participantId())).thenReturn(Optional.of(Did.parse(bound.getDid())));
+
+        var status = service.readContextStatus(SYSTEM_CONTEXT);
+
+        assertThat(status.intendedDid()).isEqualTo(Did.parse(bound.getDid()));
+        assertThat(status.contextDidMatchesIntended()).isTrue();
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.OK);
+    }
+
+    @Test
+    void readContextStatusFlagsASystemContextWhoseHubDidDrifted() {
+        when(identityHubClient.contextDid(SYSTEM_CONTEXT.participantId()))
+                .thenReturn(Optional.of(ParticipantIdentifierScheme.systemDid("ih.other.test:7183")));
+
+        var status = service.readContextStatus(SYSTEM_CONTEXT);
+
+        assertThat(status.contextCreated()).isTrue();
+        assertThat(status.intendedDid()).isEqualTo(ParticipantIdentifierScheme.systemDid(SS_HOST));
+        assertThat(status.contextDidMatchesIntended()).isFalse();
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.DRIFTED);
+    }
+
+    @Test
+    void readContextStatusReportsTheBoundDidAsIntendedForAMember() {
+        var bound = boundParticipant(MEMBER, SS_HOST);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
+        when(identityHubClient.contextDid(MEMBER_CONTEXT.participantId())).thenReturn(Optional.of(Did.parse(bound.getDid())));
+
+        var status = service.readContextStatus(MEMBER_CONTEXT);
+
+        assertThat(status.intendedDid()).isEqualTo(Did.parse(bound.getDid()));
+        assertThat(status.contextDidMatchesIntended()).isTrue();
+        assertThat(status.identityStatus()).isEqualTo(IdentityStatus.OK);
+    }
+
+    @Test
+    void readContextStatusLeavesTheIntendedDidUnknownWhileTheRegisteredAddressIsUnknown() {
+        when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(null);
+        when(identityHubClient.contextDid(SYSTEM_CONTEXT.participantId()))
+                .thenReturn(Optional.of(ParticipantIdentifierScheme.systemDid(SS_HOST)));
+
+        var status = service.readContextStatus(SYSTEM_CONTEXT);
+
+        assertThat(status.contextCreated()).isTrue();
+        assertThat(status.intendedDid()).isNull();
+        assertThat(status.contextDidMatchesIntended()).isFalse();
     }
 
     @Test
     void ensureParticipantContextThrowsOnHubDidDrift() {
-        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
         var memberCtxId = ParticipantIdentifierScheme.memberCtxId(MEMBER);
         when(identityHubClient.contextDid(memberCtxId))
                 .thenReturn(Optional.of(ParticipantIdentifierScheme.memberDid(MEMBER, "ih.other.test:7183")));
+        var context = new ParticipantContext(memberCtxId, ParticipantKind.MEMBER, MEMBER);
 
-        assertThatThrownBy(() -> service.ensureParticipantContext(memberCtxId, ParticipantKind.MEMBER, MEMBER))
+        assertThatThrownBy(() -> service.ensureParticipantContext(context))
                 .isInstanceOf(XrdRuntimeException.class)
                 .satisfies(e -> assertThat(((XrdRuntimeException) e).getErrorCode())
                         .isEqualTo(ErrorCode.DSP_PARTICIPANT_DID_DRIFT.code()));
 
-        verify(identityHubClient, never()).createParticipantContext(any(), any(), any(), any(), any(), any());
+        verify(identityHubClient, never()).createParticipantContext(any());
         verify(controlPlaneClient, never()).createParticipantContext(any(), any());
     }
 
     @Test
     void ensureParticipantContextProceedsWhenHubDidMatchesIntended() {
-        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.empty());
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
         var memberCtxId = ParticipantIdentifierScheme.memberCtxId(MEMBER);
         var expectedDid = ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST);
         when(identityHubClient.contextDid(memberCtxId)).thenReturn(Optional.of(expectedDid));
 
-        service.ensureParticipantContext(memberCtxId, ParticipantKind.MEMBER, MEMBER);
+        service.ensureParticipantContext(new ParticipantContext(memberCtxId, ParticipantKind.MEMBER, MEMBER));
 
-        verify(identityHubClient).createParticipantContext(any(), eq(expectedDid), eq(slashForm(MEMBER)), any(), any(), any());
-    }
-
-    // --- readIdentityStatus ---
-
-    @Test
-    void readIdentityStatusReportsUnboundWhenNoRowExists() {
-        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.empty());
-
-        assertThat(service.readIdentityStatus(MEMBER)).isEqualTo(IdentityStatus.UNBOUND);
+        var request = capturedIhCreateRequest();
+        assertThat(request.did()).isEqualTo(expectedDid);
+        assertThat(request.memberId()).isEqualTo(slashForm(MEMBER));
+        assertThat(request.reanchorMemberIdOnConflict()).isFalse();
     }
 
     @Test
-    void readIdentityStatusReportsOkWhenBoundRowMatchesDerivation() {
-        when(dsParticipantRepository.findByMemberIdentifier(MEMBER))
-                .thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
+    void ensureParticipantContextLogsCreationWhenHubHadNoContext() {
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(boundSystemParticipant(SS_HOST)));
 
-        assertThat(service.readIdentityStatus(MEMBER)).isEqualTo(IdentityStatus.OK);
+        var logs = capturedLogs(() -> service.ensureParticipantContext(SYSTEM_CONTEXT));
+
+        assertThat(logs).anyMatch(line -> line.equals(
+                "Data space provisioning: participant context " + SYSTEM_CONTEXT.participantId() + " created"));
     }
 
     @Test
-    void readIdentityStatusReportsMismatchWhenBoundRowDiffersFromDerivation() {
-        when(dsParticipantRepository.findByMemberIdentifier(MEMBER))
-                .thenReturn(Optional.of(boundParticipant(MEMBER, "ih.other.test:7183")));
+    void ensureParticipantContextDoesNotLogCreationWhenHubAlreadyServesTheContext() {
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
+        var memberCtxId = ParticipantIdentifierScheme.memberCtxId(MEMBER);
+        when(identityHubClient.contextDid(memberCtxId))
+                .thenReturn(Optional.of(ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST)));
+        var context = new ParticipantContext(memberCtxId, ParticipantKind.MEMBER, MEMBER);
 
-        assertThat(service.readIdentityStatus(MEMBER)).isEqualTo(IdentityStatus.MISMATCH);
+        var logs = capturedLogs(() -> service.ensureParticipantContext(context));
+
+        assertThat(logs).noneMatch(line -> line.contains("created"));
+        verify(identityHubClient).createParticipantContext(any());
+    }
+
+    private static List<String> capturedLogs(Runnable action) {
+        var logger = (Logger) LoggerFactory.getLogger(DataspaceProvisioningService.class);
+        var previousLevel = logger.getLevel();
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.setLevel(Level.INFO);
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previousLevel);
+            appender.stop();
+        }
+        return appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
     }
 
     @Test
-    void readIdentityStatusReportsVersionUnsupportedForUnknownSchemeVersion() {
+    void ensureControlPlaneContextReappliesContextAndStsConfigWithTheGivenDidOnly() {
+        var hubDid = ParticipantIdentifierScheme.memberDid(MEMBER, SS_HOST);
+
+        service.ensureControlPlaneContext(MEMBER_CONTEXT, hubDid);
+
+        verify(controlPlaneClient).createParticipantContext(MEMBER_CONTEXT.participantId(), hubDid);
+        verify(controlPlaneClient).putParticipantContextConfig(eq(MEMBER_CONTEXT.participantId()), eq(hubDid), any());
+        verify(identityHubClient, never()).contextDid(any());
+        verify(identityHubClient, never()).createParticipantContext(any());
+        verify(dsParticipantRepository, never()).findByMemberIdentifier(any());
+    }
+
+    // --- ensureParticipantContext (SYSTEM) ---
+
+    @Test
+    void ensureParticipantContextRefusesSystemWithNoBindingRowBeforeAnyWrite() {
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.empty());
+
+        assertRefusedForMissingBinding(SYSTEM_CONTEXT);
+    }
+
+    @Test
+    void ensureParticipantContextRefusesSystemWhoseBindingRowIsDecommissionedBeforeAnyWrite() {
+        var decommissioned = boundSystemParticipant(SS_HOST);
+        decommissioned.setState(ParticipantState.DECOMMISSIONED);
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(decommissioned));
+
+        assertRefusedForMissingBinding(SYSTEM_CONTEXT);
+    }
+
+    @Test
+    void ensureParticipantContextUsesBoundDidWhenSystemRowExists() {
+        var bound = boundSystemParticipant(SS_HOST);
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(bound));
+
+        service.ensureParticipantContext(SYSTEM_CONTEXT);
+
+        var request = capturedIhCreateRequest();
+        assertThat(request.did()).isEqualTo(Did.parse(bound.getDid()));
+        assertThat(request.memberId()).isEqualTo(slashForm(OWNER));
+        assertThat(request.reanchorMemberIdOnConflict()).isTrue();
+    }
+
+    @Test
+    void ensureParticipantContextUsesBoundSystemDidWhenRegisteredAddressDiffersFromBoundRow() {
+        var bound = boundSystemParticipant("ih.other.test:7183");
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(bound));
+
+        service.ensureParticipantContext(SYSTEM_CONTEXT);
+
+        assertThat(capturedIhCreateRequest().did()).isEqualTo(Did.parse(bound.getDid()));
+    }
+
+    @Test
+    void ensureParticipantContextForSystemNeverConsultsMemberIdentifierLookup() {
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(boundSystemParticipant(SS_HOST)));
+
+        service.ensureParticipantContext(SYSTEM_CONTEXT);
+
+        verify(dsParticipantRepository).findSystemParticipant();
+        verify(dsParticipantRepository, never()).findByMemberIdentifier(any());
+    }
+
+    // --- ensureParticipantContext credential-issuance-safe signal ---
+
+    @Test
+    void ensureParticipantContextReportsConfirmedForMemberWhenNoReanchorRequested() {
+        when(dsParticipantRepository.findByMemberIdentifier(OWNER))
+                .thenReturn(Optional.of(boundParticipant(OWNER, SS_HOST)));
+        when(identityHubClient.createParticipantContext(argThat(request ->
+                PARTICIPANT_ID.equals(request.participantContextId()) && !request.reanchorMemberIdOnConflict())))
+                .thenReturn(true);
+
+        var anchor = service.ensureParticipantContext(GENERIC_CONTEXT);
+
+        assertThat(anchor).isTrue();
+    }
+
+    @Test
+    void ensureParticipantContextReportsUnconfirmedForSystemWhenReanchorUnconfirmed() {
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(boundSystemParticipant(SS_HOST)));
+        when(identityHubClient.createParticipantContext(argThat(request ->
+                ParticipantIdentifierScheme.SYSTEM_SEGMENT.equals(request.participantContextId())
+                        && request.reanchorMemberIdOnConflict())))
+                .thenReturn(false);
+
+        var anchor = service.ensureParticipantContext(SYSTEM_CONTEXT);
+
+        assertThat(anchor).isFalse();
+    }
+
+    @Test
+    void ensureParticipantContextReportsConfirmedForSystemWhenReanchorConfirmed() {
+        when(dsParticipantRepository.findSystemParticipant()).thenReturn(Optional.of(boundSystemParticipant(SS_HOST)));
+        when(identityHubClient.createParticipantContext(argThat(request ->
+                ParticipantIdentifierScheme.SYSTEM_SEGMENT.equals(request.participantContextId())
+                        && request.reanchorMemberIdOnConflict())))
+                .thenReturn(true);
+
+        var anchor = service.ensureParticipantContext(SYSTEM_CONTEXT);
+
+        assertThat(anchor).isTrue();
+    }
+
+    // --- ensureMembershipCredential / readCredentialStatus (SYSTEM re-anchor) ---
+
+    @Test
+    void ensureMembershipCredentialForSystemParticipantIsIdempotentWhileActiveCredentialExists() {
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OWNER)))
+                .thenReturn(CredentialStatus.ISSUED.name());
+
+        assertThat(service.ensureMembershipCredential(SYSTEM_CONTEXT))
+                .isEqualTo(CredentialStatus.ISSUED);
+        assertThat(service.ensureMembershipCredential(SYSTEM_CONTEXT))
+                .isEqualTo(CredentialStatus.ISSUED);
+
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialForSystemSkipsWhenCredentialSubjectMatchesCurrentOwner() {
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OWNER)))
+                .thenReturn(CredentialStatus.ISSUED.name());
+
+        var status = service.ensureMembershipCredential(SYSTEM_CONTEXT);
+
+        assertThat(status).isEqualTo(CredentialStatus.ISSUED);
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialForSystemSkipsWhenSubjectRequestIsPendingInFlight() {
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OWNER)))
+                .thenReturn(CredentialStatus.PENDING.name());
+
+        var status = service.ensureMembershipCredential(SYSTEM_CONTEXT);
+
+        assertThat(status).isEqualTo(CredentialStatus.PENDING);
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialForSystemIssuesWhenNoActiveCredentialExists() {
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OWNER)))
+                .thenReturn(null);
+
+        var status = service.ensureMembershipCredential(SYSTEM_CONTEXT);
+
+        assertThat(status).isEqualTo(CredentialStatus.PENDING);
+        verify(identityHubClient).requestMembershipCredential(eq(ParticipantIdentifierScheme.SYSTEM_SEGMENT), any(),
+                eq(ownerHolderPidSlot0(OWNER)), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void ensureMembershipCredentialForSystemReanchorsAndIssuesOnNewOwnerWhenOwnerChangesWithoutRevokingOldCredential() {
+        // Stale credential from the previous owner (OWNER) is left ISSUED at its own base; the new owner's
+        // base has never been used, so the mismatch surfaces as "nothing active there yet" and a fresh
+        // credential is issued on the new owner (OTHER_MEMBER) — the old one is neither read nor touched.
+        lenient().when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OWNER)))
+                .thenReturn(CredentialStatus.ISSUED.name());
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OTHER_MEMBER)))
+                .thenReturn(null);
+
+        var status = service.ensureMembershipCredential(SYSTEM_CONTEXT_OTHER_OWNER);
+
+        assertThat(status).isEqualTo(CredentialStatus.PENDING);
+        verify(identityHubClient).requestMembershipCredential(eq(ParticipantIdentifierScheme.SYSTEM_SEGMENT), any(),
+                eq(ownerHolderPidSlot0(OTHER_MEMBER)), anyString(), anyString(), anyString());
+        verify(identityHubClient, never()).requestMembershipCredential(eq(ParticipantIdentifierScheme.SYSTEM_SEGMENT), any(),
+                eq(ownerHolderPidSlot0(OWNER)), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void readCredentialStatusForSystemReflectsCredentialAnchoredToCurrentOwner() {
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OWNER)))
+                .thenReturn(CredentialStatus.ISSUED.name());
+        when(identityHubClient.getCredentialRequestState(ParticipantIdentifierScheme.SYSTEM_SEGMENT, ownerHolderPidSlot0(OTHER_MEMBER)))
+                .thenReturn(null);
+
+        assertThat(service.readCredentialStatus(SYSTEM_CONTEXT))
+                .isEqualTo(CredentialStatus.ISSUED);
+        assertThat(service.readCredentialStatus(SYSTEM_CONTEXT_OTHER_OWNER))
+                .isNull();
+    }
+
+    @Test
+    void ensureMembershipCredentialForNonSystemKindsUsesUnsaltedHolderPidRegardlessOfMemberId() {
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0)).thenReturn(CredentialStatus.ISSUED.name());
+
+        var status = service.ensureMembershipCredential(new ParticipantContext(PARTICIPANT_ID, ParticipantKind.MEMBER, MEMBER));
+
+        assertThat(status).isEqualTo(CredentialStatus.ISSUED);
+    }
+
+    @Test
+    void holderPidsDifferBetweenSecurityServersHostingTheSameMember() {
+        var otherServerConf = mock(ServerConfEntity.class);
+        var otherOwnerEntity = mock(ClientEntity.class);
+        lenient().when(otherOwnerEntity.getIdentifier()).thenReturn(ClientIdEntityFactory.create(OTHER_MEMBER));
+        when(otherServerConf.getOwner()).thenReturn(otherOwnerEntity);
+        when(otherServerConf.getServerCode()).thenReturn("SS1");
+        var otherServerConfRepository = mock(ServerConfRepository.class);
+        when(otherServerConfRepository.getServerConf()).thenReturn(otherServerConf);
+        var otherResolver = new OwnSecurityServerResolver(
+                new ServerConfRepositoryIdentitySource(otherServerConfRepository), globalConfProvider);
+        var otherService = new DataspaceProvisioningService(adminServiceProperties, identityHubClient,
+                controlPlaneClient, clientRepository, otherResolver, dsParticipantRepository, globalConfProvider,
+                new DataspaceDidAuthority(otherResolver, adminServiceProperties));
+        var memberContext = new ParticipantContext(PARTICIPANT_ID, ParticipantKind.MEMBER, MEMBER);
+        var otherHolderPid = holderPidBase(PARTICIPANT_ID, OTHER_MEMBER, "SS1");
+
+        service.ensureMembershipCredential(memberContext);
+        otherService.ensureMembershipCredential(memberContext);
+
+        assertThat(otherHolderPid).isNotEqualTo(HOLDER_PID_SLOT0);
+        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), any(), eq(HOLDER_PID_SLOT0),
+                anyString(), anyString(), anyString());
+        verify(identityHubClient).requestMembershipCredential(eq(PARTICIPANT_ID), any(), eq(otherHolderPid),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void holderPidsDifferBetweenSecurityServersWithTheSameOwnerForMemberAndSystemContexts() {
+        var otherServerConf = mock(ServerConfEntity.class);
+        var ownerEntity = mock(ClientEntity.class);
+        lenient().when(ownerEntity.getIdentifier()).thenReturn(ClientIdEntityFactory.create(OWNER));
+        when(otherServerConf.getOwner()).thenReturn(ownerEntity);
+        when(otherServerConf.getServerCode()).thenReturn("SS1");
+        var otherServerConfRepository = mock(ServerConfRepository.class);
+        when(otherServerConfRepository.getServerConf()).thenReturn(otherServerConf);
+        var otherResolver = new OwnSecurityServerResolver(
+                new ServerConfRepositoryIdentitySource(otherServerConfRepository), globalConfProvider);
+        var otherService = new DataspaceProvisioningService(adminServiceProperties, identityHubClient,
+                controlPlaneClient, clientRepository, otherResolver, dsParticipantRepository, globalConfProvider,
+                new DataspaceDidAuthority(otherResolver, adminServiceProperties));
+
+        service.ensureMembershipCredential(SYSTEM_CONTEXT);
+        otherService.ensureMembershipCredential(SYSTEM_CONTEXT);
+        service.ensureMembershipCredential(GENERIC_CONTEXT);
+        otherService.ensureMembershipCredential(GENERIC_CONTEXT);
+
+        for (var participantId : List.of(ParticipantIdentifierScheme.SYSTEM_SEGMENT, PARTICIPANT_ID)) {
+            verify(identityHubClient).requestMembershipCredential(eq(participantId), any(),
+                    eq(holderPidBase(participantId, OWNER, "SS0")), anyString(), anyString(), anyString());
+            verify(identityHubClient).requestMembershipCredential(eq(participantId), any(),
+                    eq(holderPidBase(participantId, OWNER, "SS1")), anyString(), anyString(), anyString());
+        }
+    }
+
+    @Test
+    void holderPidSlotSuffixesFollowTheHostingServerBase() {
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0))
+                .thenReturn(CredentialStatus.ERROR.name());
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT1))
+                .thenReturn(CredentialStatus.ISSUED.name());
+
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.ISSUED);
+        assertThat(service.readCredentialStatus(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.ISSUED);
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void holderPidIsStableAcrossCallsSoEarlierRequestIsFound() {
+        when(identityHubClient.getCredentialRequestState(PARTICIPANT_ID, HOLDER_PID_SLOT0))
+                .thenReturn(null)
+                .thenReturn("REQUESTED");
+
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.PENDING);
+        assertThat(service.ensureMembershipCredential(GENERIC_CONTEXT)).isEqualTo(CredentialStatus.PENDING);
+        verify(identityHubClient, times(1)).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialForSystemWithUnknownOwnerReturnsUnknownWithoutTouchingHub() {
+        var status = service.ensureMembershipCredential(SYSTEM_CONTEXT_NO_OWNER);
+
+        assertThat(status).isEqualTo(CredentialStatus.UNKNOWN);
+        verify(identityHubClient, never()).getCredentialRequestState(any(), any());
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void readCredentialStatusForSystemWithUnknownOwnerReturnsUnknownWithoutTouchingHub() {
+        var status = service.readCredentialStatus(SYSTEM_CONTEXT_NO_OWNER);
+
+        assertThat(status).isEqualTo(CredentialStatus.UNKNOWN);
+        verify(identityHubClient, never()).getCredentialRequestState(any(), any());
+    }
+
+    @Test
+    void ensureMembershipCredentialReturnsUnknownWithoutTouchingHubWhenOwnerNotInitialised() {
+        givenServerConfWithoutOwner();
+
+        var status = service.ensureMembershipCredential(GENERIC_CONTEXT);
+
+        assertThat(status).isEqualTo(CredentialStatus.UNKNOWN);
+        verify(identityHubClient, never()).getCredentialRequestState(any(), any());
+        verify(identityHubClient, never()).requestMembershipCredential(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void readCredentialStatusReturnsUnknownWithoutTouchingHubWhenOwnerNotInitialised() {
+        givenServerConfWithoutOwner();
+
+        var status = service.readCredentialStatus(GENERIC_CONTEXT);
+
+        assertThat(status).isEqualTo(CredentialStatus.UNKNOWN);
+        verify(identityHubClient, never()).getCredentialRequestState(any(), any());
+    }
+
+    private static String ownerHolderPidSlot0(ClientId owner) {
+        return holderPidBase(ParticipantIdentifierScheme.SYSTEM_SEGMENT, owner, "SS0");
+    }
+
+    private static String holderPidBase(String participantId, ClientId owner, String serverCode) {
+        return participantId + "-" + ParticipantIdentifierScheme.memberCtxId(owner) + ":" + serverCode
+                + "-xroad-membership-credential-request";
+    }
+
+    // --- decommissioned bindings are treated as unbound ---
+
+    @Test
+    void ensureParticipantContextRefusesAMemberWhoseBindingRowIsDecommissionedBeforeAnyWrite() {
+        var decommissioned = boundParticipant(MEMBER, SS_HOST);
+        decommissioned.setState(ParticipantState.DECOMMISSIONED);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(decommissioned));
+
+        assertRefusedForMissingBinding(MEMBER_CONTEXT);
+    }
+
+    private void assertRefusedForMissingBinding(ParticipantContext context) {
+        assertThatThrownBy(() -> service.ensureParticipantContext(context))
+                .isInstanceOf(XrdRuntimeException.class)
+                .satisfies(e -> assertThat(((XrdRuntimeException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.DSP_PROVISIONING_FAILED.code()));
+
+        verifyNoInteractions(identityHubClient, controlPlaneClient);
+    }
+
+    @Test
+    void readContextStatusReportsUnboundWhenBoundRowIsDecommissioned() {
+        var decommissioned = boundParticipant(MEMBER, SS_HOST);
+        decommissioned.setState(ParticipantState.DECOMMISSIONED);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(decommissioned));
+
+        assertThat(service.readContextStatus(MEMBER_CONTEXT).identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
+    }
+
+    @Test
+    void readContextStatusReportsVersionUnsupportedForUnknownSchemeVersion() {
         var bound = boundParticipant(MEMBER, SS_HOST);
         bound.setSchemeVersion("v0");
         when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.of(bound));
 
-        assertThat(service.readIdentityStatus(MEMBER)).isEqualTo(IdentityStatus.VERSION_UNSUPPORTED);
+        assertThat(service.readContextStatus(MEMBER_CONTEXT).identityStatus())
+                .isEqualTo(IdentityStatus.VERSION_UNSUPPORTED);
     }
 
     @Test
-    void readIdentityStatusReportsUnknownWhenRepositoryFails() {
+    void readContextStatusReportsOkForBoundRowWithoutRegisteredAddress() {
+        lenient().when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(null);
         when(dsParticipantRepository.findByMemberIdentifier(MEMBER))
-                .thenThrow(new DataAccessResourceFailureException("connection lost"));
+                .thenReturn(Optional.of(boundParticipant(MEMBER, SS_HOST)));
 
-        assertThat(service.readIdentityStatus(MEMBER)).isEqualTo(IdentityStatus.UNKNOWN);
+        assertThat(service.readContextStatus(MEMBER_CONTEXT).identityStatus()).isEqualTo(IdentityStatus.OK);
+    }
+
+    @Test
+    void readContextStatusReportsUnboundWithoutRegisteredAddressWhenNoRowExists() {
+        when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(null);
+        when(dsParticipantRepository.findByMemberIdentifier(MEMBER)).thenReturn(Optional.empty());
+
+        assertThat(service.readContextStatus(MEMBER_CONTEXT).identityStatus()).isEqualTo(IdentityStatus.UNBOUND);
+    }
+
+    // --- registeredAddressKnown ---
+
+    @Test
+    void registeredAddressKnownIsFalseWhileGlobalConfIsNotReadable() {
+        when(globalConfProvider.getSecurityServerAddress(SERVER_ID))
+                .thenThrow(XrdRuntimeException.systemInternalError("Shared params for instance identifier TEST not found"));
+
+        assertThat(service.registeredAddressKnown()).isFalse();
+    }
+
+    @Test
+    void registeredAddressKnownIsFalseWhileRegistrationIsNotInGlobalConf() {
+        when(globalConfProvider.getSecurityServerAddress(SERVER_ID)).thenReturn(null);
+
+        assertThat(service.registeredAddressKnown()).isFalse();
+    }
+
+    @Test
+    void registeredAddressKnownIsTrueForRegisteredServer() {
+        assertThat(service.registeredAddressKnown()).isTrue();
+    }
+
+    // --- decommissionedParticipants / teardownParticipant ---
+
+    @Test
+    void decommissionedParticipantsReturnsBoundRowsMarkedDecommissioned() {
+        var decommissioned = boundParticipant(MEMBER, SS_HOST);
+        decommissioned.setState(ParticipantState.DECOMMISSIONED);
+        decommissioned.setId(42L);
+        when(dsParticipantRepository.findDecommissioned()).thenReturn(List.of(decommissioned));
+
+        var tombstones = service.decommissionedParticipants();
+
+        assertThat(tombstones).containsExactly(
+                new DataspaceProvisioningService.TombstonedParticipant(42L, ParticipantIdentifierScheme.memberCtxId(MEMBER)));
+    }
+
+    @Test
+    void teardownParticipantDeletesControlPlaneThenHubThenRow() {
+        var tombstone = new DataspaceProvisioningService.TombstonedParticipant(7L, PARTICIPANT_ID);
+
+        service.teardownParticipant(tombstone);
+
+        var order = inOrder(controlPlaneClient, identityHubClient, dsParticipantRepository);
+        order.verify(controlPlaneClient).deleteParticipantContext(PARTICIPANT_ID);
+        order.verify(identityHubClient).deleteParticipantContext(PARTICIPANT_ID);
+        order.verify(dsParticipantRepository).delete(7L);
+    }
+
+    @Test
+    void teardownParticipantLogsConvergenceOutcome() {
+        var tombstone = new DataspaceProvisioningService.TombstonedParticipant(7L, PARTICIPANT_ID);
+
+        service.teardownParticipant(tombstone);
+
+        assertThat(appender.list)
+                .filteredOn(event -> event.getLevel() == Level.INFO)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(message -> assertThat(message)
+                        .contains(PARTICIPANT_ID)
+                        .containsIgnoringCase("control plane")
+                        .containsIgnoringCase("identity hub")
+                        .containsIgnoringCase("row"));
     }
 
     private void givenServerConfWithOwner(ClientId owner) {
         var ownerEntity = clientWith(owner);
         var serverConf = mock(ServerConfEntity.class);
         when(serverConf.getOwner()).thenReturn(ownerEntity);
+        lenient().when(serverConf.getServerCode()).thenReturn(SERVER_ID.getServerCode());
+        when(serverConfRepository.getServerConf()).thenReturn(serverConf);
+    }
+
+    private void givenServerConfWithoutOwner() {
+        var serverConf = mock(ServerConfEntity.class);
+        when(serverConf.getOwner()).thenReturn(null);
         when(serverConfRepository.getServerConf()).thenReturn(serverConf);
     }
 
@@ -586,7 +1386,17 @@ class DataspaceProvisioningServiceTest {
         participant.setParticipantType(ParticipantType.MEMBER);
         participant.setMemberIdentifier(ClientIdEntityFactory.create(member));
         participant.setCtxId(ParticipantIdentifierScheme.memberCtxId(member));
-        participant.setDid(ParticipantIdentifierScheme.memberDid(member, ssHost));
+        participant.setDid(ParticipantIdentifierScheme.memberDid(member, ssHost).toString());
+        participant.setSchemeVersion(ParticipantIdentifierScheme.SCHEME_VERSION);
+        participant.setState(ParticipantState.ACTIVE);
+        return participant;
+    }
+
+    private DsParticipantEntity boundSystemParticipant(String ssHost) {
+        var participant = new DsParticipantEntity();
+        participant.setParticipantType(ParticipantType.SYSTEM);
+        participant.setCtxId(ParticipantIdentifierScheme.SYSTEM_SEGMENT);
+        participant.setDid(ParticipantIdentifierScheme.systemDid(ssHost).toString());
         participant.setSchemeVersion(ParticipantIdentifierScheme.SCHEME_VERSION);
         participant.setState(ParticipantState.ACTIVE);
         return participant;
@@ -596,7 +1406,9 @@ class DataspaceProvisioningServiceTest {
         return "%s/%s/%s".formatted(id.getXRoadInstance(), id.getMemberClass(), id.getMemberCode());
     }
 
-    private static String argThatEndsWith(String suffix) {
-        return argThat(value -> value != null && value.endsWith(suffix));
+    private CreateParticipantContextRequest capturedIhCreateRequest() {
+        var captor = ArgumentCaptor.forClass(CreateParticipantContextRequest.class);
+        verify(identityHubClient).createParticipantContext(captor.capture());
+        return captor.getValue();
     }
 }

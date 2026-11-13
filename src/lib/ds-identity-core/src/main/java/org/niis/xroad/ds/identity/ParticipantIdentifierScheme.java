@@ -27,6 +27,7 @@ package org.niis.xroad.ds.identity;
 
 import ee.ria.xroad.common.identifier.ClientId;
 
+import com.apicatalog.did.Did;
 import lombok.experimental.UtilityClass;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
 
@@ -37,6 +38,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Map;
 
 import static org.niis.xroad.common.core.exception.ErrorCode.INVALID_CLIENT_IDENTIFIER;
 import static org.niis.xroad.common.core.exception.ErrorCode.INVALID_ENCODED_ID;
@@ -51,6 +53,10 @@ import static org.niis.xroad.common.core.exception.ErrorCode.VALIDATION_ERROR;
  * recovers the original member identifier. Decoding accepts only the canonical form — uppercase hex
  * escapes, and escapes only for characters that require encoding — so no two accepted encoded forms
  * decode to the same participant.
+ *
+ * <p>DIDs are handed out and taken in as {@link Did} values: the type guarantees DID syntax
+ * (method name, {@code idchar} set, well-formed percent-escapes); this class adds the
+ * {@code did:web} host escaping and the v1 segment layout on top.
  */
 @UtilityClass
 public class ParticipantIdentifierScheme {
@@ -67,20 +73,29 @@ public class ParticipantIdentifierScheme {
      */
     public static final String SYSTEM_SEGMENT = "system";
 
-    private static final String DID_PREFIX_SCHEME = "did";
-    private static final String DID_PREFIX_METHOD = "web";
+    /** The DID method every participant DID uses. */
+    public static final String DID_METHOD = "web";
+
+    /**
+     * The most characters a participant DID may have: the size of the {@code did} column that stores it. A
+     * member ctx-id is a suffix of its DID, so it never exceeds this either.
+     */
+    public static final int MAX_DID_LENGTH = 4000;
+
     private static final String SEGMENT_SEPARATOR = ":";
 
-    /** did:web's fixed escape for the authority's port separator. */
-    private static final String HOST_PORT_ESCAPE = "3A";
+    /** did:web's fixed escapes for the authority's port separator and IPv6 literal brackets. */
+    private static final Map<Character, String> HOST_ESCAPES_BY_CHAR = Map.of(':', "3A", '[', "5B", ']', "5D");
+    private static final Map<String, Character> HOST_CHARS_BY_ESCAPE = Map.of("3A", ':', "5B", '[', "5D", ']');
+    private static final int HOST_ESCAPE_HEX_LENGTH = 2;
 
     /** Number of segments in a member ctx-id, and in a member DID's payload after {@link #SCHEME_VERSION}. */
     private static final int MEMBER_SEGMENT_COUNT = 3;
 
-    // DID layout: did : web : {host} : v1 : {payload...}
-    private static final int DID_HOST_INDEX = 2;
-    private static final int DID_VERSION_INDEX = 3;
-    private static final int DID_PAYLOAD_START_INDEX = 4;
+    // method-specific-id layout: {host} : v1 : {payload...}
+    private static final int DID_HOST_INDEX = 0;
+    private static final int DID_VERSION_INDEX = 1;
+    private static final int DID_PAYLOAD_START_INDEX = 2;
     private static final int MIN_DID_SEGMENT_COUNT = DID_PAYLOAD_START_INDEX + 1;
 
     private static final int PERCENT_ESCAPE_HEX_LENGTH = 2;
@@ -108,10 +123,10 @@ public class ParticipantIdentifierScheme {
      * @param ssHost the Security Server's public address, as {@code host} or {@code host:port}
      * @return the member's per-server DID
      */
-    public static String memberDid(ClientId member, String ssHost) {
+    public static Did memberDid(ClientId member, String ssHost) {
         requireMemberIdentifier(member);
 
-        return didPrefix(ssHost) + SEGMENT_SEPARATOR + memberCtxId(member);
+        return didOf(ssHost, memberCtxId(member));
     }
 
     /**
@@ -120,8 +135,19 @@ public class ParticipantIdentifierScheme {
      * @param ssHost the Security Server's public address, as {@code host} or {@code host:port}
      * @return the server's SYSTEM DID
      */
-    public static String systemDid(String ssHost) {
-        return didPrefix(ssHost) + SEGMENT_SEPARATOR + SYSTEM_SEGMENT;
+    public static Did systemDid(String ssHost) {
+        return didOf(ssHost, SYSTEM_SEGMENT);
+    }
+
+    /**
+     * Derives the HOST participant context's DID: {@code did:web:{ss-host}}. Unversioned — it names
+     * the serving address itself, so it is not decodable with {@link #decodeDid(String)}.
+     *
+     * @param ssHost the Security Server's public address, as {@code host} or {@code host:port}
+     * @return the host context's DID
+     */
+    public static Did hostDid(String ssHost) {
+        return Did.of(DID_METHOD, didWebHost(ssHost));
     }
 
     /**
@@ -144,6 +170,33 @@ public class ParticipantIdentifierScheme {
     }
 
     /**
+     * Parses a DID string into a {@link Did}, rejecting anything that is not syntactically a DID.
+     *
+     * @param did the DID in wire form
+     * @return the parsed DID
+     * @throws XrdRuntimeException if the string is blank or not a valid DID
+     */
+    public static Did parseDid(String did) {
+        requireNonBlank(did, "DID");
+        try {
+            return Did.parse(did);
+        } catch (IllegalArgumentException e) {
+            throw malformed("'%s' is not a valid DID: %s", did, e.getMessage());
+        }
+    }
+
+    /**
+     * {@link #decodeDid(Did)} for a DID still in wire form.
+     *
+     * @param did a DID string previously derived with {@link #memberDid(ClientId, String)} or {@link #systemDid(String)}
+     * @return the decoded participant
+     * @throws XrdRuntimeException if the string is not a DID or the DID is malformed
+     */
+    public static DecodedParticipant decodeDid(String did) {
+        return decodeDid(parseDid(did));
+    }
+
+    /**
      * Parses a DID back into either a member identifier or the SYSTEM marker, plus the hosting server's
      * address.
      *
@@ -151,16 +204,15 @@ public class ParticipantIdentifierScheme {
      * @return the decoded participant
      * @throws XrdRuntimeException if the DID is malformed
      */
-    public static DecodedParticipant decodeDid(String did) {
-        requireNonBlank(did, "DID");
-
-        String[] segments = did.split(SEGMENT_SEPARATOR, -1);
-        if (segments.length < MIN_DID_SEGMENT_COUNT) {
-            throw malformed("DID '%s' must have at least %d colon-separated segments, got %d",
-                    did, MIN_DID_SEGMENT_COUNT, segments.length);
+    public static DecodedParticipant decodeDid(Did did) {
+        if (!DID_METHOD.equals(did.method())) {
+            throw malformed("DID '%s' must use the '%s' method, got '%s'", did, DID_METHOD, did.method());
         }
-        if (!DID_PREFIX_SCHEME.equals(segments[0]) || !DID_PREFIX_METHOD.equals(segments[1])) {
-            throw malformed("DID '%s' must start with '%s:%s:'", did, DID_PREFIX_SCHEME, DID_PREFIX_METHOD);
+
+        String[] segments = did.methodSpecificId().split(SEGMENT_SEPARATOR, -1);
+        if (segments.length < MIN_DID_SEGMENT_COUNT) {
+            throw malformed("DID '%s' must have at least %d colon-separated segments after the method, got %d",
+                    did, MIN_DID_SEGMENT_COUNT, segments.length);
         }
         if (!SCHEME_VERSION.equals(segments[DID_VERSION_INDEX])) {
             throw malformed("DID '%s' has unsupported scheme version '%s', expected '%s'",
@@ -180,9 +232,35 @@ public class ParticipantIdentifierScheme {
                 did, SCHEME_VERSION, MEMBER_SEGMENT_COUNT, payload.length);
     }
 
-    private static String didPrefix(String ssHost) {
-        return DID_PREFIX_SCHEME + SEGMENT_SEPARATOR + DID_PREFIX_METHOD
-                + SEGMENT_SEPARATOR + encodeHost(ssHost) + SEGMENT_SEPARATOR + SCHEME_VERSION;
+    /**
+     * Rewrites the percent-escapes of a DID to the canonical encoding: hex digits in uppercase, and an
+     * escape of a character that canonical encoding leaves unescaped replaced by that character. Text that is
+     * not a well-formed escape is left as it is, so the result still fails to decode when the DID is
+     * malformed in another way. Use it to tell a DID whose only defect is its escaping from one that cannot
+     * be decoded at all.
+     *
+     * @param did a DID in wire form
+     * @return the DID with canonical percent-escapes; equal to the argument when it already has them
+     */
+    public static String canonicalPercentEncoding(String did) {
+        var canonical = new StringBuilder(did.length());
+        int i = 0;
+        while (i < did.length()) {
+            int value = did.charAt(i) == '%' ? escapedValue(did, i) : -1;
+            if (value < 0) {
+                canonical.append(did.charAt(i));
+                i++;
+            } else {
+                canonical.append(isUnreserved(value) ? String.valueOf((char) value) : "%%%02X".formatted(value));
+                i += 1 + PERCENT_ESCAPE_HEX_LENGTH;
+            }
+        }
+        return canonical.toString();
+    }
+
+    private static Did didOf(String ssHost, String payload) {
+        return Did.of(DID_METHOD,
+                hostDid(ssHost).methodSpecificId() + SEGMENT_SEPARATOR + SCHEME_VERSION + SEGMENT_SEPARATOR + payload);
     }
 
     private static ClientId toClientId(String[] segments, int offset) {
@@ -217,18 +295,34 @@ public class ParticipantIdentifierScheme {
         return XrdRuntimeException.systemException(INVALID_ENCODED_ID, message, args);
     }
 
-    // -- did:web host encoding: the authority's port separator ':' becomes '%3A', reversed on decode. --
+    // -- did:web host encoding: the authority's port separator ':' and IPv6 literal brackets become
+    //    percent-escapes ('%3A', '%5B', '%5D' — the only escapes a DID's idchar set allows for
+    //    them), reversed on decode. --
 
-    private static String encodeHost(String ssHost) {
+    /**
+     * Encodes a {@code host} or {@code host:port} authority as a {@code did:web} host segment:
+     * the port separator and IPv6 literal brackets become percent-escapes, everything else must
+     * already be a legal host character.
+     *
+     * @param ssHost the authority to encode
+     * @return the encoded {@code did:web} host segment, e.g. {@code %5B2001%3Adb8%3A%3A8%5D%3A7183}
+     * @throws XrdRuntimeException if the authority contains a character that is neither a host
+     *                             character nor escapable
+     */
+    public static String didWebHost(String ssHost) {
         requireNonBlank(ssHost, "ss-host");
         for (int i = 0; i < ssHost.length(); i++) {
             char c = ssHost.charAt(i);
-            if (!isHostChar(c) && c != ':') {
+            if (!isHostChar(c) && HOST_ESCAPES_BY_CHAR.get(c) == null) {
                 throw XrdRuntimeException.systemException(VALIDATION_ERROR,
                         "ss-host '%s' has an invalid character '%s' at index %d", ssHost, c, i);
             }
         }
-        return ssHost.replace(SEGMENT_SEPARATOR, "%" + HOST_PORT_ESCAPE);
+        var encoded = ssHost;
+        for (var escape : HOST_ESCAPES_BY_CHAR.entrySet()) {
+            encoded = encoded.replace(String.valueOf(escape.getKey()), "%" + escape.getValue());
+        }
+        return encoded;
     }
 
     private static boolean isHostChar(char c) {
@@ -248,16 +342,17 @@ public class ParticipantIdentifierScheme {
         while (i < encodedHost.length()) {
             char c = encodedHost.charAt(i);
             if (c == '%') {
-                int escapeEnd = i + 1 + HOST_PORT_ESCAPE.length();
+                int escapeEnd = i + 1 + HOST_ESCAPE_HEX_LENGTH;
                 if (escapeEnd > encodedHost.length()) {
                     throw malformed("DID host segment '%s' has a truncated percent-escape at index %d", encodedHost, i);
                 }
                 String escape = encodedHost.substring(i + 1, escapeEnd);
-                if (!HOST_PORT_ESCAPE.equals(escape)) {
+                Character escapedChar = HOST_CHARS_BY_ESCAPE.get(escape);
+                if (escapedChar == null) {
                     throw malformed("DID host segment '%s' has an unsupported percent-escape '%%%s' at index %d",
                             encodedHost, escape, i);
                 }
-                decoded.append(':');
+                decoded.append(escapedChar.charValue());
                 i = escapeEnd;
             } else if (isHostChar(c)) {
                 decoded.append(c);
@@ -276,6 +371,19 @@ public class ParticipantIdentifierScheme {
                 || (c >= 'a' && c <= 'z')
                 || (c >= '0' && c <= '9')
                 || c == '.' || c == '-' || c == '_';
+    }
+
+    private static int escapedValue(String text, int percentIndex) {
+        if (percentIndex + PERCENT_ESCAPE_HEX_LENGTH >= text.length()) {
+            return -1;
+        }
+        int hi = hexDigit(text.charAt(percentIndex + 1));
+        int lo = hexDigit(text.charAt(percentIndex + 2));
+        return hi < 0 || lo < 0 ? -1 : hi * HEX_RADIX + lo;
+    }
+
+    private static int hexDigit(char c) {
+        return upperHexDigit(Character.toUpperCase(c));
     }
 
     private static int upperHexDigit(char c) {

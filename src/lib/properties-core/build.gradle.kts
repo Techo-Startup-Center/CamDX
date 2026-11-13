@@ -11,11 +11,16 @@ dependencies {
   implementation(libs.slf4j.api)
   implementation(libs.smallrye.config.core)
   implementation(libs.hikariCP)
+  implementation(libs.apache.commonsLang3)
 
   testImplementation(libs.assertj.core)
   testImplementation(libs.h2database)
   testImplementation(libs.mockito.jupiter)
   testImplementation(libs.systemStubs)
+  testImplementation(libs.junit.jupiter.params)
 
   testFixturesImplementation(libs.smallrye.config.core)
+  testFixturesImplementation(libs.h2database)
+  testFixturesImplementation(libs.mockito.core)
+  testFixturesImplementation(libs.systemStubs)
 }

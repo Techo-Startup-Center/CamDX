@@ -26,30 +26,37 @@
  */
 package org.niis.xroad.securityserver.restapi.openapi;
 
+import jakarta.annotation.Nullable;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.niis.xroad.common.vault.DsTlsEnrollmentStatus;
+import org.niis.xroad.restapi.config.audit.AuditEventMethod;
+import org.niis.xroad.restapi.config.audit.RestApiAuditEvent;
 import org.niis.xroad.restapi.openapi.ControllerUtil;
-import org.niis.xroad.restapi.service.DsTlsCertificateService;
+import org.niis.xroad.restapi.util.FormatUtils;
+import org.niis.xroad.securityserver.restapi.openapi.model.AgreementTokenKeyRotationDto;
+import org.niis.xroad.securityserver.restapi.openapi.model.AgreementTokenKeyStatusDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.DataspaceParticipantContextStatusDto;
 import org.niis.xroad.securityserver.restapi.openapi.model.DataspaceProvisioningStatusDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.DataspaceTlsCertificateEnrollmentStatusDto;
-import org.niis.xroad.securityserver.restapi.openapi.model.DataspaceTlsCertificateEnrollmentStatusDto.EnrollmentMethodEnum;
+import org.niis.xroad.securityserver.restapi.openapi.model.DataspacePublicationStateDto;
+import org.niis.xroad.securityserver.restapi.openapi.model.DataspaceServerStatusDto;
+import org.niis.xroad.securityserver.restapi.service.AgreementTokenKeyService;
 import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningService.ParticipantContextStatus;
 import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningStatusService;
 import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningStatusService.DataspaceStatus;
+import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningStatusService.MemberPublication;
+import org.niis.xroad.securityserver.restapi.service.DataspaceProvisioningStatusService.ServerStatus;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 
-import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Data space API controller — read-only provisioning status and DataSpace TLS certificate enrollment status
- * endpoints.
+ * Data space API controller — participant context provisioning status and agreement token signing key
+ * status and rotation endpoints.
  */
 @Controller
 @RequestMapping(ControllerUtil.API_V1_PREFIX)
@@ -59,7 +66,7 @@ import java.util.List;
 public class DataspaceApiController implements DataspaceApi {
 
     private final DataspaceProvisioningStatusService dataspaceProvisioningStatusService;
-    private final DsTlsCertificateService dsTlsCertificateService;
+    private final AgreementTokenKeyService agreementTokenKeyService;
 
     @Override
     @PreAuthorize("hasAuthority('VIEW_DATASPACE_STATUS')")
@@ -69,42 +76,59 @@ public class DataspaceApiController implements DataspaceApi {
     }
 
     @Override
-    @PreAuthorize("hasAuthority('VIEW_DS_TLS_CERT')")
-    public ResponseEntity<DataspaceTlsCertificateEnrollmentStatusDto> getDataspaceTlsCertificateEnrollmentStatus() {
-        DsTlsEnrollmentStatus status = dsTlsCertificateService.getEnrollmentStatus();
-        return new ResponseEntity<>(toDto(status), HttpStatus.OK);
+    @PreAuthorize("hasAuthority('VIEW_AGREEMENT_TOKEN_KEY')")
+    public ResponseEntity<AgreementTokenKeyStatusDto> getAgreementTokenKeyStatus() {
+        var status = agreementTokenKeyService.getStatus();
+        var dto = new AgreementTokenKeyStatusDto()
+                .available(status.available())
+                .activeKeyId(status.activeKeyId())
+                .activeKeyCreatedAt(FormatUtils.fromInstantToOffsetDateTime(status.activeKeyCreatedAt()))
+                .retainedKeyCount(status.retainedKeyCount())
+                .pendingKeyId(status.pendingKeyId());
+        return new ResponseEntity<>(dto, HttpStatus.OK);
     }
 
-    private DataspaceTlsCertificateEnrollmentStatusDto toDto(DsTlsEnrollmentStatus status) {
-        var dto = new DataspaceTlsCertificateEnrollmentStatusDto(
-                status.configured() ? EnrollmentMethodEnum.valueOf(status.method().name()) : EnrollmentMethodEnum.NONE);
-        if (status.nextRenewalTime() != null) {
-            dto.setNextRenewalTime(status.nextRenewalTime().atOffset(ZoneOffset.UTC));
-        }
-        dto.setLastError(status.lastError());
-        return dto;
+    @Override
+    @PreAuthorize("hasAuthority('ROTATE_AGREEMENT_TOKEN_KEY')")
+    @AuditEventMethod(event = RestApiAuditEvent.ROTATE_AGREEMENT_TOKEN_KEY)
+    public ResponseEntity<AgreementTokenKeyRotationDto> rotateAgreementTokenKey() {
+        var newKeyId = agreementTokenKeyService.rotate();
+        return new ResponseEntity<>(new AgreementTokenKeyRotationDto().keyId(newKeyId), HttpStatus.OK);
     }
 
     private DataspaceProvisioningStatusDto toDto(DataspaceStatus status) {
         var dto = new DataspaceProvisioningStatusDto();
         dto.setEnabled(status.enabled());
         dto.setAuthCertRegistered(status.authCertRegistered());
-        dto.setParticipantContexts(toContextDtos(status.participantContexts()));
+        dto.setServer(toServerDto(status.server()));
+        dto.setParticipantContexts(toContextDtos(status.participantContexts(), status.memberPublications()));
         return dto;
     }
 
-    private List<DataspaceParticipantContextStatusDto> toContextDtos(List<ParticipantContextStatus> contexts) {
-        return contexts.stream().map(this::toContextDto).toList();
+    private DataspaceServerStatusDto toServerDto(ServerStatus server) {
+        return new DataspaceServerStatusDto()
+                .dataspaceReady(server.dataspaceReady())
+                .dspBaseUrl(server.dspBaseUrl())
+                .publicationState(DataspacePublicationStateDto.valueOf(server.publicationState().name()))
+                .publicationReason(server.publicationReason());
     }
 
-    private DataspaceParticipantContextStatusDto toContextDto(ParticipantContextStatus ctx) {
+    private List<DataspaceParticipantContextStatusDto> toContextDtos(List<ParticipantContextStatus> contexts,
+                                                                     Map<String, MemberPublication> memberPublications) {
+        return contexts.stream().map(ctx -> toContextDto(ctx, memberPublications.get(ctx.participantId()))).toList();
+    }
+
+    private DataspaceParticipantContextStatusDto toContextDto(ParticipantContextStatus ctx,
+                                                              @Nullable MemberPublication publication) {
         var dto = new DataspaceParticipantContextStatusDto();
         dto.setParticipantId(ctx.participantId());
         dto.setKind(DataspaceParticipantContextStatusDto.KindEnum.valueOf(ctx.kind().name()));
         dto.setContextCreated(ctx.contextCreated());
         dto.setCredentialStatus(DataspaceParticipantContextStatusDto.CredentialStatusEnum.valueOf(ctx.credentialStatus().name()));
-        if (ctx.identityStatus() != null) {
-            dto.setIdentityStatus(DataspaceParticipantContextStatusDto.IdentityStatusEnum.valueOf(ctx.identityStatus().name()));
+        dto.setIdentityStatus(DataspaceParticipantContextStatusDto.IdentityStatusEnum.valueOf(ctx.identityStatus().name()));
+        if (publication != null) {
+            dto.setPublicationState(DataspacePublicationStateDto.valueOf(publication.publicationState().name()));
+            dto.setPublicationReason(publication.publicationReason());
         }
         return dto;
     }

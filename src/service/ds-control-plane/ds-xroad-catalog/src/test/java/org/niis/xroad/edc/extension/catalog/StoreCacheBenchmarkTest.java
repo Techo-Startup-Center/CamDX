@@ -35,13 +35,16 @@ import ee.ria.xroad.common.metadata.RestServiceDetailsListType;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
+import org.eclipse.edc.participantcontext.spi.service.ParticipantContextService;
 import org.eclipse.edc.spi.query.QuerySpec;
+import org.eclipse.edc.spi.result.ServiceResult;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.niis.xroad.ds.identity.ParticipantIdentifierScheme;
 import org.niis.xroad.globalconf.GlobalConfProvider;
 import org.niis.xroad.serverconf.IsAuthentication;
 import org.niis.xroad.serverconf.ServerConfProvider;
@@ -54,7 +57,10 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
+import static org.niis.xroad.edc.extension.catalog.ParticipantContextTestFixtures.participantContext;
 
 @ExtendWith(MockitoExtension.class)
 class StoreCacheBenchmarkTest {
@@ -67,6 +73,9 @@ class StoreCacheBenchmarkTest {
 
     @Mock
     private GlobalConfProvider globalConfProvider;
+
+    @Mock
+    private ParticipantContextService participantContextService;
 
     @BeforeAll
     static void silenceCatalogLogging() {
@@ -123,13 +132,13 @@ class StoreCacheBenchmarkTest {
 
         var storeDisabled = buildStore(fakeProvider, false);
         for (int i = 0; i < WARMUP; i++) {
-            storeDisabled.findById(firstId);
+            storeDisabled.findById(BENCH_MEMBER_CTX, firstId);
         }
         var timesDisabled = measureFindById(storeDisabled, firstId);
 
         var storeEnabled = buildStore(fakeProvider, true);
         for (int i = 0; i < WARMUP; i++) {
-            storeEnabled.findById(firstId);
+            storeEnabled.findById(BENCH_MEMBER_CTX, firstId);
         }
         var timesEnabled = measureFindById(storeEnabled, firstId);
 
@@ -155,13 +164,13 @@ class StoreCacheBenchmarkTest {
 
         var storeDisabled = buildStore(fakeProvider, false);
         for (int i = 0; i < WARMUP; i++) {
-            storeDisabled.resolveForAsset(firstId);
+            storeDisabled.resolveForAsset(BENCH_MEMBER_CTX, firstId);
         }
         var timesDisabled = measureResolveForAsset(storeDisabled, firstId);
 
         var storeEnabled = buildStore(fakeProvider, true);
         for (int i = 0; i < WARMUP; i++) {
-            storeEnabled.resolveForAsset(firstId);
+            storeEnabled.resolveForAsset(BENCH_MEMBER_CTX, firstId);
         }
         var timesEnabled = measureResolveForAsset(storeEnabled, firstId);
 
@@ -175,7 +184,7 @@ class StoreCacheBenchmarkTest {
         var times = new long[K];
         for (int i = 0; i < K; i++) {
             long t = System.nanoTime();
-            store.resolveForAsset(id);
+            store.resolveForAsset(BENCH_MEMBER_CTX, id);
             times[i] = System.nanoTime() - t;
         }
         return times;
@@ -185,19 +194,28 @@ class StoreCacheBenchmarkTest {
         var times = new long[K];
         for (int i = 0; i < K; i++) {
             long t = System.nanoTime();
-            store.findById(id);
+            store.findById(BENCH_MEMBER_CTX, id);
             times[i] = System.nanoTime() - t;
         }
         return times;
     }
 
+    private static final String BENCH_MEMBER_CTX =
+            ParticipantIdentifierScheme.memberCtxId(ClientId.Conf.create("DEV", "GOV", "1111"));
+
     private AssetIndexServerConfStore buildStore(ServerConfProvider provider, boolean cacheEnabled) {
         var cache = new StoreEnumerationCache<Asset>(cacheEnabled, 3600, 10000, "bench");
-        return new AssetIndexServerConfStore(provider, globalConfProvider,
-                "participant", "participant-mgmt",
+        var benchParticipantContext = participantContext(BENCH_MEMBER_CTX);
+        lenient().when(participantContextService.search(any()))
+                .thenReturn(ServiceResult.success(List.of(benchParticipantContext)));
+        lenient().when(participantContextService.getParticipantContext(BENCH_MEMBER_CTX))
+                .thenReturn(ServiceResult.success(benchParticipantContext));
+        var serviceContextResolver = new ServiceContextResolver(
+                globalConfProvider, provider, participantContextService);
+        return new AssetIndexServerConfStore(provider,
                 new BuiltinServiceCatalog(provider, false, false, false,
                         BuiltinServiceCatalog.DEFAULT_SERVER_PROXY_URL),
-                cache);
+                cache, serviceContextResolver);
     }
 
     static long median(long[] times) {
@@ -345,6 +363,11 @@ class StoreCacheBenchmarkTest {
 
         @Override
         public List<Endpoint> getServiceEndpoints(ServiceId serviceId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<org.niis.xroad.serverconf.model.Endpoint> getAclEndpoints(ClientId clientId, ServiceId serviceId) {
             throw new UnsupportedOperationException();
         }
 

@@ -25,10 +25,11 @@
  */
 package org.niis.xroad.common.acme.spring.scheduling;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.niis.xroad.common.acme.config.AcmeConfig;
+import org.niis.xroad.common.acme.config.AcmeSchedulingProperties;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.time.Duration;
 import java.util.concurrent.ScheduledFuture;
@@ -36,21 +37,61 @@ import java.util.concurrent.ScheduledFuture;
 import static java.time.temporal.ChronoUnit.SECONDS;
 
 @Slf4j
-@RequiredArgsConstructor
-public class CertificateRenewalScheduler {
+public class CertificateRenewalScheduler implements DisposableBean {
 
     private final AcmeRenewalWorker acmeRenewalWorker;
-    private final AcmeConfig acmeConfig;
+    private final AcmeSchedulingProperties acmeConfig;
     private final TaskScheduler taskScheduler;
+    private final boolean ownsTaskScheduler;
     private ScheduledFuture<?> scheduledFuture;
 
-    private static final Duration RECOVER_FROM_INVALID_GLOBAL_CONF_DELAY = Duration.of(60, SECONDS);
+    private static final Duration RECOVERY_DELAY = Duration.of(60, SECONDS);
     private static final Duration INITIAL_DELAY = Duration.of(5, SECONDS);
     private boolean retryMode;
     private boolean rescheduledDuringCycle;
+    private volatile boolean shuttingDown;
+
+    public CertificateRenewalScheduler(AcmeRenewalWorker acmeRenewalWorker, AcmeSchedulingProperties acmeConfig,
+                                       TaskScheduler taskScheduler) {
+        this(acmeRenewalWorker, acmeConfig, taskScheduler, false);
+    }
+
+    private CertificateRenewalScheduler(AcmeRenewalWorker acmeRenewalWorker, AcmeSchedulingProperties acmeConfig,
+                                        TaskScheduler taskScheduler, boolean ownsTaskScheduler) {
+        this.acmeRenewalWorker = acmeRenewalWorker;
+        this.acmeConfig = acmeConfig;
+        this.taskScheduler = taskScheduler;
+        this.ownsTaskScheduler = ownsTaskScheduler;
+    }
+
+    /**
+     * Creates a {@link CertificateRenewalScheduler} backed by its own single-thread {@link ThreadPoolTaskScheduler},
+     * isolated from any shared {@code TaskScheduler} used elsewhere in the application. The dedicated scheduler is
+     * started immediately and is shut down when this instance is {@linkplain #destroy() destroyed}.
+     */
+    public static CertificateRenewalScheduler withDedicatedScheduler(AcmeRenewalWorker acmeRenewalWorker,
+                                                                     AcmeSchedulingProperties acmeConfig,
+                                                                     String threadNamePrefix) {
+        var scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix(threadNamePrefix);
+        scheduler.initialize();
+        log.info("Started dedicated ACME renewal scheduler thread '{}'", threadNamePrefix);
+        return new CertificateRenewalScheduler(acmeRenewalWorker, acmeConfig, scheduler, true);
+    }
 
     public void init() {
         reschedule(INITIAL_DELAY);
+    }
+
+    @Override
+    public void destroy() {
+        shuttingDown = true;
+        cancelNext();
+        if (ownsTaskScheduler) {
+            log.info("Shutting down dedicated ACME renewal scheduler thread");
+            ((ThreadPoolTaskScheduler) taskScheduler).shutdown();
+        }
     }
 
     private Duration getNextDelay() {
@@ -79,8 +120,17 @@ public class CertificateRenewalScheduler {
     public void globalConfInvalidated() {
         log.info("ACME certificate renewal cycle failed due to invalid global configuration, "
                 + "switching to global configuration recovery schedule");
-        reschedule(RECOVER_FROM_INVALID_GLOBAL_CONF_DELAY);
+        deferCycle();
         retryMode = false;
+    }
+
+    /**
+     * Ends the running cycle without a renewal attempt and reschedules the next one after the short recovery
+     * delay. Keeps the retry backoff state, so a cycle skipped on a precondition outside the renewal itself
+     * does not discard an earlier failure's schedule.
+     */
+    public void deferCycle() {
+        reschedule(RECOVERY_DELAY);
         rescheduledDuringCycle = true;
     }
 
@@ -89,7 +139,7 @@ public class CertificateRenewalScheduler {
         try {
             acmeRenewalWorker.execute(this);
         } finally {
-            // globalConfInvalidated() already scheduled its own recovery delay; scheduling again here with
+            // deferCycle() already scheduled its own recovery delay; scheduling again here with
             // getNextDelay() (which no longer reflects that call's intent) would immediately cancel and replace
             // it with the normal, much longer renewal interval.
             if (!rescheduledDuringCycle) {
@@ -105,6 +155,9 @@ public class CertificateRenewalScheduler {
     }
 
     private void reschedule(Duration delay) {
+        if (shuttingDown) {
+            return;
+        }
         cancelNext();
         log.trace("Rescheduling job after {}", delay);
         this.scheduledFuture = taskScheduler.schedule(this::runJob, taskScheduler.getClock().instant().plus(delay));

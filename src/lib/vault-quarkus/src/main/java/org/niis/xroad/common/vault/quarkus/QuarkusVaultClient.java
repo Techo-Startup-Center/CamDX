@@ -31,13 +31,15 @@ import ee.ria.xroad.common.util.CryptoUtils;
 
 import io.quarkus.vault.VaultKVSecretEngine;
 import io.quarkus.vault.client.VaultClientException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.NotImplementedException;
 import org.niis.xroad.common.core.exception.XrdRuntimeException;
+import org.niis.xroad.common.core.node.NodeIdentity;
 import org.niis.xroad.common.vault.AcmeAccountKey;
+import org.niis.xroad.common.vault.AgreementTokenVaultDataUtils;
 import org.niis.xroad.common.vault.DsTlsEnrollmentStatus;
 import org.niis.xroad.common.vault.MessageLogVaultDataUtils;
+import org.niis.xroad.common.vault.NodeScopedSecretPaths;
 import org.niis.xroad.common.vault.VaultClient;
 
 import java.io.ByteArrayInputStream;
@@ -50,6 +52,7 @@ import java.security.cert.X509Certificate;
 import java.security.spec.InvalidKeySpecException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -57,21 +60,25 @@ import java.util.Optional;
 import static org.niis.xroad.common.core.exception.ErrorCode.MISSING_SECRET;
 
 @Slf4j
-@RequiredArgsConstructor
 public class QuarkusVaultClient implements VaultClient {
 
     private static final int HTTP_NOT_FOUND = 404;
 
     private final VaultKVSecretEngine kvSecretEngine;
+    private final NodeScopedSecretPaths nodePaths;
+
+    public QuarkusVaultClient(VaultKVSecretEngine kvSecretEngine) {
+        this(kvSecretEngine, NodeIdentity.resolve(null));
+    }
+
+    public QuarkusVaultClient(VaultKVSecretEngine kvSecretEngine, NodeIdentity nodeIdentity) {
+        this.kvSecretEngine = kvSecretEngine;
+        this.nodePaths = new NodeScopedSecretPaths(nodeIdentity);
+    }
 
     @Override
     public InternalSSLKey getInternalTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
         return getTlsCredentials(INTERNAL_TLS_CREDENTIALS_PATH);
-    }
-
-    @Override
-    public InternalSSLKey getOpmonitorTlsCredentials() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
-        return getTlsCredentials(OPMONITOR_TLS_CREDENTIALS_PATH);
     }
 
     @Override
@@ -87,11 +94,6 @@ public class QuarkusVaultClient implements VaultClient {
     @Override
     public void createInternalTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException {
         createTlsCredentials(INTERNAL_TLS_CREDENTIALS_PATH, internalSSLKey);
-    }
-
-    @Override
-    public void createOpmonitorTlsCredentials(InternalSSLKey internalSSLKey) throws IOException, CertificateEncodingException {
-        createTlsCredentials(OPMONITOR_TLS_CREDENTIALS_PATH, internalSSLKey);
     }
 
     @Override
@@ -132,6 +134,21 @@ public class QuarkusVaultClient implements VaultClient {
     @Override
     public void createDsTlsEnrollmentStatus(DsTlsEnrollmentStatus status) {
         kvSecretEngine.writeSecret(DS_HTTPS_ENROLLMENT_STATUS_PATH, toDsTlsEnrollmentStatusSecret(status));
+    }
+
+    @Override
+    public Optional<X509Certificate> getOpMonitorCa() {
+        return readSecret(OPMONITOR_CA_PATH).flatMap(this::toOpMonitorCa);
+    }
+
+    @Override
+    public void createOpMonitorCa(X509Certificate certificate) {
+        kvSecretEngine.writeSecret(OPMONITOR_CA_PATH, toOpMonitorCaSecret(certificate));
+    }
+
+    @Override
+    public void clearOpMonitorCa() {
+        kvSecretEngine.writeSecret(OPMONITOR_CA_PATH, toClearedOpMonitorCaSecret());
     }
 
     @Override
@@ -182,20 +199,20 @@ public class QuarkusVaultClient implements VaultClient {
     public void setTokenPin(String tokenId, char[] pin) {
         var secret = new HashMap<String, String>();
         secret.put(PIN_KEY, new String(pin));
-        String path = SIGNER_TOKEN_PINS_BASE_PATH + "/" + tokenId;
+        String path = nodePaths.tokenPin(tokenId);
         kvSecretEngine.writeSecret(path, secret);
     }
 
     @Override
     public Optional<char[]> getTokenPin(String tokenId) {
-        String path = SIGNER_TOKEN_PINS_BASE_PATH + "/" + tokenId;
+        String path = nodePaths.tokenPin(tokenId);
         return readSecret(path)
                 .map(secret -> secret.get(PIN_KEY).toCharArray());
     }
 
     @Override
     public void deleteTokenPin(String tokenId) {
-        String path = SIGNER_TOKEN_PINS_BASE_PATH + "/" + tokenId;
+        String path = nodePaths.tokenPin(tokenId);
         kvSecretEngine.deleteSecret(path);
     }
 
@@ -231,6 +248,48 @@ public class QuarkusVaultClient implements VaultClient {
             return Optional.of(new AcmeAccountKey(privateKey, publicKey, expiresAt));
         } catch (IOException | GeneralSecurityException e) {
             throw XrdRuntimeException.systemException(e);
+        }
+    }
+
+    @Override
+    public void createAgreementTokenSigningKey(String keyId, String keyPairJwk) {
+        var secret = AgreementTokenVaultDataUtils.createSigningKeySecret(keyPairJwk);
+        String path = AgreementTokenVaultDataUtils.buildSigningKeyPath(keyId);
+        kvSecretEngine.writeSecret(path, secret);
+        log.info("Stored agreement-token signing key in Vault at path: {}", path);
+    }
+
+    @Override
+    public Map<String, String> getAgreementTokenSigningKeys() {
+        return AgreementTokenVaultDataUtils.getAgreementTokenSigningKeys(
+                this::listAgreementTokenSigningKeyIds,
+                this::readSecret
+        );
+    }
+
+    @Override
+    public void deleteAgreementTokenSigningKey(String keyId) {
+        kvSecretEngine.deleteSecret(AgreementTokenVaultDataUtils.buildSigningKeyPath(keyId));
+    }
+
+    /**
+     * A 404 on the base path means no agreement-token signing key has ever been written — a legitimate
+     * first-boot state — and maps to an empty listing, exactly like {@link #readSecret(String)} maps a
+     * missing single secret to {@link Optional#empty()}. Every other status is an infrastructure failure and
+     * must propagate, so a transient outage is never mistaken for "no keys yet" by a caller deciding whether
+     * to bootstrap one.
+     */
+    private List<String> listAgreementTokenSigningKeyIds(String path) {
+        try {
+            var keys = kvSecretEngine.listSecrets(path);
+            return keys == null ? List.of() : keys;
+        } catch (VaultClientException e) {
+            if (Objects.equals(e.getStatus(), HTTP_NOT_FOUND)) {
+                log.debug("No agreement-token signing keys found in Vault under {}", path);
+                return List.of();
+            }
+            log.warn("Failed to list secrets from Vault at path {}: {} status {}", path, e.getMessage(), e.getStatus());
+            throw e;
         }
     }
 

@@ -29,13 +29,14 @@ import { defineStore } from 'pinia';
 import * as api from '@/util/api';
 import {
   CertificateDetails,
-  DistinguishedName,
+  DsTlsCertificateEnrollmentStatus,
+  DsTlsCertificateOrder,
+  DsTlsCertificateSigningRequest,
   DsTlsCertificateStatus,
   buildFileFormData,
   multipartFormDataConfig,
   saveResponseAsFile,
 } from '@niis/shared-ui';
-import { DataspaceTlsCertificateEnrollmentStatus } from '@/openapi-types';
 
 export const useDsTlsCertificate = defineStore('ds-tls-certificate', {
   state: () => ({}),
@@ -46,7 +47,7 @@ export const useDsTlsCertificate = defineStore('ds-tls-certificate', {
       return api.get<DsTlsCertificateStatus>('/ds-tls-certificate').then((res) => res.data);
     },
     async fetchDsTlsCertificateEnrollmentStatus() {
-      return api.get<DataspaceTlsCertificateEnrollmentStatus>('/dataspace/tls-certificate/enrollment-status').then((res) => res.data);
+      return api.get<DsTlsCertificateEnrollmentStatus>('/ds-tls-certificate/enrollment-status').then((res) => res.data);
     },
     async fetchDsTlsCertificate() {
       return this.fetchDsTlsCertificateStatus().then((status) => status.certificate ?? ({ hash: '' } as CertificateDetails));
@@ -54,8 +55,8 @@ export const useDsTlsCertificate = defineStore('ds-tls-certificate', {
     async generateKey() {
       return api.post('/ds-tls-certificate/key', undefined);
     },
-    async generateCsr(distinguishedName: string) {
-      const body: DistinguishedName = { name: distinguishedName };
+    async generateCsr(distinguishedName: string, subjectAltName?: string) {
+      const body: DsTlsCertificateSigningRequest = { name: distinguishedName, subject_alt_name: subjectAltName };
       return api.post('/ds-tls-certificate/csr', body, { responseType: 'blob' }).then((res) => {
         saveResponseAsFile(res, 'ds-tls-cert-request.p10');
       });
@@ -71,6 +72,10 @@ export const useDsTlsCertificate = defineStore('ds-tls-certificate', {
       return api
         .get('/ds-tls-certificate/certificate', { responseType: 'blob' })
         .then((res) => saveResponseAsFile(res, 'ds-tls-certificate.tar.gz'));
+    },
+    async orderCertificate(caName: string, distinguishedName: string, subjectAltName: string) {
+      const body: DsTlsCertificateOrder = { ca_name: caName, distinguished_name: distinguishedName, subject_alt_name: subjectAltName };
+      return api.post<CertificateDetails>('/ds-tls-certificate/acme-order', body).then((res) => res.data);
     },
   },
 });

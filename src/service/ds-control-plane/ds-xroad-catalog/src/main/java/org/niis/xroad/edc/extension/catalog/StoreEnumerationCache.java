@@ -31,7 +31,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import jakarta.annotation.Nullable;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.edc.spi.types.domain.DataAddress;
+import org.eclipse.edc.controlplane.DataAddress;
 
 import java.time.Duration;
 import java.util.List;
@@ -47,9 +47,9 @@ class StoreEnumerationCache<T> {
     @Nullable
     private final Cache<Boolean, List<T>> enumerationCache;
     @Nullable
-    private final Cache<String, T> findByIdCache;
+    private final Cache<ContextKey, T> findByIdCache;
     @Nullable
-    private final Cache<String, DataAddress> dataAddressCache;
+    private final Cache<ContextKey, DataAddress> dataAddressCache;
     private final String storeName;
 
     StoreEnumerationCache(boolean enabled, long ttlSeconds, int findByIdMaxSize, String storeName) {
@@ -101,13 +101,22 @@ class StoreEnumerationCache<T> {
         }
     }
 
+    /**
+     * Looks up a single entry by participant context and id, bypassing the cache entirely when the
+     * context is not cacheable. A context that is not cacheable must never be served from or written to
+     * the shared by-id cache, since doing so could leak a result resolved for one context to a lookup
+     * for another.
+     */
     @Nullable
-    T findById(String id, Supplier<T> loader) {
-        return getOrLoad(findByIdCache, id, loader);
+    T findById(String participantContextId, String id, boolean cacheable, Supplier<T> loader) {
+        if (!cacheable) {
+            return loader.get();
+        }
+        return getOrLoad(findByIdCache, new ContextKey(participantContextId, id), loader);
     }
 
     @Nullable
-    private static <V> V getOrLoad(@Nullable Cache<String, V> cache, String key, Supplier<V> loader) {
+    private static <K, V> V getOrLoad(@Nullable Cache<K, V> cache, K key, Supplier<V> loader) {
         if (cache == null) {
             return loader.get();
         }
@@ -122,18 +131,18 @@ class StoreEnumerationCache<T> {
         return result;
     }
 
-    void cacheDataAddress(String assetId, @Nullable DataAddress value) {
+    void cacheDataAddress(String participantContextId, String assetId, @Nullable DataAddress value) {
         if (dataAddressCache != null && value != null) {
-            dataAddressCache.put(assetId, value);
+            dataAddressCache.put(new ContextKey(participantContextId, assetId), value);
         }
     }
 
     @Nullable
-    DataAddress getDataAddress(String assetId) {
+    DataAddress getDataAddress(String participantContextId, String assetId) {
         if (dataAddressCache == null) {
             return null;
         }
-        return dataAddressCache.getIfPresent(assetId);
+        return dataAddressCache.getIfPresent(new ContextKey(participantContextId, assetId));
     }
 
     void logStatistics() {
@@ -161,5 +170,12 @@ class StoreEnumerationCache<T> {
         if (dataAddressCache != null) {
             dataAddressCache.invalidateAll();
         }
+    }
+
+    /**
+     * Folds the participant context into the point-lookup cache keys, so a lookup addressed at
+     * one context never serves another's cached record.
+     */
+    private record ContextKey(String participantContextId, String id) {
     }
 }

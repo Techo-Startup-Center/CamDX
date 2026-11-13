@@ -39,15 +39,18 @@ import static org.niis.xroad.common.properties.config.Validator.positiveLong;
 import static org.niis.xroad.common.properties.config.Validator.range;
 
 /**
- * X-Road owned inputs to ds-control-plane's own {@code ServiceExtensionContext} settings
- * ({@code xroad.dsp.*}).
+ * The {@code xroad.dsp.*} keys shared by the dataspace components.
  *
- * <p>Unlike a packaged-yaml-interpolated EDC setting ({@link EdcConfigKeys}), these keys are read
- * directly by ds-control-plane extensions via {@code ServiceExtensionContext.getSetting(key, default)} —
- * the key declared here already is the setting name the extension asks for, so no yaml interpolation
- * hop is needed. {@code publishedToFramework()} still has to be set on every key: it is what copies a
- * stored override into the Quarkus config tree ds-control-plane's {@code QuarkusConfigBridge} exposes to
- * {@code getSetting()}; without it a DB-seeded row would never reach the extension.
+ * <p>A key is consumed in one of three ways. An EDC extension reads a key through
+ * {@code ServiceExtensionContext.getSetting}: the control-plane extensions read the catalog cache keys, the
+ * built-in services keys and the issuer-trust refresh interval, and the Issuer Service's DID resolution
+ * extension reads the DID resolution fetch timeout. An X-Road process reads a key through {@code XRoadConfig}: the admin
+ * service reads both port keys through {@code AdminServiceProperties.Dataspace.getDidPort()} and
+ * {@code getDspPort()}. An application configuration interpolates a
+ * key with {@code ${...}}: the identity hub's DID web context port uses {@code ${xroad.dsp.did-port}}.
+ *
+ * <p>{@code publishedToFramework()} is set on every key so that the packaged default and a stored row both
+ * reach the framework configuration, which serves the first and the third way.
  */
 @SuppressWarnings("checkstyle:MagicNumber") // a keys registry: default literals are the point
 public final class DspConfigKeys implements ConfigKeyProvider {
@@ -55,24 +58,24 @@ public final class DspConfigKeys implements ConfigKeyProvider {
     private static final Prefix DSP = Prefix.of(Category.COMMON, "xroad.dsp");
     private static final Prefix CATALOG_CACHE = DSP.subPrefix("catalog").subPrefix("cache");
     private static final Prefix BUILTIN_SERVICES = DSP.subPrefix("builtin-services");
+    private static final Prefix ISSUER_TRUST = DSP.subPrefix("issuer-trust");
+    private static final Prefix DID_RESOLUTION = DSP.subPrefix("did-resolution");
 
     private static final DspConfigKeys INSTANCE = new DspConfigKeys();
 
-    /**
-     * {@code xroad.dsp.participant-context-id} — no default; the extension falls back to
-     * {@code edc.hostname} itself when unset.
-     */
-    public static final ConfigKey<String> PARTICIPANT_CONTEXT_ID = DSP
-            .string("participant-context-id")
+    /** {@code xroad.dsp.did-port}. */
+    public static final ConfigKey<Integer> DID_PORT = DSP
+            .integer("did-port")
+            .withDefaultValue(7183)
+            .withValidator(range(1, 65535))
             .publishedToFramework()
             .build();
 
-    /**
-     * {@code xroad.dsp.management-participant-context-id} — no default; the extension falls back to
-     * {@code <participant-context-id>-mgmt} itself when unset.
-     */
-    public static final ConfigKey<String> MANAGEMENT_PARTICIPANT_CONTEXT_ID = DSP
-            .string("management-participant-context-id")
+    /** {@code xroad.dsp.dsp-port}. */
+    public static final ConfigKey<Integer> DSP_PORT = DSP
+            .integer("dsp-port")
+            .withDefaultValue(8183)
+            .withValidator(range(1, 65535))
             .publishedToFramework()
             .build();
 
@@ -125,6 +128,22 @@ public final class DspConfigKeys implements ConfigKeyProvider {
             .string("server-proxy-url")
             .withDefaultValue("http://localhost:5500/")
             .withValidator(nonEmpty())
+            .publishedToFramework()
+            .build();
+
+    /** {@code xroad.dsp.issuer-trust.refresh-interval-seconds}. */
+    public static final ConfigKey<Long> ISSUER_TRUST_REFRESH_INTERVAL_SECONDS = ISSUER_TRUST
+            .longValue("refresh-interval-seconds")
+            .withDefaultValue(60L)
+            .withValidator(positiveLong())
+            .publishedToFramework()
+            .build();
+
+    /** {@code xroad.dsp.did-resolution.fetch-timeout-ms}. */
+    public static final ConfigKey<Long> DID_RESOLUTION_FETCH_TIMEOUT_MS = DID_RESOLUTION
+            .longValue("fetch-timeout-ms")
+            .withDefaultValue(3000L)
+            .withValidator(positiveLong())
             .publishedToFramework()
             .build();
 

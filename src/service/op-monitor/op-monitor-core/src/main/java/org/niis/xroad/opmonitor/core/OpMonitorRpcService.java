@@ -25,19 +25,27 @@
  */
 package org.niis.xroad.opmonitor.core;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import jakarta.enterprise.context.ApplicationScoped;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.niis.xroad.common.rpc.mapper.ClientIdMapper;
 import org.niis.xroad.common.rpc.mapper.ServiceIdMapper;
+import org.niis.xroad.common.rpc.server.RpcResponseHandler;
 import org.niis.xroad.opmonitor.api.GetOperationalDataIntervalsReq;
 import org.niis.xroad.opmonitor.api.GetOperationalDataIntervalsResp;
 import org.niis.xroad.opmonitor.api.OpMonitorServiceGrpc;
 import org.niis.xroad.opmonitor.api.OpMonitoringData;
 import org.niis.xroad.opmonitor.api.OperationalDataIntervalProto;
+import org.niis.xroad.opmonitor.api.OperationalDataIntervalsRequestValidator;
+import org.niis.xroad.opmonitor.api.QueryOperationalDataReq;
+import org.niis.xroad.opmonitor.api.QueryOperationalDataResp;
 import org.niis.xroad.opmonitor.api.SecurityServerType;
+import org.niis.xroad.opmonitor.api.StoreOperationalDataReq;
+import org.niis.xroad.opmonitor.api.StoreOperationalDataResp;
 
 import java.time.Instant;
 import java.util.List;
@@ -47,10 +55,47 @@ import java.util.List;
 @RequiredArgsConstructor
 public class OpMonitorRpcService extends OpMonitorServiceGrpc.OpMonitorServiceImplBase {
     private final OperationalDataRecordManager operationalDataRecordManager;
+    private final OperationalDataStore operationalDataStore;
+    private final OperationalDataQueryService operationalDataQueryService;
+    private final RpcResponseHandler rpcResponseHandler = new RpcResponseHandler();
+
+    @Override
+    public void storeOperationalData(StoreOperationalDataReq request,
+                                     StreamObserver<StoreOperationalDataResp> responseObserver) {
+        rpcResponseHandler.handleRequest(responseObserver, () -> {
+            var records = request.getRecordsList().stream()
+                    .map(OperationalDataRecordProtoMapper::fromProto)
+                    .toList();
+            log.debug("Storing {} operational data record(s)", records.size());
+            operationalDataStore.store(records);
+            return StoreOperationalDataResp.getDefaultInstance();
+        });
+    }
+
+    @Override
+    public void queryOperationalData(QueryOperationalDataReq request,
+                                     StreamObserver<QueryOperationalDataResp> responseObserver) {
+        rpcResponseHandler.handleRequest(responseObserver, () -> {
+            var response = operationalDataQueryService.query(request.getSoapQuery().toByteArray(), request.getContentType(),
+                    request.getAccessScope());
+            return QueryOperationalDataResp.newBuilder()
+                    .setResponse(ByteString.copyFrom(response.body()))
+                    .setContentType(response.contentType())
+                    .build();
+        });
+    }
 
     @Override
     public void getOperationalDataIntervals(GetOperationalDataIntervalsReq request,
                                             StreamObserver<GetOperationalDataIntervalsResp> responseObserver) {
+        try {
+            OperationalDataIntervalsRequestValidator.validate(request.getRecordsFrom(), request.getRecordsTo(),
+                    request.getIntervalInMinutes());
+        } catch (IllegalArgumentException e) {
+            log.warn("getOperationalDataIntervals rejected: {}", e.getMessage());
+            responseObserver.onError(Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asRuntimeException());
+            return;
+        }
         try {
             responseObserver.onNext(handleGetMonitoringDataRequest(request));
             responseObserver.onCompleted();

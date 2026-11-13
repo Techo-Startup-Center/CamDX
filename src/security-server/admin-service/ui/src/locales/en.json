@@ -25,6 +25,20 @@
       "XROAD_SERVICE_ADMINISTRATOR": "Service Administrator"
     }
   },
+  "agreementTokenKey": {
+    "createdAt": "Created",
+    "createdAtUnknown": "Unknown",
+    "description": "The agreement token signing key signs the tokens that this Security Server issues for data exchange in a dataspace. Rotating the key generates a new key. Earlier keys are kept so that tokens signed with them stay valid until they expire.",
+    "keyId": "Signing key ID",
+    "pending": "A new key ({keyId}) is waiting to start signing.",
+    "previousKeys": "Previous keys retained",
+    "rotate": "Rotate key",
+    "rotateConfirmText": "Tokens already issued keep working until they expire. The new key starts signing within two key refresh intervals.",
+    "rotateConfirmTitle": "Rotate agreement token signing key?",
+    "rotated": "The agreement token signing key is rotated",
+    "title": "Agreement token signing key",
+    "unavailable": "The signing key is not available. The proxy has not loaded any signing key yet, so the key cannot be rotated."
+  },
   "alert": {
     "warningCount": "Amount of same warnings"
   },
@@ -183,16 +197,21 @@
     "requiredIf": "The {fieldName} field is required",
     "description": "Use valid description characters only"
   },
-  "dsTlsCertificate": {
-    "keyGeneratedPending": "DataSpace TLS key generated - certificate signing pending",
-    "enrollmentStatus": {
-      "method": {
-        "none": "Not configured",
-        "manual": "Manual",
-        "acme": "ACME"
-      },
-      "nextRenewal": "Next renewal",
-      "wasDue": "Was due"
+  "dsTlsCertificates": {
+    "downloadSuccess": "Dataspace TLS certificate successfully downloaded",
+    "generateCsr": {
+      "example": "CN=mysecurityserver.example.com, O=My Organization, C=EE"
+    },
+    "generateKey": {
+      "confirmation": "Generate a new Dataspace TLS key and certificate?",
+      "explanation": "The system will generate a new Dataspace TLS key and a self-signed certificate, replacing the existing key and certificate. The Dataspace protocol endpoints of this Security Server will start serving the new certificate.",
+      "success": "New Dataspace TLS key and certificate generated successfully",
+      "title": "Dataspace TLS Key"
+    },
+    "title": "Dataspace TLS Key",
+    "uploadCertificate": {
+      "success": "Dataspace TLS certificate imported",
+      "title": "Upload Dataspace TLS certificate"
     }
   },
   "diagnostics": {
@@ -416,6 +435,7 @@
     },
     "action_not_possible": "Action is not possible",
     "additional_member_already_exists": "Additional member already exists",
+    "address_change_request_already_submitted": "An address change request has already been submitted",
     "already_disabled_maintenance_mode": "Maintenance mode is already disabled",
     "already_enabled_maintenance_mode": "Maintenance mode is already enabled",
     "anchor_already_exists": "Anchor already exists",
@@ -424,7 +444,15 @@
     "anchor_upload_failed": "Anchor upload failed",
     "auth_cert_not_supported": "Authentication certificate is not supported",
     "base_endpoint_not_found": "Base endpoint not found",
+    "ca_cert_empty": "The file is empty",
+    "ca_cert_expired": "The CA certificate has expired",
+    "ca_cert_key_material": "The file contains private key material. Upload the CA certificate only",
+    "ca_cert_multiple_certificates": "The file contains more than one certificate. Upload only the CA certificate that issues the certificate",
+    "ca_cert_not_a_ca": "The certificate is not a CA certificate",
+    "ca_cert_not_a_certificate": "The file is not a PEM or DER encoded certificate",
+    "ca_cert_not_yet_valid": "The CA certificate is not yet valid",
     "ca_cert_status_processing_failure": "CA certificate status processing failed",
+    "ca_cert_unsupported_key_algorithm": "The CA certificate public key must be RSA or EC",
     "cannot_delete_owner": "Cannot delete the owner",
     "cannot_register_owner": "Cannot register the owner",
     "cannot_unregister_owner": "Cannot unregister owner",
@@ -456,33 +484,46 @@
           },
           "UnknownService": "Unknown service"
         }
-      }
+      },
+      "agreement_token_key_generation_failed": "Generating the agreement token signing key failed",
+      "agreement_token_key_not_available": "The agreement token signing key is not available. The proxy has not loaded any signing key yet",
+      "agreement_token_key_store_failed": "The agreement token signing key could not be saved to the secret store. Try again later",
+      "agreement_token_rejected": "The agreement token was rejected",
+      "agreement_token_signing_failed": "Signing the agreement token failed",
+      "op_monitor_trust_failure": "Could not establish a trusted connection to Operational Monitoring"
     },
     "csr_not_found": "CSR not found",
     "database_error": "Database error",
     "diagnostic_request_failed": "Diagnostic request failed",
-    "ds_tls_certificate_expired": "The DataSpace TLS certificate has expired",
-    "ds_tls_certificate_not_configured": "No DataSpace TLS certificate has been provisioned yet",
-    "ds_tls_certificate_not_yet_valid": "The DataSpace TLS certificate is not yet valid",
-    "ds_tls_certificate_parse_failed": "Cannot read the DataSpace TLS certificate",
-    "ds_tls_key_certificate_mismatch": "The uploaded certificate does not match the DataSpace TLS key",
-    "ds_tls_key_not_generated": "Generate a DataSpace TLS key before requesting a CSR or uploading a certificate",
+    "ds_tls_acme_order_failed": "Ordering the Dataspace TLS certificate failed",
+    "ds_tls_ca_not_found": "The named certification authority is not a designated, ACME-capable Dataspace TLS CA",
+    "ds_tls_certificate_expired": "The Dataspace TLS certificate has expired",
+    "ds_tls_certificate_not_configured": "No Dataspace TLS certificate has been provisioned yet",
+    "ds_tls_certificate_not_yet_valid": "The Dataspace TLS certificate is not yet valid",
+    "ds_tls_certificate_parse_failed": "Cannot read the Dataspace TLS certificate",
+    "ds_tls_invalid_subject_alt_name": "The subject alternative name must be a single name with no whitespace",
+    "ds_tls_key_certificate_mismatch": "The uploaded certificate does not match the Dataspace TLS key",
+    "ds_tls_key_not_generated": "Generate a Dataspace TLS key before requesting a CSR or uploading a certificate",
     "duplicate_accessright": "Duplicate access right",
     "endpoint_already_exists": "Endpoint already exists",
     "endpoint_not_found": "Endpoint not found",
+    "external_rpc_ca_not_available": "The Security Server RPC CA is not available",
     "failed_to_save_instance_identifier": "Failed to save instance identifier to a file",
     "forbidden_disable_management_service_client": "The management services provider cannot be deactivated.",
     "forbidden_enable_maintenance_mode_for_management_service": "The management services provider cannot be deactivated.",
+    "global_conf_client_references_server": "Global configuration element {0} references security server {1}, but must reference a member or a subsystem",
     "global_conf_download_request_failed": "Global configuration download request failed",
     "global_conf_download_url_connection_failure": "Failed to open connection to the global configuration download url",
     "global_conf_get_version_failed": "Failed to determine global configuration version from the url",
     "global_conf_header_field_missing": "Global configuration response is missing required header field {0}",
     "global_conf_header_field_missing_parameter": "Global configuration response header field {0} is missing parameter {1}",
     "global_conf_header_field_wrong_value": "Global configuration response header field {0} has wrong value (value: {1}, expected: {2})",
+    "global_conf_member_did_references_non_server": "Global configuration element {0} references {1}, which is not a security server",
     "global_conf_missing_signed_data": "Global configuration is missing signed data",
     "global_conf_missing_signed_data_expiration_date": "Global configuration signed data is missing expiration date",
     "global_conf_missing_verification_cert": "Cannot find verification certificate (certificate hash {0}) to verify signature of global configuration",
     "global_conf_outdated": "Global configuration is outdated",
+    "global_conf_owner_references_non_member": "Global configuration element {0} references {1}, which is not a member",
     "global_conf_parsing_downloaded_conf_directory_failure": "Failed to parse downloaded global configuration directory from {0}",
     "global_conf_part_download_failure": "Failed to download global configuration part",
     "global_conf_part_downloaded_file_integrity_failure": "Failed to verify downloaded global configuration part integrity of {0}",
@@ -495,6 +536,7 @@
     "global_conf_part_duplicate_target": "Two configuration parts resolve to the same target path {0}",
     "global_conf_signature_decode_failure": "Failed to decode signature of global configuration",
     "global_conf_signature_verification_failure": "Failed to verify signature of global configuration",
+    "global_conf_unavailable": "Global configuration is not available",
     "gpg_key_generation_failed": "GPG keypair generation failed",
     "gpg_key_generation_interrupted": "GPG keypair generation interrupted",
     "http_error": "HTTP error",
@@ -564,15 +606,19 @@
     "ocsp_response_parsing_failure": "Unable to parse the OCSP response",
     "ocsp_response_verification_failure": "Unable to verify the OCSP response",
     "openapi_parsing_error": "Parsing OpenApi3 description failed",
+    "operational_data_intervals_out_of_range": "The selected time period is invalid. Set the end date and time to the start or later. If needed, shorten the selected period.",
     "orphans_not_found": "Orphan keys, certificates and/or CSRs that belong to the given client were not found",
     "pin_code_exists": "PIN code exists",
     "pin_code_not_provided": "PIN code is not provided",
     "pin_incorrect": "Incorrect PIN. Please try again.",
     "process_failed": "Process failed",
     "process_not_executable": "Process is not executable",
+    "same_address_change_request": "The new address is the same as the current address",
     "server_already_fully_initialized": "Server is already fully initialised",
     "server_code_exists": "Server code exists",
     "server_code_not_provided": "Server code is not provided",
+    "server_not_initialized": "Security Server is not initialised",
+    "server_not_registered": "Security Server is not registered in the global configuration",
     "service_already_exists": "Service already exists",
     "service_client_not_found": "Service client not found",
     "service_code_already_exists": "Service code already exists",
@@ -591,7 +637,8 @@
     "tr": {
       "op_monitor": {
         "network_error": "Network error: Operational Monitoring is not available"
-      }
+      },
+      "op_monitor_trust_failure": "Check the imported Operational Monitoring CA on the Operational Monitoring Trust tab and that the secret store (OpenBao) is available, then try again."
     },
     "unknown_host": "Connection error, unknown host",
     "unsupported_openapi_version": "Unsupported OpenAPI version. Only versions 3.0.x and 3.1.0 are currently supported.",
@@ -865,8 +912,28 @@
     "noClientData": "No client data",
     "noLocalGroups": "No local groups",
     "noServiceClients": "No service clients",
-    "noConfigurableProperties": "No configurable properties",
     "noTimestampingServices": "No timestamping services"
+  },
+  "opMonitorTrust": {
+    "externalRpcCa": {
+      "description": "The Security Server RPC CA signs the certificates of the RPC connections of this Security Server. Download it and install it on the operational monitoring daemon host, so that the host trusts this Security Server.",
+      "download": "Download",
+      "title": "Security Server RPC CA",
+      "unavailable": "The Security Server RPC CA is not available"
+    },
+    "opMonitorCa": {
+      "delete": "Delete",
+      "deleteConfirmText": "Delete the Operational Monitoring CA? This Security Server then trusts only the Security Server RPC CA, as for an operational monitoring daemon on the same host.",
+      "deleteConfirmTitle": "Delete Operational Monitoring CA?",
+      "deleted": "The Operational Monitoring CA is deleted",
+      "description": "The CA of an operational monitoring daemon running on another host. Upload it so that this Security Server trusts that operational monitoring daemon. The file must hold exactly one PEM or DER encoded CA certificate and no private key.",
+      "empty": "No Operational Monitoring CA is stored",
+      "replace": "Replace",
+      "restartHint": "Restart proxy and admin-service to apply.",
+      "title": "Operational Monitoring CA",
+      "upload": "Upload",
+      "uploaded": "The Operational Monitoring CA is stored"
+    }
   },
   "serviceClientType": {
     "globalGroup": "GLOBALGROUP",
@@ -1076,23 +1143,6 @@
       "title": "Timestamping Services"
     },
     "configurableProperties": {
-      "title": "Configurable System Properties",
-      "search": "Search configurable properties",
-      "restartWarning": "The following services need to be restarted for the changes to take effect: {scopes}.",
-      "propertyRestartWarning": "Restart required for changes to take effect.",
-      "collapseAll": "Collapse All",
-      "updateSuccess": "Property updated successfully",
-      "editDialog": {
-        "title": "Edit Property Value"
-      },
-      "table": {
-        "header": {
-          "propertyName": "Property Name",
-          "currentValue": "Current Value",
-          "defaultValue": "Default Value",
-          "description": "Description"
-        }
-      },
       "descriptions": {
         "xroad": {
           "proxy-ui-api": {
@@ -1156,6 +1206,7 @@
           "proxy": {
             "admin-port": "Port on which the proxy exposes its admin interface.",
             "ssl-enabled": "If true, TLS is used for connections between the service client's and service provider's security servers.",
+            "legacy-protocol-disabled": "If true, this Security Server refuses X-Road 7 legacy calls: as a service provider it refuses access-checked requests without a valid agreement token. As a service consumer, this Security Server's own outgoing unnegotiated calls also fail. The instance setting published in the global configuration can also turn refusal on; this setting never lifts it.",
             "health-check-port": "The TCP port where the health check service listens to requests. Setting the port to 0 disables the health check service completely.",
             "health-check-interface": "The network interface where the health check service listens to requests. Default is all available interfaces.",
             "hsm-health-check-enabled": "When enabled, the health-check endpoint also verifies HSM availability.",
@@ -1215,17 +1266,8 @@
                 "buffer": {
                   "size": "Maximum number of records buffered before sending to the operational monitor.",
                   "max-records-in-message": "Maximum number of operational data records in a message sent by the operational monitoring buffer to the operational monitoring daemon.",
-                  "sending-interval-seconds": "The interval in seconds at which the operational monitoring buffer (re)tries to send records to the operational monitoring daemon. Normally, the buffer triggers the sending mechanism immediately when it receives a new record. In case of heavy load or sending failures the records are accumulating in the buffer and need periodical attention.",
-                  "socket-timeout-seconds": "The socket timeout (SO_TIMEOUT) of sending operational monitoring records from the operational monitoring buffer to the operational monitoring daemon in seconds.",
-                  "connection-timeout-seconds": "HTTP client connection timeout in seconds."
-                },
-                "connection": {
-                  "host": "The host address on which the operational monitoring daemon listens.",
-                  "port": "TCP port on which the operational monitoring daemon listens.",
-                  "scheme": "The URI scheme name of the operational monitoring daemon. Possible values are http and https.",
-                  "socket-timeout-seconds": "HTTP client connection timeout in seconds.",
-                  "connection-timeout-seconds": "The socket timeout (SO_TIMEOUT) of sending the operational data request to the operational monitoring daemon in seconds.",
-                  "xroad-tls-ciphers": "TLS ciphers (comma-separated list in preferred order) accepted on requests between security servers, and between operational monitoring daemon and client. (since version 6.20)"
+                  "max-message-size": "Maximum size in bytes of one store request sent by the operational monitoring buffer to the operational monitoring daemon. Larger batches are split into several requests. The minimum is 65536. Keep it below the daemon's xroad.op-monitor.rpc.max-inbound-message-size (gRPC default 4 MiB).",
+                  "sending-interval-seconds": "The interval in seconds at which the operational monitoring buffer (re)tries to send records to the operational monitoring daemon. Normally, the buffer triggers the sending mechanism immediately when it receives a new record. In case of heavy load or sending failures the records are accumulating in the buffer and need periodical attention."
                 }
               }
             },
@@ -1346,13 +1388,12 @@
             "enabled": "Flag for enabling or disabling the AntiDOS system."
           },
           "common-rpc": {
-            "use-tls": "When enabled, mutual TLS is used for all gRPC communication between the Security Server internal services.",
+            "use-tls": "For testing only; never turn it off in production. When enabled, mutual TLS is used for all gRPC communication between the Security Server internal services. When disabled, all internal gRPC communication is plaintext, including the connection to the operational monitoring daemon, and the imported Operational Monitoring CA and the allowed client names are not applied.",
             "certificate-provisioning": {
               "refresh-interval": "How often services check whether their gRPC TLS certificate needs to be renewed (e.g. 5H).",
-              "retry-delay": "Initial delay between gRPC TLS certificate provisioning retry attempts (e.g. 5S).",
-              "retry-exponential-backoff-multiplier": "Multiplier applied to the retry delay on each subsequent certificate provisioning attempt.",
-              "retry-max-attempts": "Maximum number of gRPC TLS certificate provisioning retry attempts.",
-              "retry-timeout": "Total time limit for all gRPC TLS certificate provisioning retry attempts (e.g. 60S)."
+              "wait-duration": "Delay before the first retry after a failed load of the gRPC TLS certificate from the secret store (e.g. 5S).",
+              "exponential-backoff-multiplier": "Multiplier applied to the retry delay after each consecutive failed load of the gRPC TLS certificate.",
+              "exponential-max-wait-duration": "Upper limit for the retry delay after failed loads of the gRPC TLS certificate (e.g. 5M)."
             },
             "channel": {
               "proxy": {
@@ -1378,7 +1419,8 @@
               "op-monitor": {
                 "host": "Hostname used to connect to the operational monitoring daemon gRPC server.",
                 "port": "Port used to connect to the operational monitoring daemon gRPC server.",
-                "deadline-after": "Milliseconds before a gRPC call to the operational monitoring daemon times out."
+                "deadline-after": "Milliseconds before a gRPC call to the operational monitoring daemon times out.",
+                "max-inbound-message-size": "Maximum size in bytes of a response the operational monitoring daemon channel accepts, for example the response of a monitoring query. The minimum is 4194304 (4 MiB). A query response over the limit fails with an error; lower xroad.op-monitor.max-records-in-payload or raise this limit."
               }
             }
           },
@@ -1436,30 +1478,16 @@
             }
           },
           "op-monitor": {
-            "listen-address": "IP address on which the operational monitoring daemon listens.",
-            "port": "TCP port on which the operational monitoring daemon listens.",
-            "scheme": "URI scheme of the operational monitoring daemon. Possible values are http and https.",
-            "xroad-tls-ciphers": "TLS ciphers (comma-separated list in preferred order) accepted on connections to the operational monitoring daemon.",
             "keep-records-for-days": "Number of days to retain operational monitoring records before they are deleted.",
             "clean-interval": "Cron expression controlling when old operational monitoring records are cleaned up.",
             "max-records-in-payload": "Maximum number of operational monitoring records returned in a single response payload.",
             "records-available-timestamp-offset-seconds": "Offset in seconds subtracted from the current time when determining the upper bound for available records.",
             "health-statistics-period-seconds": "Period in seconds over which health statistics are aggregated.",
             "rpc": {
-              "enabled": "Enable the operational monitoring daemon gRPC server.",
               "listen-address": "IP address on which the operational monitoring daemon gRPC server listens.",
-              "port": "Port on which the operational monitoring daemon gRPC server listens."
-            },
-            "tls": {
-              "certificate-provisioning": {
-                "issuance-role-name": "Vault PKI role name used when provisioning the operational monitoring daemon TLS certificate.",
-                "common-name": "Common name set on the provisioned operational monitoring daemon TLS certificate.",
-                "alt-names": "DNS subject alternative names included in the provisioned operational monitoring daemon TLS certificate.",
-                "ip-subject-alt-names": "IP subject alternative names included in the provisioned operational monitoring daemon TLS certificate.",
-                "ttl": "Time-to-live of the provisioned operational monitoring daemon TLS certificate (e.g. 3650D).",
-                "secret-store-pki-path": "Vault PKI secrets engine mount path for operational monitoring daemon TLS certificate provisioning."
-              },
-              "client-certificate-refresh-interval": "Interval at which the operational monitoring daemon refreshes its client TLS certificate (e.g. 0S to disable)."
+              "port": "Port on which the operational monitoring daemon gRPC server listens.",
+              "max-inbound-message-size": "Maximum size in bytes of a request the operational monitoring daemon gRPC server accepts, for example a batch of stored operational data records. The minimum is 65536. If not set, the gRPC default of 4 MiB applies. Keep it above xroad.proxy.addon.op-monitor.buffer.max-message-size.",
+              "allowed-client-names": "Comma-separated client names the operational monitoring daemon gRPC server accepts when RPC TLS is on. A client is accepted when its certificate CN or DNS SAN equals an entry (case-insensitive, no IP SANs, no wildcards). Empty (default) accepts any client with a certificate from the Security Server CA. A wildcard or empty entry stops the daemon at startup. Restart the daemon after a change."
             }
           },
           "message-log-archiver": {
@@ -1509,9 +1537,11 @@
     },
     "keys": {
       "apiKey": "API Keys",
+      "opMonitorTrust": "Operational Monitoring Trust",
       "signAndAuthKeys": "SIGN and AUTH Keys",
       "ssTlsCertificate": "Security Server TLS Key",
-      "dsTlsCertificate": "DataSpace TLS Certificate"
+      "dsTlsCertificate": "Dataspace TLS Certificate",
+      "agreementTokenKey": "Agreement Token Key"
     },
     "main": {
       "clients": "Clients",

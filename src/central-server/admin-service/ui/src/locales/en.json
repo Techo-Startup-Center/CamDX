@@ -3,6 +3,7 @@
     "addName": "Add subsystem name",
     "approve": "Approve",
     "decline": "Decline",
+    "order": "Order",
     "rename": "Rename",
     "select": "Select"
   },
@@ -16,8 +17,22 @@
     "invalidUrl": "URL is invalid, examples of valid URL formats: 'http://www.example.com', 'https://www.example.com'",
     "description": "Use valid description characters only"
   },
-  "dsTlsCertificate": {
-    "keyGeneratedPending": "DataSpace TLS key generated - certificate signing pending"
+  "dsTlsCertificates": {
+    "downloadSuccess": "Dataspace TLS certificate successfully downloaded",
+    "generateCsr": {
+      "example": "CN=mycentralserver.example.com, O=My Organization, C=EE"
+    },
+    "generateKey": {
+      "confirmation": "Generate a new Dataspace TLS key and certificate?",
+      "explanation": "The system will generate a new Dataspace TLS key and a self-signed certificate, replacing the existing key and certificate. The Issuer Service endpoints of this Central Server will start serving the new certificate.",
+      "success": "New Dataspace TLS key and certificate generated successfully",
+      "title": "Dataspace TLS Key"
+    },
+    "title": "Dataspace TLS Key",
+    "uploadCertificate": {
+      "success": "Dataspace TLS certificate successfully uploaded",
+      "title": "Upload Dataspace TLS certificate"
+    }
   },
   "error_code": {
     "backup_deletion_failed": "Failed to delete backup",
@@ -40,13 +55,33 @@
     "configuration_part_validation_failed": "Configuration part validation failed",
     "configuration_part_validator_not_found": "Configuration part validator not found",
     "csr_generation_failed": "CSR generation failed",
+    "did_foreign_system": "The DID is not this security server's SYSTEM DID",
+    "did_held_by_another_server": "The DID is already used by another security server",
+    "did_host_differs": "The host of the DID must match the security server address",
+    "did_member_not_served": "The security server does not serve this member",
+    "did_non_ascii_host": "The host of the DID and the security server address must be ASCII",
+    "did_not_canonical": "The DID is not in its canonical form",
+    "did_not_stored": "The security server has no stored DID to replace",
+    "did_of_other_member": "The DID belongs to another member",
+    "did_too_long": "The DID is too long",
+    "did_undecodable": "The DID cannot be decoded",
+    "did_unparseable_server_address": "The security server address cannot be read as a host",
+    "did_wrong_scheme": "The DID must be a did:web DID of version v1",
     "double_file_extension": "Double file extension is not allowed",
-    "ds_tls_certificate_expired": "The DataSpace TLS certificate has expired",
-    "ds_tls_certificate_not_configured": "No DataSpace TLS certificate has been provisioned yet",
-    "ds_tls_certificate_not_yet_valid": "The DataSpace TLS certificate is not yet valid",
-    "ds_tls_certificate_parse_failed": "Cannot read the DataSpace TLS certificate",
-    "ds_tls_key_certificate_mismatch": "The uploaded certificate does not match the DataSpace TLS key",
-    "ds_tls_key_not_generated": "Generate a DataSpace TLS key before requesting a CSR or uploading a certificate",
+    "ds_tls_acme_order_failed": "Ordering the Dataspace TLS certificate failed",
+    "ds_tls_ca_not_found": "The named certification authority is not a designated, ACME-capable Dataspace TLS CA",
+    "ds_tls_certificate_expired": "The Dataspace TLS certificate has expired",
+    "ds_tls_certificate_not_configured": "No Dataspace TLS certificate has been provisioned yet",
+    "ds_tls_certificate_not_yet_valid": "The Dataspace TLS certificate is not yet valid",
+    "ds_tls_certificate_parse_failed": "Cannot read the Dataspace TLS certificate",
+    "ds_tls_invalid_subject_alt_name": "The subject alternative name must be a single name with no whitespace",
+    "ds_tls_key_certificate_mismatch": "The uploaded certificate does not match the Dataspace TLS key",
+    "ds_tls_key_not_generated": "Generate a Dataspace TLS key before requesting a CSR or uploading a certificate",
+    "dsp_base_url_host_differs": "The host of the DSP base URL must match the security server address",
+    "dsp_base_url_malformed": "The DSP base URL is not a valid URL",
+    "dsp_base_url_non_ascii_host": "The host of the DSP base URL must be ASCII",
+    "dsp_base_url_not_canonical": "The DSP base URL is not in its canonical form",
+    "dsp_base_url_not_https": "The DSP base URL must use https",
     "error_activating_signing_key": "Error activating signing key",
     "error_deleting_signing_key": "Error deleting signing key",
     "error_recreating_anchor": "Error re-creating anchor file",
@@ -115,6 +150,7 @@
     "subsystem_not_found": "Subsystem with specified code not found.",
     "subsystem_not_registered_to_security_server": "Subsystem is not registered to the given security server.",
     "subsystem_registered_and_cannot_be_deleted": "Cannot delete already registered subsystem.",
+    "system_pair_incomplete": "Give both the SYSTEM DID and the DSP base URL, or neither",
     "timestamping_authority_not_found": "Timestamping authority not found",
     "token_action_not_possible": "Token action not possible",
     "token_activation_failed": "Token activation failed",
@@ -133,7 +169,7 @@
     "authenticationCertificateProfileId": "Authentication certificate profile id",
     "certFile": "Certificate File",
     "certProfile": "Certificate Profile Info",
-    "dsTlsCertificateProfileId": "DS TLS certificate profile id",
+    "dsTlsCertificateProfileId": "Dataspace TLS certificate profile id",
     "init": {
       "address": "Central Server Address",
       "confirmPin": "Repeat PIN",
@@ -377,6 +413,7 @@
     "clientEnable": "Enable client",
     "dialog": {
       "approve": {
+        "addressChangedNotify": "The address of security server {serverId} changed to {address}. Inform the Security Server operator, for example by email, so that they can re-identify the server.",
         "bodyMessage": "Are you sure you want to approve the management request ID {id} from server {serverId}?",
         "newMemberWarning": "The specified member does not currently exist. It will be created automatically when this request is approved.",
         "successMessage": "Management request ID {id} from {serverId} approved",
@@ -390,6 +427,7 @@
     },
     "maintenanceModeDisable": "Disable maintenance mode",
     "maintenanceModeEnable": "Enable maintenance mode",
+    "memberDidRegistration": "Register member DIDs",
     "pending": "Pending",
     "rejected": "Rejected",
     "removeCertificate": "Remove Certificate",
@@ -400,6 +438,7 @@
     "securityServerOwnerName": "Server Owner Name",
     "showOnlyPending": "Show only pending requests",
     "submitted": "Submitted for approval",
+    "systemDidRegistration": "Register system DID",
     "unknown": "Unknown"
   },
   "members": {
@@ -411,11 +450,26 @@
         "areYouSureUnregister": "Are you sure you want to unregister the Member {memberCode} from server {serverCode} from the system configuration?",
         "confirmDelete": "Are you sure you want to delete the Member {member} from the system configuration? Enter the member code to confirm.",
         "deleteMember": "Delete member",
+        "editDid": {
+          "check": {
+            "not_resolved_fetch_failure": "The member DID does not resolve: its DID document could not be fetched. You can still save.",
+            "not_resolved_id_mismatch": "The member DID does not resolve: the DID document belongs to another DID. You can still save.",
+            "not_resolved_malformed_did": "The member DID does not resolve: its DID document is malformed. You can still save.",
+            "not_resolved_no_document": "The member DID does not resolve: no DID document was found. You can still save.",
+            "resolved": "The member DID resolves.",
+            "resolver_unavailable": "The member DID could not be checked because the Issuer Service is unreachable. You can still save."
+          },
+          "checkDid": "Check DID",
+          "success": "Member DID successfully updated",
+          "title": "Edit member DID on {server}"
+        },
         "editMemberName": "Edit Member's name",
         "enterCode": "Enter Member Code",
         "globalGroups": "Global Groups",
         "group": "Group",
         "memberDeleted": "Member deleted successfully",
+        "memberDid": "Member DID",
+        "memberDidStaleWarning": "The member DID does not match the Security Server address. Other servers use the old DID to reach this member.",
         "memberNameSaved": "Member name successfully saved",
         "memberSuccessfullyUnregistered": "Member {memberCode} from server {serverCode} has been unregistered",
         "ownedServers": "Owned Servers",
@@ -469,11 +523,27 @@
       },
       "editAddress": {
         "addressField": "Security server address",
+        "check": {
+          "not_resolved_fetch_failure": "The SYSTEM DID does not resolve: its DID document could not be fetched. You can still save.",
+          "not_resolved_id_mismatch": "The SYSTEM DID does not resolve: the DID document belongs to another DID. You can still save.",
+          "not_resolved_malformed_did": "The SYSTEM DID does not resolve: its DID document is malformed. You can still save.",
+          "not_resolved_no_document": "The SYSTEM DID does not resolve: no DID document was found. You can still save.",
+          "resolved": "The SYSTEM DID resolves.",
+          "resolver_unavailable": "The SYSTEM DID could not be checked because the Issuer Service is unreachable. You can still save."
+        },
+        "checkDid": "Check DID",
+        "dspBaseUrlField": "DSP base URL",
+        "notify": "Inform the Security Server operator about this change, for example by email. The Security Server keeps its own values until the operator re-identifies it.",
+        "oldHostWarning": "The SYSTEM DID and DSP base URL may still use the old host. Change them too, or leave them for the Security Server operator to re-identify the server.",
+        "publishedValues": "Published values",
+        "publishedValuesHint": "Global configuration announces these values to other servers.",
         "success": "Security server address successfully updated",
+        "systemDidField": "SYSTEM DID",
         "title": "Edit Security Server address"
       }
     },
     "disabled": "Temporarily disabled",
+    "dspBaseUrl": "DSP base URL",
     "maintenanceMode": "In maintenance mode",
     "ownerClass": "Owner Class",
     "ownerCode": "Owner Code",
@@ -503,9 +573,16 @@
       }
     },
     "serverCode": "Server Code",
+    "staleValuesWarning": "The SYSTEM DID or DSP base URL does not match the Security Server address. Other servers use the old values to reach this server. Edit the values, or ask the Security Server operator to re-identify the server.",
+    "systemDid": "SYSTEM DID",
     "unregistered": "Unregistered"
   },
   "status": {
+    "dataspace_tls_acme": {
+      "enrollment_failing": "Dataspace TLS certificate ACME enrollment failing: {0}",
+      "renewal_failing": "Dataspace TLS certificate ACME renewal failing: {0}",
+      "status_check_failed": "Failed to check Dataspace TLS certificate ACME status"
+    },
     "global_conf_generation": {
       "failing": "Global configuration generation failing since {0}",
       "global_conf_expired": "Global configuration expired",
@@ -524,6 +601,157 @@
         "missing": "Signing of internal configuration failed - active key missing",
         "token_not_active": "Signing of internal configuration failed - PIN of active key not entered",
         "token_not_found": "Signing of internal configuration failed - active key not found"
+      }
+    }
+  },
+  "systemParameters": {
+    "configurableProperties": {
+      "descriptions": {
+        "xroad": {
+          "admin-service": {
+            "auto-approve-auth-cert-reg-requests": "If enabled, authentication certificate registration requests are approved automatically instead of waiting for administrator approval.",
+            "auto-approve-client-reg-requests": "If enabled, client registration requests are approved automatically instead of waiting for administrator approval.",
+            "auto-approve-owner-change-requests": "If enabled, owner change requests are approved automatically instead of waiting for administrator approval.",
+            "authentication-provider": "Authentication provider used for UI login. Possible values are PAM or DATABASE.",
+            "cache-api-key-ttl": "Configures API key cache expiration in seconds. Setting the value to -1 disables the cache.",
+            "cache-default-ttl": "Configures default cache expiration in seconds. Cache is hit during authentication requests. Setting the value to -1 disables the cache.",
+            "enforce-user-password-policy": "When enabled, user passwords must meet the configured password policy.",
+            "global-configuration-generation-rate-in-seconds": "How often, in seconds, the Central Server regenerates global configuration.",
+            "rate-limit-cache-size": "Controls how many IP addresses can be remembered in the rate-limit cache. Tradeoff between memory usage and protection from a large attack.",
+            "rate-limit-enabled": "Enables request rate limiting for the Admin API.",
+            "rate-limit-expire-after-access-minutes": "Controls how long the rate-limit cache entries are valid.",
+            "rate-limit-requests-per-minute": "Admin API request rate limit per minute. Rate limits apply per each requesting IP.",
+            "rate-limit-requests-per-second": "Admin API request rate limit per second. Rate limits apply per each requesting IP.",
+            "request-size-limit-binary-upload": "Maximum size of Admin API requests for file uploads.",
+            "request-size-limit-regular": "Maximum size of Admin API requests.",
+            "strict-identifier-checks": "Configures identifier input validation (member code, subsystem code etc). Values: true - identifiers must match pattern ^[a-zA-Z0-9'()+,-.=?]*. false - identifiers must not contain colon (:), semicolon (;), slashes (/\\), percent (%) or control characters.",
+            "trusted-anchors-allowed": "If enabled, allows uploading additional trusted configuration anchors besides the Central Server's own."
+          },
+          "management-service": {
+            "rate-limit-cache-size": "Controls how many IP addresses can be remembered in the rate-limit cache. Tradeoff between memory usage and protection from a large attack.",
+            "rate-limit-enabled": "Enables request rate limiting for the management service.",
+            "rate-limit-expire-after-access-minutes": "Controls how long the rate-limit cache entries are valid.",
+            "rate-limit-requests-per-minute": "Management service request rate limit per minute. Rate limits apply per each requesting IP.",
+            "rate-limit-requests-per-second": "Management service request rate limit per second. Set to -1 to disable. Rate limits apply per each requesting IP.",
+            "http-client-properties": {
+              "connection-request-timeout-seconds": "Seconds to wait for a connection to become available from the connection pool.",
+              "connection-timeout-seconds": "Seconds to wait when establishing a connection to the Admin API.",
+              "max-connections-per-route": "Maximum number of simultaneous connections the management service's HTTP client keeps open per route.",
+              "max-connections-total": "Maximum number of simultaneous connections the management service's HTTP client keeps open in total.",
+              "response-timeout-seconds": "Seconds to wait for a response from the Admin API."
+            }
+          },
+          "registration-service": {
+            "rate-limit-cache-size": "Controls how many IP addresses can be remembered in the rate-limit cache. Tradeoff between memory usage and protection from a large attack.",
+            "rate-limit-enabled": "Enables request rate limiting for the registration service.",
+            "rate-limit-expire-after-access-minutes": "Controls how long the rate-limit cache entries are valid.",
+            "rate-limit-requests-per-minute": "Registration service request rate limit per minute. Rate limits apply per each requesting IP.",
+            "rate-limit-requests-per-second": "Registration service request rate limit per second. Set to -1 to disable. Rate limits apply per each requesting IP.",
+            "http-client-properties": {
+              "connection-request-timeout-seconds": "Seconds to wait for a connection to become available from the connection pool.",
+              "connection-timeout-seconds": "Seconds to wait when establishing a connection to the Admin API.",
+              "max-connections-per-route": "Maximum number of simultaneous connections the registration service's HTTP client keeps open per route.",
+              "max-connections-total": "Maximum number of simultaneous connections the registration service's HTTP client keeps open in total.",
+              "response-timeout-seconds": "Seconds to wait for a response from the Admin API."
+            },
+            "vault-retry": {
+              "retry-delay": "Delay before the first retry of a failed Vault (OpenBao) request.",
+              "retry-exponential-backoff-multiplier": "Multiplier applied to the retry delay after each failed Vault (OpenBao) request attempt.",
+              "retry-max-attempts": "Maximum number of retry attempts when a Vault (OpenBao) request fails."
+            }
+          },
+          "common-global-conf": {
+            "source": "Source backend for global configuration. Possible values: FILESYSTEM (read from local files, the default) or REMOTE (used in containerized deployments).",
+            "refresh-rate": "How often the shared global configuration cache is refreshed from the configured source (e.g. 60S).",
+            "configuration-path": "File system path where the global configuration files are stored."
+          },
+          "common-ocsp-verifier": {
+            "cache-period": "How long (in seconds) OCSP verification results are cached before being re-checked."
+          },
+          "common-rpc": {
+            "use-tls": "For testing only; never turn it off in production. When enabled, mutual TLS is used for gRPC communication between the Central Server's co-located services. When disabled, this gRPC communication is plaintext.",
+            "certificate-provisioning": {
+              "refresh-interval": "How often services check whether their gRPC TLS certificate needs to be renewed (e.g. 5H).",
+              "wait-duration": "Delay before the first retry after a failed load of the gRPC TLS certificate from the secret store (e.g. 5S).",
+              "exponential-backoff-multiplier": "Multiplier applied to the retry delay after each consecutive failed load of the gRPC TLS certificate.",
+              "exponential-max-wait-duration": "Upper limit for the retry delay after failed loads of the gRPC TLS certificate (e.g. 5M)."
+            },
+            "channel": {
+              "op-monitor": {
+                "host": "Hostname used to connect to the operational monitoring daemon gRPC server.",
+                "port": "Port used to connect to the operational monitoring daemon gRPC server.",
+                "deadline-after": "Milliseconds before a gRPC call to the operational monitoring daemon times out.",
+                "max-inbound-message-size": "Maximum size in bytes of a response the operational monitoring daemon channel accepts. The minimum is 4194304 (4 MiB)."
+              },
+              "env-monitor": {
+                "host": "Hostname used to connect to the env-monitor gRPC server.",
+                "port": "Port used to connect to the env-monitor gRPC server.",
+                "deadline-after": "Milliseconds before a gRPC call to the env-monitor times out."
+              },
+              "configuration-client": {
+                "host": "Hostname used to connect to the configuration client gRPC server.",
+                "port": "Port used to connect to the configuration client gRPC server.",
+                "deadline-after": "Milliseconds before a gRPC call to the configuration client times out."
+              },
+              "proxy": {
+                "host": "Hostname used to connect to the proxy gRPC server.",
+                "port": "Port used to connect to the proxy gRPC server.",
+                "deadline-after": "Milliseconds before a gRPC call to the proxy times out."
+              },
+              "auxiliary-service": {
+                "host": "Hostname used to connect to the auxiliary service gRPC server.",
+                "port": "Port used to connect to the auxiliary service gRPC server.",
+                "deadline-after": "Milliseconds before a gRPC call to the auxiliary service times out."
+              }
+            }
+          },
+          "signer": {
+            "selfsigned-cert-digest-algorithm": "Digest algorithm used when creating self-signed certificates.",
+            "csr-signature-digest-algorithm": "Certificate Signing Request signature digest algorithm. Possible values are - SHA-256, SHA-384, SHA-512.",
+            "enforce-token-pin-policy": "Controls enforcing the token pin policy. When set to true, software token pin is required to be at least 10 ASCII characters from at least tree character classes (lowercase letters, uppercase letters, digits, special characters). (since version 6.7.7)",
+            "ocsp-response-retrieval-active": "This property is used as an override to deactivate periodic OCSP-response retrieval for components that don't need that functionality, but still use signer. Values: false - OCSP-response retrieval jobs are never scheduled. true - periodic OCSP-response retrieval is active based on ocspFetchInterval. Note that if the entire property is missing, it is interpreted as true. This property is delivered as an override and only for the components where the OCSP-response retrieval jobs need to be deactivated. The property is missing for components that require OCSP-response retrieval to be activated.",
+            "ocsp-retry-delay": "OCSP retry delay for signer when fetching OCSP responses fail. After failing to fetch OCSP responses signer waits for the time period defined by \"ocsp-retry-delay\" before trying again. This is repeated until fetching OCSP responses succeeds. After successfully fetching OCSP responses signer returns to normal OCSP refresh schedule defined by \"ocspFetchInterval\". If the value of \"ocsp-retry-delay\" is higher than \"ocspFetchInterval\", the value of \"ocspFetchInterval\" is used as OCSP retry delay.",
+            "ocsp-cache-path": "Absolute path to the directory where the cached OCSP responses are stored.",
+            "ocsp-prioritization-strategy": "OCSP prioritization strategy, that determines what OCSP responders and in what order are used to get OCSP responses. Possible values are: ONLY_FREE - Only free OCSP responders are used. ONLY_PAID - only paid OCSP responders are used. FREE_FIRST - free OCSP responders are used first, then if no successful responses, then paid responders are used next, finally OCSP responders whose cost type is undefined are used last. PAID_FIRST - paid OCSP responders are used first, then if no successful responses, then free responders are used next, finally OCSP responders whose cost type is undefined are used last. NONE - no new ordering nor filtering is added (same as before adding cost type to OCSP endpoints.)",
+            "module-manager-update-interval": "HSM module manager update interval in seconds.",
+            "soft-token-rsa-sign-mechanism": "PKCS#11 mechanism used for RSA signing on the software token.",
+            "soft-token-ec-sign-mechanism": "PKCS#11 mechanism used for EC signing on the software token.",
+            "soft-token-pin-keystore-algorithm": "Key algorithm used for creating PIN keystore for software token. Possible values are RSA and EC. (since version 7.6)",
+            "key-length": "Key length for generating authentication and signing keys (since version 6.7)",
+            "key-named-curve": "Named curve for generating authentication and signing keys in case EC algorithms are used (since version 7.6)",
+            "autologin": {
+              "enabled": "Enable automatic token login on startup.",
+              "retry": {
+                "retry-delay": "Initial delay between autologin retry attempts (e.g. 3S).",
+                "retry-exponential-backoff-multiplier": "Multiplier applied to the retry delay on each subsequent autologin attempt.",
+                "retry-max-attempts": "Maximum number of autologin retry attempts.",
+                "retry-timeout": "Total time limit for all autologin retry attempts (e.g. 60S)."
+              }
+            },
+            "addon": {
+              "hwtoken": {
+                "enabled": "Enable the hardware token (HSM) add-on.",
+                "session-pool-enabled": "Enable pooling of PKCS#11 sessions for the hardware token.",
+                "session-pool-max-total": "Maximum total PKCS#11 sessions in the hardware token session pool.",
+                "session-pool-min-idle": "Minimum number of idle PKCS#11 sessions kept in the hardware token pool.",
+                "session-pool-max-idle": "Maximum number of idle PKCS#11 sessions kept in the hardware token pool.",
+                "session-acquire-timeout": "Maximum time to wait when acquiring a PKCS#11 session from the pool (e.g. 15S)."
+              }
+            },
+            "rpc": {
+              "enabled": "Enable the Signer gRPC server.",
+              "listen-address": "IP address on which the Signer gRPC server listens.",
+              "port": "Port on which the Signer gRPC server listens."
+            },
+            "pin-hasher": {
+              "iterations": "Argon2 iteration count used when hashing token PINs.",
+              "memory-kb": "Argon2 memory cost in kilobytes used when hashing token PINs.",
+              "parallelism": "Argon2 parallelism degree used when hashing token PINs.",
+              "hash-length": "Output hash length in bytes used when hashing token PINs.",
+              "salt-length": "Salt length in bytes used when hashing token PINs."
+            }
+          }
+        }
       }
     }
   },
@@ -593,9 +821,10 @@
       "apiKeys": "API Keys",
       "backupAndRestore": "Backup And Restore",
       "globalResources": "Global Resources",
+      "systemParameters": "System Parameters",
       "systemSettings": "System Settings",
       "tlsCertificates": "TLS Certificates",
-      "dsTlsCertificate": "DS TLS Certificate"
+      "dsTlsCertificate": "Dataspace TLS Certificate"
     }
   },
   "tlsCertificates": {
@@ -646,20 +875,20 @@
     "certificationServices": "Certification Services",
     "defaultCsrFormat": "Default CSR format",
     "dsTls": {
-      "addDsTlsCertificationAuthority": "Add DS TLS certification authority",
+      "addDsTlsCertificationAuthority": "Add Dataspace TLS certification authority",
       "delete": {
         "confirmationDialog": {
-          "message": "Are you sure you want to delete the DS TLS certification authority \"{name}\"?",
+          "message": "Are you sure you want to delete the Dataspace TLS certification authority \"{name}\"?",
           "title": "Are you sure?"
         },
-        "success": "DS TLS certification authority deleted successfully"
+        "success": "Dataspace TLS certification authority deleted successfully"
       },
-      "dsTlsCertificateProfileIdExplanation": "Profile ID used for some ACME servers to let them know the certificate usage type when ordering a DS TLS certificate.",
-      "dsTlsCertificationAuthorities": "DS TLS Certification Authorities",
-      "dsTlsCertificationAuthority": "DS TLS Certification Authority",
+      "dsTlsCertificateProfileIdExplanation": "Profile ID used for some ACME servers to let them know the certificate usage type when ordering a Dataspace TLS certificate.",
+      "dsTlsCertificationAuthorities": "Dataspace TLS Certification Authorities",
+      "dsTlsCertificationAuthority": "Dataspace TLS Certification Authority",
       "nameExplanation": "A free-form name identifying this certification authority, for example \"Let's Encrypt\".",
       "settings": {
-        "title": "DS TLS CA Settings"
+        "title": "Dataspace TLS CA Settings"
       }
     },
     "timestampingService": {

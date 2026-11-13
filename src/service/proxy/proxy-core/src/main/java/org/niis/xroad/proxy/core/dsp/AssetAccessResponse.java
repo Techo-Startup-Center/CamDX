@@ -26,6 +26,7 @@
  */
 package org.niis.xroad.proxy.core.dsp;
 
+import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 
 /**
@@ -33,6 +34,10 @@ import jakarta.annotation.Nullable;
  *
  * @param endpoint      the dataplane endpoint URL where the transfer request should be sent
  * @param authorization optional authorization credential for the dataplane (may be null)
+ * @param winner        the Security Server that granted the access. Servers are compared by the lowercase
+ *                      {@code host:port} of its address with the scheme's default port filled in, or by the exact
+ *                      address when it is not an HTTP(S) URL
  */
-public record AssetAccessResponse(String endpoint, @Nullable String authorization) {
+public record AssetAccessResponse(String endpoint, @Nullable String authorization,
+                                  @Nonnull AcquisitionCandidate winner) {
 }

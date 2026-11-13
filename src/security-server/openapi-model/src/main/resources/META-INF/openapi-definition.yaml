@@ -2577,21 +2577,20 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
-  /dataspace/tls-certificate/enrollment-status:
+  /dataspace/agreement-token-key:
     get:
       tags:
         - dataspace
-      summary: view the DataSpace TLS certificate's enrollment status
-      operationId: getDataspaceTlsCertificateEnrollmentStatus
-      description: <h3>Administrator views how the DataSpace TLS certificate was obtained (manually or via ACME),
-        when it is next due for ACME renewal, and its last enrollment/renewal error.</h3>
+      summary: view agreement token signing key status
+      operationId: getAgreementTokenKeyStatus
+      description: <h3>Administrator views the status of the agreement token signing key of the connected proxy.</h3>
       responses:
         '200':
-          description: DataSpace TLS certificate enrollment status
+          description: agreement token signing key status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DataspaceTlsCertificateEnrollmentStatus'
+                $ref: '#/components/schemas/AgreementTokenKeyStatus'
         '400':
           description: request was invalid
         '401':
@@ -2604,13 +2603,73 @@ paths:
           description: request specified an invalid format
         '500':
           description: internal server error
+  /dataspace/agreement-token-key/rotate:
+    post:
+      tags:
+        - dataspace
+      summary: rotate the agreement token signing key
+      operationId: rotateAgreementTokenKey
+      description: >
+        <h3>Administrator rotates the agreement token signing key.</h3>
+        A new key is generated and starts signing within two key refresh intervals. Earlier keys are kept so that
+        tokens already issued keep verifying until they expire.
+      responses:
+        '200':
+          description: id of the newly generated key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementTokenKeyRotation'
+        '400':
+          description: request was invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: resource requested does not exists
+        '406':
+          description: request specified an invalid format
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+        '503':
+          description: key material or the secret store is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
   /diagnostics/operational-monitoring:
     get:
       tags:
         - diagnostics
       summary: view operational information
       operationId: getOperationalDataIntervals
-      description: <h3>Administrator views the Security Server's operational information on diagnostics page</h3>
+      description: >-
+        <h3>Administrator views the Security Server's operational information on diagnostics page</h3>
+        <p>
+        The request is rejected with status 400 and error code <code>operational_data_intervals_out_of_range</code> when
+        <ul>
+        <li>the interval is less than 1 or more than 35791 minutes,</li>
+        <li>records_to is before records_from, or</li>
+        <li>the range divided into intervals would produce more than 100000 time buckets. The number of buckets is
+        <code>max(0, floor(to / interval) - floor(from / interval) + 2)</code>, where from and to are epoch milliseconds
+        and interval is in milliseconds.</li>
+        </ul>
+        </p>
       parameters:
         - in: query
           name: records_from
@@ -2630,7 +2689,7 @@ paths:
             example: '2025-05-15T00:00:00.001Z'
         - in: query
           name: interval
-          description: interval in minutes the requests are divided into
+          description: interval in minutes the requests are divided into, from 1 to 35791. The range must produce at most 100000 time buckets.
           required: true
           schema:
             type: integer
@@ -2670,6 +2729,15 @@ paths:
                 description: array of operational info objects
                 items:
                   $ref: '#/components/schemas/OperationalDataInterval'
+        '400':
+          description: interval, time range or number of time buckets is out of range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
         '401':
           description: authentication credentials are missing
         '403':
@@ -4929,26 +4997,27 @@ paths:
           description: an existing item already exists
         '500':
           description: internal server error
-  /system/property:
+  /system/external-rpc-ca:
     get:
       tags:
         - system
-      operationId: getConfigurableProperties
-      summary: Get configurable system parameters.
-      description: <h3>Administrator views Security Server's configurable system parameters</h3>
+      summary: view the Security Server external RPC CA details
+      operationId: getExternalRpcCa
+      description: <h3>Administrator views the details of the Security Server RPC CA, the certificate authority that signs the
+        Security Server's external RPC certificates.</h3>
       responses:
         '200':
-          description: List of Security Server configurable properties.
+          description: Security Server RPC CA details
           content:
             application/json:
               schema:
-                type: array
-                description: List of Security Server configurable properties.
-                uniqueItems: true
-                items:
-                  $ref: '#/components/schemas/SecurityServerConfigurableProperty'
-        '400':
-          description: request was invalid
+                $ref: '#/components/schemas/CertificateDetails'
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: the Security Server RPC CA is not available
           content:
             application/json:
               schema:
@@ -4956,42 +5025,37 @@ paths:
               examples:
                 error_response:
                   $ref: '#/components/examples/ErrorExample'
-                error_metadata_response:
-                  $ref: '#/components/examples/ErrorWithMetadataExample'
-        '401':
-          description: authentication credentials are missing
-        '403':
-          description: request has been refused
-        '404':
-          description: resource requested does not exists
-        '406':
-          description: request specified an invalid format
         '500':
-          description: internal server error
+          description: the Security Server RPC CA could not be read from the secret store
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorInfo'
               examples:
-                error_metadata_response:
-                  $ref: '#/components/examples/ErrorWithMetadataExample'
-
-    patch:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+  /system/external-rpc-ca/download:
+    get:
       tags:
         - system
-      operationId: updateConfigurableProperty
-      summary: Update configurable property with new property value.
-      description: <h3>Administrator updates selected Security Server's configurable system parameter</h3>
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SecurityServerPropertyUpdate'
+      summary: download the Security Server external RPC CA as a PEM file
+      operationId: downloadExternalRpcCa
+      description: <h3>Administrator downloads the Security Server external RPC CA as one PEM encoded certificate.</h3>
       responses:
-        '204':
-          description: property updated successfully
-        '400':
-          description: request was invalid
+        '200':
+          description: Security Server RPC CA certificate in PEM format
+          content:
+            application/x-pem-file:
+              schema:
+                type: string
+                format: binary
+                description: PEM file with exactly one certificate
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '404':
+          description: the Security Server RPC CA is not available
           content:
             application/json:
               schema:
@@ -4999,25 +5063,110 @@ paths:
               examples:
                 error_response:
                   $ref: '#/components/examples/ErrorExample'
-                error_metadata_response:
-                  $ref: '#/components/examples/ErrorWithMetadataExample'
-        '401':
-          description: authentication credentials are missing
-        '403':
-          description: request has been refused
-        '404':
-          description: resource requested does not exists
-        '406':
-          description: request specified an invalid format
         '500':
-          description: internal server error
+          description: the Security Server RPC CA could not be read from the secret store
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorInfo'
               examples:
-                error_metadata_response:
-                  $ref: '#/components/examples/ErrorWithMetadataExample'
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+  /system/op-monitor-ca:
+    get:
+      tags:
+        - system
+      summary: view the op-monitor CA details
+      operationId: getOpMonitorCa
+      description: <h3>Administrator views the details of the stored op-monitor CA, the certificate authority of an
+        operational monitoring daemon running on another host. The response is empty when no op-monitor CA is stored.</h3>
+      responses:
+        '200':
+          description: op-monitor CA details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateDetails'
+        '204':
+          description: no op-monitor CA is stored
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '500':
+          description: the op-monitor CA could not be read from the secret store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+    post:
+      tags:
+        - system
+      summary: upload or replace the op-monitor CA
+      operationId: uploadOpMonitorCa
+      description: <h3>Administrator uploads the CA certificate of an operational monitoring daemon running on another
+        host, as one PEM or DER encoded file. The uploaded certificate replaces the stored one.</h3>
+      requestBody:
+        description: CA certificate file
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CertificateFile'
+      responses:
+        '200':
+          description: op-monitor CA stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateDetails'
+        '400':
+          description: the file is not exactly one valid CA certificate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '500':
+          description: the op-monitor CA could not be stored in the secret store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
+    delete:
+      tags:
+        - system
+      summary: delete the op-monitor CA
+      operationId: deleteOpMonitorCa
+      description: <h3>Administrator deletes the stored op-monitor CA. Deleting when no op-monitor CA is stored succeeds
+        and changes nothing.</h3>
+      responses:
+        '204':
+          description: no op-monitor CA is stored any more
+        '401':
+          description: authentication credentials are missing
+        '403':
+          description: request has been refused
+        '500':
+          description: the op-monitor CA could not be deleted from the secret store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
   /system/server-address:
     get:
       tags:
@@ -5051,6 +5200,15 @@ paths:
           description: resource requested does not exists
         '406':
           description: request specified an invalid format
+        '409':
+          description: request conflicts with the current Security Server state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
         '500':
           description: internal server error
           content:
@@ -5094,6 +5252,15 @@ paths:
           description: resource requested does not exists
         '406':
           description: request specified an invalid format
+        '409':
+          description: request conflicts with the current Security Server state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInfo'
+              examples:
+                error_response:
+                  $ref: '#/components/examples/ErrorExample'
         '500':
           description: internal server error
           content:
@@ -6462,7 +6629,6 @@ components:
             maxLength: 255
     MailNotificationType:
       type: string
-      format: enum
       description: types of mail notifications that can be turned on or off via configuration
       example: ACME_FAILURE
       enum:
@@ -6498,7 +6664,6 @@ components:
           format: text
     MailStatus:
       type: string
-      format: enum
       description: Whether the sending was a success or an error
       example: success
       enum:
@@ -6937,7 +7102,6 @@ components:
             $ref: '#/components/schemas/OcspResponder'
     CertificateStatus:
       type: string
-      format: enum
       description: certificate status
       example: IN_USE
       enum:
@@ -6948,7 +7112,6 @@ components:
         - GLOBAL_ERROR
     CertificateAuthorityOcspResponse:
       type: string
-      format: enum
       description: certificate authority OCSP status
       example: IN_USE
       enum:
@@ -6959,7 +7122,6 @@ components:
         - OCSP_RESPONSE_REVOKED
     CertificateOcspStatus:
       type: string
-      format: enum
       description: certificate status
       example: IN_USE
       enum:
@@ -6986,7 +7148,6 @@ components:
         $ref: '#/components/schemas/PossibleAction'
     PossibleAction:
       type: string
-      format: enum
       description: an action to change state or edit token, key, cert or csr
       example: DELETE
       enum:
@@ -7088,7 +7249,6 @@ components:
           $ref: '#/components/schemas/ClientStatus'
     RenameStatus:
       type: string
-      format: enum
       description: rename status
       example: NAME_SET
       readOnly: true
@@ -7110,7 +7270,6 @@ components:
             any warnings cause request to fail
     ClientStatus:
       type: string
-      format: enum
       description: client status
       example: REGISTERED
       readOnly: true
@@ -7127,7 +7286,6 @@ components:
       $ref: '../../../../../../common/common-admin-api/src/main/resources/common-openapi-definition.yaml#/components/schemas/CodeWithDetails'
     ConnectionType:
       type: string
-      format: enum
       description: connection type
       example: HTTP
       default: HTTPS
@@ -7143,7 +7301,6 @@ components:
           $ref: '#/components/schemas/ConnectionType'
     CsrFormat:
       type: string
-      format: enum
       description: format of the certificate signing request (PEM or DER)
       example: PEM
       default: PEM
@@ -7270,7 +7427,6 @@ components:
           readOnly: true
     DiagnosticStatusClass:
       type: string
-      format: enum
       description: diagnostics status class
       example: OK
       enum:
@@ -7626,7 +7782,6 @@ components:
         - RSA
         - EC
       example: RSA
-      format: enum
       type: string
     KeyName:
       type: object
@@ -7669,7 +7824,6 @@ components:
           $ref: '#/components/schemas/CsrGenerate'
     KeyUsage:
       type: string
-      format: enum
       description: certificate key usage
       example: NON_REPUDIATION
       enum:
@@ -7684,7 +7838,6 @@ components:
         - DECIPHER_ONLY
     KeyUsageType:
       type: string
-      format: enum
       description: intended usage for the key (signing or authentication)
       example: AUTHENTICATION
       enum:
@@ -7740,7 +7893,6 @@ components:
             maxLength: 1023
     NodeType:
       type: string
-      format: enum
       description:
         <p>The enum can have three different values</p>
         <ul>
@@ -7763,7 +7915,6 @@ components:
           $ref: '#/components/schemas/NodeType'
     AuthProviderType:
       type: string
-      format: enum
       description:
         <p>The enum can have three different values</p>
         <ul>
@@ -7921,7 +8072,6 @@ components:
         is_management_services_provider: false
     MaintenanceModeStatus:
       type: string
-      format: enum
       description: Maintenance Mode status
       example: ENABLED_MAINTENANCE_MODE
       enum:
@@ -7963,54 +8113,6 @@ components:
           $ref: '#/components/schemas/SecurityServerAddress'
         requested_change:
           $ref: '#/components/schemas/SecurityServerAddress'
-    SecurityServerConfigurableProperty:
-      type: object
-      description: A single configurable property, including metadata for UI rendering and current value.
-      properties:
-        property_name:
-          type: string
-          format: text
-          description: name of the property
-          minLength: 1
-          maxLength: 1024
-          example: xroad.proxy-ui-api.rate-limit-requests-per-second
-        current_value:
-          type: string
-          format: text
-          description: textual representation of property's current value
-          minLength: 1
-          maxLength: 4096
-        default_value:
-          type: string
-          format: text
-          description: textual representation of property's default value
-        scope:
-          type: string
-          description: scope of the property
-          example: proxy-ui-api
-    SecurityServerPropertyUpdate:
-      type: object
-      description: request object for updating a security server configurable property
-      required:
-       - property_name
-       - property_value
-      properties:
-        property_name:
-          type: string
-          description: name of the property to be updated
-          minLength: 1
-          maxLength: 1024
-          example: xroad.proxy-ui-api.rate-limit-requests-per-second
-        property_value:
-          type: string
-          description: new value of the property
-          minLength: 1
-          maxLength: 4096
-          example: 60
-        scope:
-          type: string
-          description: scope of the property
-          example: proxy-ui-api
     Service:
       type: object
       description: service for the service description
@@ -8370,7 +8472,6 @@ components:
           $ref: '#/components/schemas/ServiceType'
     ServicePrioritizationStrategy:
       type: string
-      format: enum
       description: service prioritization strategy
       example: FREE_FIRST
       enum:
@@ -8459,7 +8560,6 @@ components:
         - PAID
         - UNDEFINED
       example: FREE
-      format: enum
       type: string
     Token:
       type: object
@@ -8530,7 +8630,6 @@ components:
           $ref: '#/components/schemas/PossibleActions'
     TokenInitStatus:
       type: string
-      format: enum
       description: whether a token has been initialized or not – if the software token init status
         cannot be resolved (e.g. signer module is offline), the value is UNKNOWN
       example: INITIALIZED
@@ -8660,6 +8759,7 @@ components:
       required:
         - enabled
         - auth_cert_registered
+        - server
         - participant_contexts
       properties:
         enabled:
@@ -8670,12 +8770,47 @@ components:
           type: boolean
           readOnly: true
           description: whether the authentication certificate is in REGISTERED state
+        server:
+          $ref: '#/components/schemas/DataspaceServerStatus'
         participant_contexts:
           type: array
           readOnly: true
           description: provisioning status per participant context
           items:
             $ref: '#/components/schemas/DataspaceParticipantContextStatus'
+    DataspaceServerStatus:
+      type: object
+      description: server-level data space status, including the publication of the SYSTEM values
+      required:
+        - dataspace_ready
+        - publication_state
+      properties:
+        dataspace_ready:
+          type: boolean
+          readOnly: true
+          description: whether the data space is ready, that is globalconf lists a credential issuer for this instance
+        dsp_base_url:
+          type: string
+          readOnly: true
+          description: DSP base URL of this security server, built from the registered address; absent while the address is unknown
+        publication_state:
+          $ref: '#/components/schemas/DataspacePublicationState'
+        publication_reason:
+          type: string
+          readOnly: true
+          description: reason for the publication state, for example the Central Server's conflict reason
+    DataspacePublicationState:
+      type: string
+      readOnly: true
+      description: >-
+        whether the SYSTEM values have reached the Central Server. NOT_SENT: not sent yet or retrying.
+        SUBMITTED: accepted by the Central Server, not yet in globalconf. PUBLISHED: seen in globalconf.
+        REJECTED: refused with a final reason.
+      enum:
+        - NOT_SENT
+        - SUBMITTED
+        - PUBLISHED
+        - REJECTED
     DataspaceParticipantContextStatus:
       type: object
       description: provisioning status for one data space participant context
@@ -8684,6 +8819,7 @@ components:
         - kind
         - context_created
         - credential_status
+        - identity_status
       properties:
         participant_id:
           type: string
@@ -8694,8 +8830,7 @@ components:
           readOnly: true
           description: participant context kind
           enum:
-            - HOST
-            - MANAGEMENT
+            - SYSTEM
             - MEMBER
         context_created:
           type: boolean
@@ -8714,37 +8849,59 @@ components:
         identity_status:
           type: string
           readOnly: true
-          description: bound-identity verification state, present only for MEMBER contexts
+          description: >-
+            bound-identity verification state of the participant context, for MEMBER and SYSTEM contexts alike;
+            REJECTED means the registered address cannot carry a DID, so nothing is bound
           enum:
             - OK
-            - MISMATCH
             - VERSION_UNSUPPORTED
             - UNBOUND
+            - REJECTED
             - DRIFTED
             - UNKNOWN
-    DataspaceTlsCertificateEnrollmentStatus:
-      type: object
-      description: how the DataSpace TLS certificate was enrolled, and its renewal bookkeeping
-      required:
-        - enrollment_method
-      properties:
-        enrollment_method:
+        publication_state:
+          $ref: '#/components/schemas/DataspacePublicationState'
+        publication_reason:
           type: string
           readOnly: true
-          description: how the currently stored DataSpace TLS certificate was obtained, or NONE if none has
-            been configured yet
-          enum:
-            - NONE
-            - MANUAL
-            - ACME
-        next_renewal_time:
+          description: reason for the publication state of a MEMBER context; absent for SYSTEM contexts
+    AgreementTokenKeyStatus:
+      type: object
+      description: status of the agreement token signing key of the connected proxy
+      required:
+        - available
+        - retained_key_count
+      properties:
+        available:
+          type: boolean
+          readOnly: true
+          description: false when the proxy has not loaded any signing key material since it started
+        active_key_id:
+          type: string
+          readOnly: true
+          description: id of the key signing new tokens now
+        active_key_created_at:
           type: string
           format: date-time
           readOnly: true
-          description: when the certificate is next due for ACME renewal, absent when not applicable
-        last_error:
+          description: creation time of the signing key, absent for keys stored without a creation time
+        retained_key_count:
+          type: integer
+          readOnly: true
+          description: number of retained signing keys
+        pending_key_id:
           type: string
           readOnly: true
-          description: the last enrollment/renewal error, absent when the last attempt succeeded
+          description: id of the newest key when it does not sign yet, absent otherwise
+    AgreementTokenKeyRotation:
+      type: object
+      description: result of an agreement token signing key rotation
+      required:
+        - key_id
+      properties:
+        key_id:
+          type: string
+          readOnly: true
+          description: id of the newly generated key
 security:
   - ApiKeyAuth: []

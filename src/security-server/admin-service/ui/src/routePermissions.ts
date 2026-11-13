@@ -41,7 +41,14 @@ export interface RoutePermission {
 export const routePermissions: RoutePermission[] = [
   {
     name: RouteName.Keys,
-    permissions: [Permissions.VIEW_KEYS, Permissions.VIEW_API_KEYS, Permissions.VIEW_INTERNAL_TLS_CERT, Permissions.VIEW_DS_TLS_CERT],
+    permissions: [
+      Permissions.VIEW_KEYS,
+      Permissions.VIEW_API_KEYS,
+      Permissions.VIEW_INTERNAL_TLS_CERT,
+      Permissions.VIEW_DS_TLS_CERT,
+      Permissions.VIEW_AGREEMENT_TOKEN_KEY,
+      Permissions.VIEW_EXTERNAL_RPC_CA,
+    ],
   },
   {
     name: RouteName.SignAndAuthKeys,
@@ -58,6 +65,14 @@ export const routePermissions: RoutePermission[] = [
   {
     name: RouteName.DsTlsCertificate,
     permissions: [Permissions.VIEW_DS_TLS_CERT],
+  },
+  {
+    name: RouteName.AgreementTokenKey,
+    permissions: [Permissions.VIEW_AGREEMENT_TOKEN_KEY],
+  },
+  {
+    name: RouteName.OpMonitorTrust,
+    permissions: [Permissions.VIEW_EXTERNAL_RPC_CA],
   },
   {
     name: RouteName.CreateApiKey,

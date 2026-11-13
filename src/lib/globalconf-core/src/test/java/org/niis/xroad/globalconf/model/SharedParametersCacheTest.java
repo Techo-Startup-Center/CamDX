@@ -26,10 +26,13 @@
 package org.niis.xroad.globalconf.model;
 
 import ee.ria.xroad.common.TestCertUtil;
+import ee.ria.xroad.common.identifier.ClientId;
+import ee.ria.xroad.common.identifier.SecurityServerId;
 
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SharedParametersCacheTest {
 
     @Test
-    void shouldNotCacheApprovedDsTlsCaData() throws Exception {
+    void shouldNotCacheApprovedConnectorTlsCAData() throws Exception {
         var memberCaCert = TestCertUtil.getCaCert();
 
         var approvedCa = new SharedParameters.ApprovedCA();
@@ -46,16 +49,16 @@ class SharedParametersCacheTest {
         approvedCa.setTopCA(new SharedParameters.CaInfo(memberCaCert.getEncoded(), List.of()));
         approvedCa.setIntermediateCas(List.of());
 
-        var dsTlsCa = new SharedParameters.ApprovedDsTlsCa();
-        dsTlsCa.setName("DS TLS CA");
-        dsTlsCa.setTopCA(new SharedParameters.CaInfo("not a real certificate".getBytes(UTF_8), List.of()));
-        dsTlsCa.setIntermediateCas(List.of(
+        var connectorTlsCa = new SharedParameters.ApprovedConnectorTlsCA();
+        connectorTlsCa.setName("DS TLS CA");
+        connectorTlsCa.setTopCA(new SharedParameters.CaInfo("not a real certificate".getBytes(UTF_8), List.of()));
+        connectorTlsCa.setIntermediateCas(List.of(
                 new SharedParameters.CaInfo("not a real intermediate certificate either".getBytes(UTF_8), List.of())));
 
         var sharedParameters = SharedParameters.builder()
                 .instanceIdentifier("CS")
                 .approvedCAs(List.of(approvedCa))
-                .approvedDsTlsCas(List.of(dsTlsCa))
+                .approvedConnectorTlsCAs(List.of(connectorTlsCa))
                 .securityServers(List.of())
                 .build();
 
@@ -67,4 +70,72 @@ class SharedParametersCacheTest {
         assertThat(cache.getSubjectsAndCaCerts()).containsValue(memberCaCert);
     }
 
+    @Test
+    void shouldKeepSeparateSystemValuesAndMemberDidsForServersSharingOneAddress() {
+        var owner = ClientId.Conf.create("DEV", "COM", "222");
+        var serverOne = SecurityServerId.Conf.create(owner, "ss1");
+        var serverTwo = SecurityServerId.Conf.create(owner, "ss2");
+
+        var cache = new SharedParametersCache(SharedParameters.builder()
+                .instanceIdentifier("DEV")
+                .approvedCAs(List.of())
+                .members(List.of(member(owner, Map.of(
+                        serverOne, "did:web:ss0.example.org%3A7183:v1:DEV:COM:222",
+                        serverTwo, "did:web:ss0.example.org%3A7283:v1:DEV:COM:222"))))
+                .securityServers(List.of(
+                        server(owner, "ss1", "ss0.example.org", new ServerSystemValues(
+                                "did:web:ss0.example.org%3A7183:v1:system", "https://ss0.example.org:8183/api/dsp")),
+                        server(owner, "ss2", "ss0.example.org", new ServerSystemValues(
+                                "did:web:ss0.example.org%3A7283:v1:system", "https://ss0.example.org:8283/api/dsp"))))
+                .build());
+
+        assertThat(cache.getSecurityServersById().get(serverOne).getSystemValues())
+                .isEqualTo(new ServerSystemValues("did:web:ss0.example.org%3A7183:v1:system",
+                        "https://ss0.example.org:8183/api/dsp"));
+        assertThat(cache.getSecurityServersById().get(serverTwo).getSystemValues())
+                .isEqualTo(new ServerSystemValues("did:web:ss0.example.org%3A7283:v1:system",
+                        "https://ss0.example.org:8283/api/dsp"));
+        assertThat(cache.getMemberDids().get(owner))
+                .containsEntry(serverOne, "did:web:ss0.example.org%3A7183:v1:DEV:COM:222")
+                .containsEntry(serverTwo, "did:web:ss0.example.org%3A7283:v1:DEV:COM:222");
+    }
+
+    @Test
+    void shouldResolveMemberDidWhenMemberIsNotInServerClientList() {
+        var owner = ClientId.Conf.create("DEV", "COM", "222");
+        var otherMember = ClientId.Conf.create("DEV", "COM", "333");
+        var server = SecurityServerId.Conf.create(owner, "ss1");
+
+        var cache = new SharedParametersCache(SharedParameters.builder()
+                .instanceIdentifier("DEV")
+                .approvedCAs(List.of())
+                .members(List.of(member(owner, Map.of()),
+                        member(otherMember, Map.of(server, "did:web:ss0.example.org:v1"))))
+                .securityServers(List.of(server(owner, "ss1", "ss0.example.org", null)))
+                .build());
+
+        assertThat(cache.getSecurityServerClients().get(server)).containsExactly(owner);
+        assertThat(cache.getMemberDids().get(otherMember)).containsEntry(server, "did:web:ss0.example.org:v1");
+    }
+
+    private static SharedParameters.Member member(ClientId id, Map<SecurityServerId, String> dids) {
+        var member = new SharedParameters.Member();
+        member.setId(id);
+        member.setMemberClass(new SharedParameters.MemberClass(id.getMemberClass(), id.getMemberClass()));
+        member.setMemberCode(id.getMemberCode());
+        member.setDids(dids);
+        return member;
+    }
+
+    private static SharedParameters.SecurityServer server(ClientId owner, String serverCode, String address,
+                                                          ServerSystemValues systemValues) {
+        var server = new SharedParameters.SecurityServer();
+        server.setOwner(owner);
+        server.setServerCode(serverCode);
+        server.setAddress(address);
+        server.setAuthCertHashes(List.of());
+        server.setClients(List.of());
+        server.setSystemValues(systemValues);
+        return server;
+    }
 }

@@ -1,0 +1,357 @@
+/*
+ * The MIT License
+ *
+ * Copyright (c) 2019- Nordic Institute for Interoperability Solutions (NIIS)
+ * Copyright (c) 2018 Estonian Information System Authority (RIA),
+ * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
+ * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+package org.niis.xroad.cs.admin.core.dataspace;
+
+import ee.ria.xroad.common.identifier.ClientId;
+
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import org.niis.xroad.common.exception.NotFoundException;
+import org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection;
+import org.niis.xroad.cs.admin.api.domain.ParticipantValueResult;
+import org.niis.xroad.cs.admin.api.domain.SystemPairCheck;
+import org.niis.xroad.cs.admin.api.domain.SystemPairCheck.Verdict;
+import org.niis.xroad.cs.admin.api.service.ParticipantValueStore;
+import org.niis.xroad.cs.admin.core.dataspace.ParticipantValue.MemberDid;
+import org.niis.xroad.cs.admin.core.dataspace.ParticipantValue.SystemPair;
+import org.niis.xroad.cs.admin.core.entity.MemberDidEntity;
+import org.niis.xroad.cs.admin.core.entity.SecurityServerEntity;
+import org.niis.xroad.cs.admin.core.entity.XRoadMemberEntity;
+import org.niis.xroad.cs.admin.core.repository.MemberDidRepository;
+import org.niis.xroad.cs.admin.core.repository.SecurityServerRepository;
+import org.niis.xroad.restapi.config.audit.AuditEventLoggingFacade;
+import org.niis.xroad.restapi.config.audit.RestApiAuditProperty;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toUnmodifiableMap;
+import static java.util.stream.Collectors.toUnmodifiableSet;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.DID_HELD_BY_ANOTHER_SERVER;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.NO_STORED_VALUE;
+import static org.niis.xroad.cs.admin.api.domain.ParticipantValueRejection.VALUE_DIFFERS;
+import static org.niis.xroad.cs.admin.api.exception.ErrorMessage.SECURITY_SERVER_NOT_FOUND;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditEvent.REJECT_CONNECTOR_PUBLISHED_VALUE;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.MEMBER_CLASS;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.MEMBER_CODE;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.OWNER_CLASS;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.OWNER_CODE;
+import static org.niis.xroad.restapi.config.audit.RestApiAuditProperty.SERVER_CODE;
+
+/**
+ * Writes lock the server row before they read or write any published value, then validate the values
+ * against the server as it is under the lock. {@code checkSystemPair} is a dry run that takes no lock and
+ * writes nothing; so do {@code checkMemberDids} and {@code checkMemberDidReplacements}, which run the same
+ * per-entry decision as their write and leave out the write, the lock and the audit event. Uniqueness is
+ * decided here first: the hash-indexed member DID constraint cannot be an {@code ON CONFLICT} target, so
+ * equal resends are told apart from conflicts by comparing the stored value. A refusal the store sees under
+ * the lock concerns one entry and does not stop the others. When two servers race on the same DID and the
+ * database exclusion constraint fires first, the whole batch rolls back; the repeated call is then refused
+ * per entry.
+ */
+@Service
+@Transactional
+@RequiredArgsConstructor
+public class ParticipantValueStoreImpl implements ParticipantValueStore {
+
+    private enum Mode {
+        WRITE_ONCE,
+        ADMIN_REPLACE
+    }
+
+    private enum Effect {
+        APPLY,
+        DRY_RUN
+    }
+
+    private sealed interface MemberDidPlan {
+
+        record Settled(ParticipantValueResult result) implements MemberDidPlan {
+        }
+
+        sealed interface Writable extends MemberDidPlan {
+        }
+
+        record Insert(long memberId) implements Writable {
+        }
+
+        record Replace(MemberDidEntity row) implements Writable {
+        }
+    }
+
+    private final SecurityServerRepository securityServerRepository;
+    private final MemberDidRepository memberDidRepository;
+    private final AuditEventLoggingFacade auditLogging;
+    private final EntityManager entityManager;
+
+    @Override
+    public ParticipantValueResult writeSystemPairOnce(int securityServerId, String systemDid, String dspBaseUrl) {
+        return storeSystemPair(securityServerId, new SystemPair(systemDid, dspBaseUrl), Mode.WRITE_ONCE);
+    }
+
+    @Override
+    public SystemPairCheck checkSystemPair(int securityServerId, String systemDid, String dspBaseUrl) {
+        var server = securityServerRepository.findById(securityServerId)
+                .orElseThrow(() -> serverNotFound(securityServerId));
+        var pair = new SystemPair(systemDid, dspBaseUrl);
+
+        var check = verdictOf(server, ParticipantValueValidator.forServer(server), pair);
+        boolean wouldWrite = check.verdict() == Verdict.ABSENT || check.verdict() == Verdict.STALE_REPLACEABLE;
+        if (wouldWrite && isHeldByAnotherServer(server, pair)) {
+            return SystemPairCheck.rejected(DID_HELD_BY_ANOTHER_SERVER);
+        }
+        return check;
+    }
+
+    @Override
+    public ParticipantValueResult replaceSystemPair(int securityServerId, String systemDid, String dspBaseUrl) {
+        return storeSystemPair(securityServerId, new SystemPair(systemDid, dspBaseUrl), Mode.ADMIN_REPLACE);
+    }
+
+    @Override
+    public Map<ClientId, ParticipantValueResult> writeMemberDidsOnce(int securityServerId, Map<ClientId, String> memberDids) {
+        return decideMemberDids(lockAndLoad(securityServerId), memberDids, Mode.WRITE_ONCE, Effect.APPLY);
+    }
+
+    @Override
+    public Map<ClientId, ParticipantValueResult> checkMemberDids(int securityServerId, Map<ClientId, String> memberDids) {
+        var server = securityServerRepository.findById(securityServerId)
+                .orElseThrow(() -> serverNotFound(securityServerId));
+        return decideMemberDids(server, memberDids, Mode.WRITE_ONCE, Effect.DRY_RUN);
+    }
+
+    @Override
+    public Map<ClientId, ParticipantValueResult> replaceMemberDids(int securityServerId, Map<ClientId, String> memberDids) {
+        return decideMemberDids(lockAndLoad(securityServerId), memberDids, Mode.ADMIN_REPLACE, Effect.APPLY);
+    }
+
+    @Override
+    public Map<ClientId, ParticipantValueResult> checkMemberDidReplacements(int securityServerId,
+                                                                            Map<ClientId, String> memberDids) {
+        var server = securityServerRepository.findById(securityServerId)
+                .orElseThrow(() -> serverNotFound(securityServerId));
+        return decideMemberDids(server, memberDids, Mode.ADMIN_REPLACE, Effect.DRY_RUN);
+    }
+
+    private ParticipantValueResult storeSystemPair(int securityServerId, SystemPair pair, Mode mode) {
+        var server = lockAndLoad(securityServerId);
+        if (mode == Mode.ADMIN_REPLACE && server.getSystemDid() == null) {
+            return ParticipantValueResult.rejected(NO_STORED_VALUE);
+        }
+        var check = verdictOf(server, ParticipantValueValidator.forServer(server), pair);
+
+        var verdict = check.verdict();
+        if (verdict == Verdict.REJECTED) {
+            return ParticipantValueResult.rejected(check.rejection());
+        }
+        if (verdict == Verdict.EQUAL) {
+            return ParticipantValueResult.UNCHANGED;
+        }
+        if (verdict == Verdict.VALUE_DIFFERS && mode == Mode.WRITE_ONCE) {
+            return ParticipantValueResult.rejected(VALUE_DIFFERS);
+        }
+        if (isHeldByAnotherServer(server, pair)) {
+            return heldByAnotherServer(server, null, mode);
+        }
+
+        server.setSystemDid(pair.did());
+        server.setDspBaseUrl(pair.dspBaseUrl());
+        securityServerRepository.saveAndFlush(server);
+        return ParticipantValueResult.STORED;
+    }
+
+    private SystemPairCheck verdictOf(SecurityServerEntity server, ParticipantValueValidator validator, SystemPair pair) {
+        var rejection = validator.validate(pair);
+        if (rejection.isPresent()) {
+            return SystemPairCheck.rejected(rejection.get());
+        }
+        var storedDid = server.getSystemDid();
+        if (storedDid == null) {
+            return SystemPairCheck.ABSENT;
+        }
+        if (Objects.equals(storedDid, pair.did()) && Objects.equals(server.getDspBaseUrl(), pair.dspBaseUrl())) {
+            return SystemPairCheck.EQUAL;
+        }
+        return validator.isSystemPairStale(storedDid, server.getDspBaseUrl())
+                ? SystemPairCheck.STALE_REPLACEABLE
+                : SystemPairCheck.VALUE_DIFFERS;
+    }
+
+    private boolean isHeldByAnotherServer(SecurityServerEntity server, SystemPair pair) {
+        return securityServerRepository.existsBySystemDidAndIdNot(pair.did(), server.getId());
+    }
+
+    private Map<ClientId, ParticipantValueResult> decideMemberDids(SecurityServerEntity server, Map<ClientId, String> memberDids,
+                                                                   Mode mode, Effect effect) {
+        var servedMemberIds = servedMembers(server);
+        var validator = ParticipantValueValidator.forServer(server, servedMemberIds.keySet());
+        var storedByMemberId = loadStoredRows(server, servedMemberIds, memberDids.keySet());
+        var plans = new HashMap<ClientId, MemberDidPlan>();
+        var writableDids = new HashSet<String>();
+        memberDids.forEach((member, did) -> {
+            var memberId = servedMemberIds.get(member.getMemberId());
+            var plan = refusalOf(validator, member, did, memberId, storedByMemberId, mode)
+                    .<MemberDidPlan>map(rejection -> new MemberDidPlan.Settled(ParticipantValueResult.rejected(rejection)))
+                    .orElseGet(() -> planMemberDid(validator, memberId, storedByMemberId.get(memberId), did, mode));
+            plans.put(member, plan);
+            if (plan instanceof MemberDidPlan.Writable) {
+                writableDids.add(did);
+            }
+        });
+        var didsHeldElsewhere = findDidsHeldElsewhere(server, writableDids);
+
+        var results = new LinkedHashMap<ClientId, ParticipantValueResult>();
+        memberDids.forEach((member, did) -> results.put(member,
+                decideMemberDid(server, didsHeldElsewhere, member, did, plans.get(member), mode, effect)));
+        return results;
+    }
+
+    private Optional<ParticipantValueRejection> refusalOf(ParticipantValueValidator validator, ClientId member, String did,
+                                                          Long memberId,
+                                                          Map<Long, MemberDidEntity> storedByMemberId, Mode mode) {
+        if (mode == Mode.ADMIN_REPLACE && memberId != null && !storedByMemberId.containsKey(memberId)) {
+            return Optional.of(NO_STORED_VALUE);
+        }
+        return validator.validate(new MemberDid(member, did));
+    }
+
+    private Map<ClientId, Long> servedMembers(SecurityServerEntity server) {
+        var owner = server.getOwner();
+        var memberIds = new HashMap<ClientId, Long>();
+        memberIds.put(owner.getIdentifier().getMemberId(), owner.getId());
+        securityServerRepository.findServedMembers(server.getId())
+                .forEach(row -> memberIds.put(row.memberId(), row.id()));
+        return Map.copyOf(memberIds);
+    }
+
+    private Map<Long, MemberDidEntity> loadStoredRows(SecurityServerEntity server, Map<ClientId, Long> servedMemberIds,
+                                                      Set<ClientId> members) {
+        var memberIds = members.stream()
+                .map(member -> servedMemberIds.get(member.getMemberId()))
+                .filter(Objects::nonNull)
+                .collect(toUnmodifiableSet());
+        if (memberIds.isEmpty()) {
+            return Map.of();
+        }
+        return memberDidRepository.findBySecurityServerIdAndMemberIdIn(server.getId(), memberIds).stream()
+                .collect(toUnmodifiableMap(row -> row.getMember().getId(), identity()));
+    }
+
+    private Set<String> findDidsHeldElsewhere(SecurityServerEntity server, Set<String> writableDids) {
+        return writableDids.isEmpty()
+                ? Set.of()
+                : new HashSet<>(memberDidRepository.findDidsHeldByOtherServers(writableDids, server.getId()));
+    }
+
+    private ParticipantValueResult decideMemberDid(SecurityServerEntity server, Set<String> didsHeldElsewhere,
+                                                   ClientId member, String did, MemberDidPlan plan, Mode mode,
+                                                   Effect effect) {
+        return switch (plan) {
+            case MemberDidPlan.Settled(var result) -> result;
+            case MemberDidPlan.Writable writable -> decideWrite(server, didsHeldElsewhere, member, did, writable, mode, effect);
+        };
+    }
+
+    private ParticipantValueResult decideWrite(SecurityServerEntity server, Set<String> didsHeldElsewhere,
+                                               ClientId member, String did, MemberDidPlan.Writable plan, Mode mode,
+                                               Effect effect) {
+        if (didsHeldElsewhere.contains(did)) {
+            return effect == Effect.APPLY
+                    ? heldByAnotherServer(server, member, mode)
+                    : ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER);
+        }
+        if (effect == Effect.APPLY) {
+            memberDidRepository.saveAndFlush(rowFor(server, plan, did));
+        }
+        return ParticipantValueResult.STORED;
+    }
+
+    private MemberDidEntity rowFor(SecurityServerEntity server, MemberDidPlan.Writable plan, String did) {
+        return switch (plan) {
+            case MemberDidPlan.Insert(var memberId) ->
+                    new MemberDidEntity(server, entityManager.getReference(XRoadMemberEntity.class, memberId), did);
+            case MemberDidPlan.Replace(var row) -> {
+                row.setDid(did);
+                yield row;
+            }
+        };
+    }
+
+    private MemberDidPlan planMemberDid(ParticipantValueValidator validator, long memberId, MemberDidEntity stored,
+                                        String did, Mode mode) {
+        if (stored == null) {
+            return new MemberDidPlan.Insert(memberId);
+        }
+        var storedDid = stored.getDid();
+        if (storedDid.equals(did)) {
+            return new MemberDidPlan.Settled(ParticipantValueResult.UNCHANGED);
+        }
+        if (mode == Mode.WRITE_ONCE && !validator.isMemberDidStale(storedDid)) {
+            return new MemberDidPlan.Settled(ParticipantValueResult.rejected(VALUE_DIFFERS));
+        }
+        return new MemberDidPlan.Replace(stored);
+    }
+
+    private SecurityServerEntity lockAndLoad(int securityServerId) {
+        if (securityServerRepository.lockForUpdateById(securityServerId).isEmpty()) {
+            throw serverNotFound(securityServerId);
+        }
+        var server = securityServerRepository.findById(securityServerId)
+                .orElseThrow(() -> serverNotFound(securityServerId));
+        entityManager.refresh(server);
+        return server;
+    }
+
+    private static NotFoundException serverNotFound(int securityServerId) {
+        return new NotFoundException(SECURITY_SERVER_NOT_FOUND.build(String.valueOf(securityServerId)));
+    }
+
+    private ParticipantValueResult heldByAnotherServer(SecurityServerEntity server, ClientId member, Mode mode) {
+        if (mode == Mode.ADMIN_REPLACE) {
+            return ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER);
+        }
+        var data = new LinkedHashMap<RestApiAuditProperty, Object>();
+        data.put(SERVER_CODE, server.getServerCode());
+        data.put(OWNER_CLASS, server.getOwner().getIdentifier().getMemberClass());
+        data.put(OWNER_CODE, server.getOwner().getIdentifier().getMemberCode());
+        if (member != null) {
+            data.put(MEMBER_CLASS, member.getMemberClass());
+            data.put(MEMBER_CODE, member.getMemberCode());
+        }
+        auditLogging.auditLogFailWithData(REJECT_CONNECTOR_PUBLISHED_VALUE,
+                "Published value rejected: " + DID_HELD_BY_ANOTHER_SERVER, data);
+        return ParticipantValueResult.rejected(DID_HELD_BY_ANOTHER_SERVER);
+    }
+}

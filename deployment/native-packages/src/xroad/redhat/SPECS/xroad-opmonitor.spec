@@ -19,7 +19,8 @@ BuildRequires:      systemd
 Requires(post):     systemd
 Requires(preun):    systemd
 Requires(postun):   systemd
-Requires:           xroad-base = %version-%release, xroad-confclient = %version-%release
+Requires:           xroad-base = %version-%release
+Requires:           (xroad-secret-store-local = %version-%release or xroad-secret-store-remote = %version-%release)
 Requires:           xroad-database >= %version-%release, xroad-database <= %version-%{release}.1
 
 %define src %{_topdir}/..
@@ -88,9 +89,6 @@ fi
     /usr/share/xroad/scripts/setup_opmonitor_db.sh
 
 %post
-# create TLS certificate provisioning properties (if not already created)
-/usr/share/xroad/scripts/write_tls_config.sh setup_default op-monitor
-
 %systemd_post xroad-opmonitor.service
 
 %preun
@@ -99,8 +97,11 @@ fi
 %postun
 %systemd_postun_with_restart xroad-opmonitor.service
 
-%posttrans
+%posttrans -p /bin/bash
 %init_xroad_opmonitor_db
+/usr/share/xroad/scripts/write_tls_config.sh setup_default op-monitor
+rc=$?
+exit $rc
 
 %changelog
 

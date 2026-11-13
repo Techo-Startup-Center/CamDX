@@ -3,17 +3,17 @@
  * Copyright (c) 2018 Estonian Information System Authority (RIA),
  * Nordic Institute for Interoperability Solutions (NIIS), Population Register Centre (VRK)
  * Copyright (c) 2015-2017 Estonian Information System Authority (RIA), Population Register Centre (VRK)
- * <p>
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * <p>
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * <p>
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -97,6 +97,8 @@ public enum RestApiAuditEvent {
     EDIT_TIMESTAMP_SERVICE("Edit timestamping service"),
     GENERATE_INTERNAL_TLS_KEY_CERT("Generate new internal TLS key and certificate"),
     EDIT_CENTRAL_SERVER_ADDRESS("Edit central server address"),
+    EDIT_ISSUER_SERVICE_HOST("Edit Issuer Service host"),
+    INITIALIZE_ISSUER_SERVICE("Initialize Issuer Service"),
     ENABLE_MAINTENANCE_MODE("Enable maintenance mode of the security server"),
     DISABLE_MAINTENANCE_MODE("Disable maintenance mode of the security server"),
     UPDATE_CONFIGURATION_PROPERTY("Update configuration property"),
@@ -156,6 +158,8 @@ public enum RestApiAuditEvent {
 
     DELETE_SECURITY_SERVER("Delete security server"),
     EDIT_SECURITY_SERVER_ADDRESS("Edit security server address"),
+    EDIT_SECURITY_SERVER("Edit security server"),
+    CHECK_SECURITY_SERVER_SYSTEM_DID("Check security server SYSTEM DID"),
 
     ADD_CERTIFICATION_SERVICE("Add certification service"),
     DELETE_CERTIFICATION_SERVICE("Delete certification service"),
@@ -181,6 +185,8 @@ public enum RestApiAuditEvent {
     DELETE_MEMBER("Delete member"),
     EDIT_MEMBER_NAME("Edit member name"),
     UNREGISTER_MEMBER("Unregister member as security server client"),
+    EDIT_MEMBER_DID("Edit member DID"),
+    CHECK_MEMBER_DID("Check member DID"),
 
     ADD_SUBSYSTEM("Add subsystem"),
     UNREGISTER_SUBSYSTEM("Unregister subsystem as security server client"),
@@ -197,7 +203,14 @@ public enum RestApiAuditEvent {
 
     GENERATE_DS_TLS_KEY("Generate data space TLS key"),
     GENERATE_DS_TLS_CSR("Generate data space TLS certificate signing request"),
-    UPLOAD_DS_TLS_CERT("Upload data space TLS certificate");
+    UPLOAD_DS_TLS_CERT("Upload data space TLS certificate"),
+    ORDER_DS_TLS_CERT("Order data space TLS certificate via ACME"),
+    REJECT_CONNECTOR_PUBLISHED_VALUE("Reject connector published value"),
+
+    ROTATE_AGREEMENT_TOKEN_KEY("Rotate agreement token signing key"),
+
+    UPLOAD_OP_MONITOR_CA("Upload op-monitor CA certificate"),
+    DELETE_OP_MONITOR_CA("Delete op-monitor CA certificate");
     private final String eventName;
 
     RestApiAuditEvent(String eventName) {

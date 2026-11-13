@@ -34,6 +34,8 @@ import org.niis.xroad.common.properties.config.Prefix;
 
 import java.util.Set;
 
+import static org.niis.xroad.common.properties.config.Validator.range;
+
 /** Dataspace keys ({@code xroad.dataspace.*}). */
 @SuppressWarnings("checkstyle:MagicNumber") // a keys registry: default literals are the point
 public final class DataspaceConfigKeys implements ConfigKeyProvider {
@@ -41,23 +43,22 @@ public final class DataspaceConfigKeys implements ConfigKeyProvider {
     private static final Prefix DATASPACE = Prefix.of(Category.ADMIN_SERVICE, "xroad.dataspace");
     private static final Prefix ISSUER = DATASPACE.subPrefix("issuer");
     private static final Prefix ISSUER_PROVISIONING_RPC = DATASPACE.subPrefix("issuer-provisioning").subPrefix("rpc");
-    private static final Prefix CONTROL_PLANE_PROVISIONING_RPC = DATASPACE.subPrefix("control-plane-provisioning").subPrefix("rpc");
     private static final Prefix IDENTITY_HUB_PROVISIONING_RPC = DATASPACE.subPrefix("identity-hub-provisioning").subPrefix("rpc");
 
     private static final String DEADLINE_AFTER = "deadline-after";
 
     private static final DataspaceConfigKeys INSTANCE = new DataspaceConfigKeys();
 
-    /** {@code xroad.dataspace.issuer.host}. */
-    public static final ConfigKey<String> ISSUER_HOST = ISSUER
-            .string("host")
-            .withDefaultValue("localhost")
-            .build();
-
     /** {@code xroad.dataspace.issuer.did-port}. */
     public static final ConfigKey<Integer> ISSUER_DID_PORT = ISSUER
             .integer("did-port")
             .withDefaultValue(6183)
+            .build();
+
+    /** {@code xroad.dataspace.issuer.statuslist-port}. */
+    public static final ConfigKey<Integer> ISSUER_STATUSLIST_PORT = ISSUER
+            .integer("statuslist-port")
+            .withDefaultValue(6187)
             .build();
 
     /** {@code xroad.dataspace.issuer.issuance-port}. */
@@ -70,6 +71,28 @@ public final class DataspaceConfigKeys implements ConfigKeyProvider {
     public static final ConfigKey<String> ISSUER_CREDENTIAL_JSON_SCHEMA_URL = ISSUER
             .string("credential-json-schema-url")
             .withDefaultValue("https://example.com/schema/XRoadMembershipCredential.json")
+            .build();
+
+    /**
+     * {@code xroad.dataspace.issuer.listen-address} — the interface the Issuer Service's public DID,
+     * issuance and status-list ports bind to; distinct from {@code xroad.dataspace.issuer.host}, the
+     * advertised DID/URL host. {@code 0.0.0.0} (the default) and {@code ::} both listen on every
+     * interface, IPv4 and IPv6; blank is also accepted and listens on every interface.
+     */
+    public static final ConfigKey<String> ISSUER_LISTEN_ADDRESS = ISSUER
+            .string("listen-address")
+            .withDefaultValue("0.0.0.0")
+            .publishedToFramework()
+            .build();
+
+    /**
+     * {@code xroad.dataspace.issuer.acme-renewal-active} — the Central Server's own explicit kill-switch for
+     * the co-located Issuer Service's DS TLS certificate ACME renewal scheduler: {@code xroad-ds-issuer-service}
+     * is an unconditional dependency of the Central Server package, not an opt-in feature.
+     */
+    public static final ConfigKey<Boolean> ISSUER_ACME_RENEWAL_ACTIVE = ISSUER
+            .bool("acme-renewal-active")
+            .withDefaultValue(true)
             .build();
 
     /** {@code xroad.dataspace.issuer-provisioning.rpc.host}. */
@@ -90,22 +113,11 @@ public final class DataspaceConfigKeys implements ConfigKeyProvider {
             .withDefaultValue(60000)
             .build();
 
-    /** {@code xroad.dataspace.control-plane-provisioning.rpc.host}. */
-    public static final ConfigKey<String> CONTROL_PLANE_PROVISIONING_RPC_HOST = CONTROL_PLANE_PROVISIONING_RPC
-            .string("host")
-            .withDefaultValue("ds-control-plane")
-            .build();
-
-    /** {@code xroad.dataspace.control-plane-provisioning.rpc.port}. */
-    public static final ConfigKey<Integer> CONTROL_PLANE_PROVISIONING_RPC_PORT = CONTROL_PLANE_PROVISIONING_RPC
-            .integer("port")
-            .withDefaultValue(5461)
-            .build();
-
-    /** {@code xroad.dataspace.control-plane-provisioning.rpc.deadline-after}. */
-    public static final ConfigKey<Integer> CONTROL_PLANE_PROVISIONING_RPC_DEADLINE_AFTER = CONTROL_PLANE_PROVISIONING_RPC
-            .integer(DEADLINE_AFTER)
-            .withDefaultValue(60000)
+    /** {@code xroad.dataspace.issuer-provisioning.rpc.did-resolution-deadline-after}. */
+    public static final ConfigKey<Integer> ISSUER_PROVISIONING_RPC_DID_RESOLUTION_DEADLINE_AFTER = ISSUER_PROVISIONING_RPC
+            .integer("did-resolution-deadline-after")
+            .withDefaultValue(4000)
+            .withValidator(range(1, Integer.MAX_VALUE))
             .build();
 
     /** {@code xroad.dataspace.identity-hub-provisioning.rpc.host}. */

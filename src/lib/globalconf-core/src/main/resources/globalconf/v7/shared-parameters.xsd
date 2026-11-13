@@ -23,6 +23,23 @@
             </complexContent>
         </complexType>
 
+        <complexType name="MemberType">
+            <complexContent>
+                <extension base="tns:MemberType">
+                    <sequence>
+                        <element name="did" type="tns:MemberDidType" minOccurs="0" maxOccurs="unbounded">
+                            <annotation>
+                                <documentation>
+                                    DID of this member on one of the security servers that serve it. One entry per
+                                    serving security server.
+                                </documentation>
+                            </annotation>
+                        </element>
+                    </sequence>
+                </extension>
+            </complexContent>
+        </complexType>
+
         <complexType name="SecurityServerType">
             <complexContent>
                 <extension base="tns:SecurityServerType">
@@ -34,7 +51,22 @@
                                 </documentation>
                             </annotation>
                         </element>
+                        <element name="dspBaseUrl" type="string" minOccurs="0">
+                            <annotation>
+                                <documentation>
+                                    Base URL of the Dataspace Protocol endpoint of this security server.
+                                </documentation>
+                            </annotation>
+                        </element>
+                        <element name="systemDid" type="string" minOccurs="0">
+                            <annotation>
+                                <documentation>
+                                    DID of the SYSTEM context of this security server.
+                                </documentation>
+                            </annotation>
+                        </element>
                     </sequence>
+                    <attribute name="id" type="ID"/>
                 </extension>
             </complexContent>
         </complexType>
@@ -70,6 +102,23 @@
                 </extension>
             </complexContent>
         </complexType>
+
+        <complexType name="GlobalSettingsType">
+            <complexContent>
+                <extension base="tns:GlobalSettingsType">
+                    <sequence>
+                        <element name="legacyProtocolDisabled" type="boolean" minOccurs="0">
+                            <annotation>
+                                <documentation>
+                                    If present and true, every security server of this X-Road instance refuses legacy
+                                    calls, that is, calls that did not negotiate the protocol version.
+                                </documentation>
+                            </annotation>
+                        </element>
+                    </sequence>
+                </extension>
+            </complexContent>
+        </complexType>
     </redefine>
 
     <element name="conf" type="tns:SharedParametersTypeV7">
@@ -80,6 +129,20 @@
             </documentation>
         </annotation>
     </element>
+
+    <complexType name="MemberDidType">
+        <simpleContent>
+            <extension base="string">
+                <attribute name="securityServer" type="IDREF" use="required">
+                    <annotation>
+                        <documentation>
+                            The security server on which the member holds this DID.
+                        </documentation>
+                    </annotation>
+                </attribute>
+            </extension>
+        </simpleContent>
+    </complexType>
 
     <complexType name="MaintenanceMode">
         <sequence>
@@ -152,12 +215,22 @@
                     </documentation>
                 </annotation>
             </element>
-            <element name="approvedDsTlsCa" type="tns:ApprovedDsTlsCaType" minOccurs="0" maxOccurs="unbounded">
+            <element name="approvedConnectorTlsCA" type="tns:ApprovedConnectorTlsCAType" minOccurs="0" maxOccurs="unbounded">
                 <annotation>
                     <documentation>
-                        Certification authority approved by the Governing Authority for issuing DataSpace TLS server
+                        Certification authority approved by the Governing Authority for issuing connector TLS server
                         certificates. Separate from approvedCA: trust for member certificates never derives from this
                         list.
+                    </documentation>
+                </annotation>
+            </element>
+            <element name="credentialIssuer" type="tns:CredentialIssuerType" minOccurs="0" maxOccurs="unbounded">
+                <annotation>
+                    <documentation>
+                        Credential issuer published by one Central Server node of this X-Road instance. Under a
+                        high-availability Central Server, each node publishes its own; the full set is the distributed
+                        credential issuer trust anchor that Security Servers use to trust issued credentials. Absent
+                        when no Central Server node of this instance has provisioned a credential issuer.
                     </documentation>
                 </annotation>
             </element>
@@ -258,7 +331,7 @@
         </sequence>
     </complexType>
 
-    <complexType name="ApprovedDsTlsCaType">
+    <complexType name="ApprovedConnectorTlsCAType">
         <sequence>
             <element name="name" type="string">
                 <annotation>
@@ -287,6 +360,18 @@
                     <documentation>
                         ACME specific certification services settings. Absent when the certificate issued by this CA
                         is obtained and uploaded out-of-band instead of via automated enrollment.
+                    </documentation>
+                </annotation>
+            </element>
+        </sequence>
+    </complexType>
+
+    <complexType name="CredentialIssuerType">
+        <sequence>
+            <element name="did" type="string">
+                <annotation>
+                    <documentation>
+                        Issuer DID (did:web) of this credential issuer.
                     </documentation>
                 </annotation>
             </element>
@@ -330,11 +415,11 @@
                     </documentation>
                 </annotation>
             </element>
-            <element name="dsTlsCertificateProfileId" type="string" minOccurs="0">
+            <element name="connectorTlsCertificateProfileId" type="string" minOccurs="0">
                 <annotation>
                     <documentation>
                         Profile ID used for some ACME servers to let them know the certificate usage type when ordering
-                        a DataSpace TLS server certificate.
+                        a connector TLS server certificate.
                     </documentation>
                 </annotation>
             </element>

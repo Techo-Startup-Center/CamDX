@@ -26,14 +26,22 @@
  */
 package org.niis.xroad.edc.identityhub.provisioning;
 
+import org.eclipse.edc.iam.did.spi.resolution.DidResolverRegistry;
 import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.CredentialRequestManager;
+import org.eclipse.edc.identityhub.spi.verifiablecredentials.store.CredentialStore;
+import org.eclipse.edc.participantcontext.spi.config.service.ParticipantContextConfigService;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.spi.types.TypeManager;
+import org.eclipse.edc.sql.QueryExecutor;
+import org.eclipse.edc.transaction.datasource.spi.DataSourceRegistry;
+import org.eclipse.edc.transaction.spi.TransactionContext;
 import org.niis.xroad.common.rpc.server.RpcResponseHandler;
+import org.niis.xroad.ds.identityhub.memberid.ParticipantMemberIdConfig;
 import org.niis.xroad.edc.extension.rpc.GrpcServiceRegistry;
 
 /**
@@ -48,13 +56,36 @@ public class IdentityHubProvisioningExtension implements ServiceExtension {
     private IdentityHubParticipantContextService participantContextService;
 
     @Inject
+    private ParticipantContextConfigService participantContextConfigService;
+
+    @Inject
     private CredentialRequestManager credentialRequestManager;
+
+    @Inject
+    private CredentialStore credentialStore;
+
+    @Inject
+    private DataSourceRegistry dataSourceRegistry;
+
+    @Inject
+    private TransactionContext transactionContext;
+
+    @Inject
+    private TypeManager typeManager;
+
+    @Inject
+    private QueryExecutor queryExecutor;
+
+    @Inject
+    private DidResolverRegistry didResolverRegistry;
 
     @Inject
     private GrpcServiceRegistry grpcServiceRegistry;
 
     @Inject
     private Monitor monitor;
+
+    private IdentityHubProvisioningGrpcService grpcService;
 
     @Override
     public String name() {
@@ -63,9 +94,20 @@ public class IdentityHubProvisioningExtension implements ServiceExtension {
 
     @Override
     public void initialize(ServiceExtensionContext context) {
-        var grpcService = new IdentityHubProvisioningGrpcService(
-                participantContextService, credentialRequestManager, new RpcResponseHandler());
+        var recordsPurger = new ParticipantCredentialRecordsPurger(credentialStore, dataSourceRegistry,
+                DataSourceRegistry.DEFAULT_DATASOURCE, transactionContext, typeManager::getMapper, queryExecutor);
+        grpcService = new IdentityHubProvisioningGrpcService(
+                participantContextService, new ParticipantMemberIdConfig(participantContextConfigService),
+                credentialRequestManager, recordsPurger, didResolverRegistry,
+                new RpcResponseHandler(), monitor);
         grpcServiceRegistry.register(grpcService);
         monitor.info("Initialized extension: " + EXTENSION_NAME);
+    }
+
+    @Override
+    public void shutdown() {
+        if (grpcService != null) {
+            grpcService.close();
+        }
     }
 }

@@ -161,11 +161,25 @@ public interface ServerConfProvider {
     boolean isSslAuthentication(ServiceId serviceId);
 
     /**
-     * @param clientId     the client identifier
+     * @param ownerId      the identifier of the client that owns the local group
      * @param localGroupId the local group identifier
-     * @return true if the given client is associated with the specified local group on this security server
+     * @param memberId     the member-level identifier to check for group membership
+     * @return true if a member of the owner's local group has the same member-level identity as
+     *         {@code memberId}, regardless of whether that member is a client of this security server
      */
-    default boolean isSubjectInLocalGroup(ClientId clientId, LocalGroupId localGroupId) {
+    default boolean isLocalGroupMember(ClientId ownerId, LocalGroupId localGroupId, ClientId memberId) {
+        return false;
+    }
+
+    /**
+     * The exact counterpart of {@link #isLocalGroupMember}, matching a subsystem the way the legacy ACL does.
+     *
+     * @param ownerId      the identifier of the client that owns the local group
+     * @param localGroupId the local group identifier
+     * @param clientId     the client identifier, compared exactly with the group members (subsystem included)
+     * @return true if {@code clientId} is a member of the owner's local group
+     */
+    default boolean isExactLocalGroupMember(ClientId ownerId, LocalGroupId localGroupId, ClientId clientId) {
         return false;
     }
 
@@ -225,6 +239,23 @@ public interface ServerConfProvider {
      * @return list of endpoints
      */
     List<Endpoint> getServiceEndpoints(ServiceId serviceId);
+
+    /**
+     * The ACL endpoint entries {@code clientId} directly holds for {@code serviceId} — the same entries
+     * {@link #isQueryAllowed(ClientId, ServiceId, String, String)} matches a request against, in the model
+     * type its matching logic uses (method/path glob, {@link org.niis.xroad.serverconf.model.BaseEndpoint}).
+     * Includes entries granted to the client directly, through a local group, or through a global group;
+     * excludes anything only implicitly allowed.
+     * <p>
+     * Always reads the current configuration rather than an implementation's ACL cache, unlike
+     * {@link #isQueryAllowed(ClientId, ServiceId, String, String)}. Meant for infrequent decisions where a
+     * stale answer would matter, such as minting a token, not for the per-message access check.
+     *
+     * @param clientId  the client identifier
+     * @param serviceId the service identifier
+     * @return the client's current ACL endpoint entries for the service (may be empty, never null)
+     */
+    List<org.niis.xroad.serverconf.model.Endpoint> getAclEndpoints(ClientId clientId, ServiceId serviceId);
 
     /**
      * @return access rights for the service across all subjects (may be empty, never null)

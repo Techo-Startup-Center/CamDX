@@ -30,7 +30,6 @@ package org.niis.xroad.proxy.core.configuration;
 import lombok.RequiredArgsConstructor;
 import org.niis.xroad.common.properties.config.XRoadConfig;
 import org.niis.xroad.proxy.core.addon.opmonitoring.OpMonitorBufferProperties;
-import org.niis.xroad.proxy.core.addon.opmonitoring.OpMonitorConnectionProperties;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -41,6 +40,7 @@ import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.ADDON
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.ADMIN_PORT;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.BATCH_SIGNING_ENABLED;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.CLIENT_PROXY_CLIENT_CONNECTOR_INITIAL_IDLE_TIME;
+import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.CLIENT_PROXY_CLIENT_CONNECTOR_MAX_IDLE_TIME;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.CLIENT_PROXY_CLIENT_HTTPCLIENT_SO_LINGER;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.CLIENT_PROXY_CLIENT_HTTPCLIENT_TIMEOUT;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.CLIENT_PROXY_CLIENT_HTTPS_PORT;
@@ -67,6 +67,7 @@ import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.HEALT
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.HEALTH_CHECK_INTERFACE;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.HEALTH_CHECK_PORT;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.HSM_HEALTH_CHECK_ENABLED;
+import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.LEGACY_PROTOCOL_DISABLED;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.LOG_CLIENT_CERT;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.MESSAGE_SIGN_DIGEST_NAME;
 import static org.niis.xroad.common.properties.config.keys.ProxyConfigKeys.OCSP_RESPONDER_CLIENT_CONNECT_TIMEOUT;
@@ -119,6 +120,10 @@ public class ProxyProperties {
 
     public boolean dspEnabled() {
         return xRoadConfig.value(DSP_ENABLED);
+    }
+
+    public boolean legacyProtocolDisabled() {
+        return xRoadConfig.value(LEGACY_PROTOCOL_DISABLED);
     }
 
     public boolean sslEnabled() {
@@ -196,6 +201,10 @@ public class ProxyProperties {
 
         public int clientConnectorInitialIdleTime() {
             return xRoadConfig.value(CLIENT_PROXY_CLIENT_CONNECTOR_INITIAL_IDLE_TIME);
+        }
+
+        public int clientConnectorMaxIdleTime() {
+            return xRoadConfig.value(CLIENT_PROXY_CLIENT_CONNECTOR_MAX_IDLE_TIME);
         }
 
         public int clientProxyTimeout() {
@@ -368,12 +377,10 @@ public class ProxyProperties {
         public static class ProxyAddonOpMonitorProperties {
 
             private final XRoadConfig xRoadConfig;
-            private final OpMonitorConnectionProperties opMonitorConnectionProperties;
             private final OpMonitorBufferProperties opMonitorBufferProperties;
 
             public ProxyAddonOpMonitorProperties(XRoadConfig xRoadConfig) {
                 this.xRoadConfig = xRoadConfig;
-                this.opMonitorConnectionProperties = new OpMonitorConnectionProperties(xRoadConfig);
                 this.opMonitorBufferProperties = new OpMonitorBufferProperties(xRoadConfig);
             }
 
@@ -383,10 +390,6 @@ public class ProxyProperties {
 
             public OpMonitorBufferProperties buffer() {
                 return opMonitorBufferProperties;
-            }
-
-            public OpMonitorConnectionProperties connection() {
-                return opMonitorConnectionProperties;
             }
 
         }

@@ -19,6 +19,20 @@
     "enable": "Aktiveeri",
     "order": "Telli"
   },
+  "agreementTokenKey": {
+    "createdAt": "Loodud",
+    "createdAtUnknown": "Teadmata",
+    "description": "Kokkuleppe tõendi allkirjastamisvõti allkirjastab tõendid, mida see turvaserver väljastab andmevahetuseks andmeruumis. Võtme vahetamine genereerib uue võtme. Varasemad võtmed säilitatakse, et nendega allkirjastatud tõendid kehtiksid kuni aegumiseni.",
+    "keyId": "Allkirjastamisvõtme ID",
+    "pending": "Uus võti ({keyId}) ootab allkirjastamise alustamist.",
+    "previousKeys": "Säilitatud varasemad võtmed",
+    "rotate": "Vaheta võti",
+    "rotateConfirmText": "Juba väljastatud tõendid kehtivad kuni aegumiseni. Uus võti hakkab allkirjastama kahe võtme värskendusintervalli jooksul.",
+    "rotateConfirmTitle": "Kas vahetada kokkuleppe tõendi allkirjastamisvõti?",
+    "rotated": "Kokkuleppe tõendi allkirjastamisvõti on vahetatud",
+    "title": "Kokkuleppe tõendi allkirjastamisvõti",
+    "unavailable": "Allkirjastamisvõti pole saadaval. Puhverserver pole veel ühtegi allkirjastamisvõtit laadinud, seega ei saa võtit vahetada."
+  },
   "alert": {
     "warningCount": "Samade hoiatuste hulk"
   },
@@ -239,8 +253,11 @@
         "ERROR_CODE_MISSING_PRIVATE_PARAMS": "Alla laaditud globaalne konfiguratsioon ei sisaldanud privaatseid parameetreid",
         "ERROR_CODE_UNINITIALIZED": "Toimub konfiguratsiooni kliendi lähtestamine.",
         "SUCCESS": "Kõik on korras",
+        "WAITING": "Konfiguratsiooni klient on käivitumas.",
+        "OK": "Kõik on korras",
         "UNKNOWN": "Tundmatu viga"
       },
+      "last_successful_url": "Viimane edukas URL",
       "title": "Globaalne konfiguratsioon"
     },
     "javaVersion": {
@@ -305,6 +322,8 @@
         "ERROR_CODE_OCSP_RESPONSE_UNVERIFIED": "OCSP vastust ei õnnestu kontrollida",
         "ERROR_CODE_OCSP_UNINITIALIZED": "OCSP olekupäringut pole veel saadetud",
         "SUCCESS": "Kõik on korras",
+        "WAITING": "Staatuse päringut ei ole veel saadetud",
+        "OK": "Kõik on korras",
         "UNKNOWN": "Tundmatu olek"
       },
       "title": "OCSP vastajad"
@@ -329,6 +348,9 @@
         "ERROR_CODE_TIMESTAMP_REQUEST_TIMED_OUT": "Ajatempli teenuse ühendamisaeg ületatud, kontrollige võrguühendust!",
         "ERROR_CODE_TIMESTAMP_UNINITIALIZED": "Ühendus on korras, ajatempli päringut pole veel esitatud",
         "SUCCESS": "Kõik on korras",
+        "ERROR_CODE_UNKNOWN_HOST": "Ühenduse viga, tundmatu host",
+        "WAITING": "Ühendus on korras, ajatempli päringut ei ole veel saadetud.",
+        "OK": "Kõik on korras",
         "UNKNOWN": "Tundmatu olek"
       },
       "title": "Ajatembeldus"
@@ -401,7 +423,15 @@
     "anchor_upload_failed": "Ankru üleslaadimine ebaõnnestus",
     "auth_cert_not_supported": "Autentimissertifikaati ei toetata",
     "base_endpoint_not_found": "Baasotspunkti ei leitud",
+    "ca_cert_empty": "Fail on tühi",
+    "ca_cert_expired": "CA sertifikaat on aegunud",
+    "ca_cert_key_material": "Fail sisaldab privaatvõtme materjali. Laadige üles ainult CA sertifikaat",
+    "ca_cert_multiple_certificates": "Fail sisaldab rohkem kui ühte sertifikaati. Laadige üles ainult see CA sertifikaat, mis sertifikaadi väljastab",
+    "ca_cert_not_a_ca": "Sertifikaat ei ole CA sertifikaat",
+    "ca_cert_not_a_certificate": "Fail ei ole PEM- või DER-kodeeringus sertifikaat",
+    "ca_cert_not_yet_valid": "CA sertifikaat ei ole veel kehtiv",
     "ca_cert_status_processing_failure": "CA sertifikaadi oleku töötlemine ebaõnnestus",
+    "ca_cert_unsupported_key_algorithm": "CA sertifikaadi avalik võti peab olema RSA või EC",
     "cannot_delete_owner": "Omanikku ei saa kustutada",
     "cannot_register_owner": "Omanikku ei saa registreerida",
     "cannot_unregister_owner": "Omanikku ei saa registrist kustutada",
@@ -433,17 +463,46 @@
           },
           "UnknownService": "Tundmatu teenus"
         }
-      }
+      },
+      "agreement_token_key_generation_failed": "Kokkuleppe tõendi allkirjastamisvõtme genereerimine ebaõnnestus",
+      "agreement_token_key_not_available": "Kokkuleppe tõendi allkirjastamisvõti pole saadaval. Puhverserver pole veel ühtegi allkirjastamisvõtit laadinud",
+      "agreement_token_key_store_failed": "Kokkuleppe tõendi allkirjastamisvõtit ei õnnestunud saladuste hoidlasse salvestada. Proovige hiljem uuesti",
+      "agreement_token_rejected": "Kokkuleppe tõend lükati tagasi",
+      "agreement_token_signing_failed": "Kokkuleppe tõendi allkirjastamine ebaõnnestus",
+      "op_monitor_trust_failure": "Usaldusväärset ühendust operatiivandmete jälgimisega ei õnnestunud luua"
     },
     "csr_not_found": "CSR-i ei leitud",
+    "database_error": "Andmebaasi viga",
     "diagnostic_request_failed": "Diagnostiline päring ebaõnnestus",
     "duplicate_accessright": "Dubleeri pääsuõigus",
     "endpoint_already_exists": "Otspunkt on juba olemas",
     "endpoint_not_found": "Otspunkti ei leitud",
+    "external_rpc_ca_not_available": "Turvaserveri RPC CA ei ole saadaval",
+    "failed_to_save_instance_identifier": "Keskkonna identifikaatorit ei õnnestunud faili salvestada",
     "forbidden_disable_management_service_client": "Haldusteenuste pakkujat ei saa välja lülitada",
     "forbidden_enable_maintenance_mode_for_management_service": "Haldusteenuste pakkujat ei saa välja lülitada",
     "global_conf_download_request_failed": "Globaalse konfiguratsiooni allalaadimise päring ebaõnnestus",
+    "global_conf_download_url_connection_failure": "Globaalse konfiguratsiooni allalaadimise URLiga ebaõnnestus ühenduse loomine.",
+    "global_conf_get_version_failed": "Globaalse konfiguratsiooni versiooni määramine URLi põhjal ebaõnnestus.",
+    "global_conf_header_field_missing": "Globaalse konfiguratsiooni vastusest puudub kohustuslik päiseväli {0}",
+    "global_conf_header_field_missing_parameter": "Globaalse konfiguratsiooni päiseväljast {0} puudub parameeter {1}",
+    "global_conf_header_field_wrong_value": "Globaalse konfiguratsiooni päiseväljal {0} on vale väärtus (väärtus: {1}, nõutud: {2})",
+    "global_conf_missing_signed_data": "Globaalsel konfiguratsioonil puudub allkiri",
+    "global_conf_missing_signed_data_expiration_date": "Globaalse konfiguratsiooni allkirjal puudub aegumise kuupäev",
+    "global_conf_missing_verification_cert": "Ei õnnestu leida sertifikaati (sertifikaadi räsi {0}) millega globaalse konfiguratsiooni allkirja valideerida",
     "global_conf_outdated": "Globaalne konfiguratsioon on aegunud",
+    "global_conf_parsing_downloaded_conf_directory_failure": "Ebaõnnestus globaalse konfiguratsiooni lugemine kaustast {0}",
+    "global_conf_part_invalid_instance_identifier": "Globaalse konfiguratsiooni osa failil {0} on ebavaliidne keskkonna identifikaator",
+    "global_conf_part_download_failure": "Globaalse konfiguratsiooni osa alla laadimine ebaõnnestus",
+    "global_conf_part_downloaded_file_integrity_failure": "Ebaõnnestus globaalse konfiguratsiooni osa {0} terviklikkuse valideerimine",
+    "global_conf_part_downloaded_hash_failure": "Alla laetud globaalse konfiguratsiooni osa räsi saamine ebaõnnestus",
+    "global_conf_part_file_expiration_date_update_failure": "Globaalse konfiguratsiooni osa aegumise kuupäeva uuendamine ebaõnnestus",
+    "global_conf_part_file_hash_failure": "Olemas oleva globaalse konfiguratsiooni faili räsi saamine ebaõnnestus",
+    "global_conf_part_file_save_failure": "Globaalse konfiguratsiooni osa faili salvestamine ebaõnnestus {0}",
+    "global_conf_part_reserved_file_name": "Globaalse konfiguratsiooni osa {0} lahendub reserveeritud faili nimele",
+    "global_conf_part_duplicate_target": "Kaks konfiguratsiooni osa lahenduvad samale viitele {0}",
+    "global_conf_signature_decode_failure": "Globaalse konfiguratsiooni allkirja lahti krüpteerimine ebaõnnestus",
+    "global_conf_signature_verification_failure": "Globaalse konfiguratsiooni allkirja valideerimine ebaõnnestus",
     "gpg_key_generation_failed": "GPG võtmepaari loomine ebaõnnestus",
     "gpg_key_generation_interrupted": "GPG võtmepaari loomine katkestatud",
     "http_error": "HTTP viga",
@@ -473,6 +532,7 @@
     "local_group_not_found": "Lokaalset rühma ei leitud",
     "maintenance_mode_change_request_already_submitted": "Hooldusrežiimi muudatus on juba ootel",
     "malformed_anchor": "Vale vorminguga ankur",
+    "malformed_global_conf": "Katkine globaalne konfiguratsioon",
     "malformed_url": "Vale vorminguga URL",
     "management_request_sending_failed": "Halduspäringu saatmine ebaõnnestus",
     "member_already_owner": "Liige on juba omanik",
@@ -481,6 +541,31 @@
     "member_code_exists": "Liikmekood on olemas",
     "member_code_not_provided": "Liikmekood puudub",
     "missing_parameter": "Parameeter puudub",
+    "mlog": {
+      "adding_signature_to_ts_token_failed": "Ajatemplile allkirja lisamine ebaõnnestus",
+      "calculating_message_digest_failed": "Sõnumi sõrmejälje arvutamine ebaõnnestus",
+      "failed_to_build_signature_hash_chain": "Pakkajatemplile allkirja räsiahela ehitamine ebaõnnestus",
+      "failed_to_prepare_signature_data": "Ajatemplile allkirja andmete ettevalmistamine ebaõnnestus",
+      "log_manager_unavailable": "LogManageri ühendumine ebaõnnestus, ajatempli hetke staatus ei ole saadaval",
+      "malformed_timestamp_server_url": "Vigane ajatempli teenuse URL. Kontrolli URLi.",
+      "message_log_record_not_found": "Sõnumilogi kirjet ei õnnestunud andmebaasist leida",
+      "no_log_records_specified": "Ajatembeldamine ebaõnnestus, sõnumilogid ei olnud täpsustatud",
+      "no_signature_hashes_specified": "Ajatembeldamine ebaõnnestus, allkirja räsid ei olnud täpsustatud",
+      "no_timestamping_provider_found": "Ajatempli teenus ei ole seadistatud",
+      "reading_timestamp_response_failed": "Ajatempli vastus ei ole loetav. Vastus peab olema valiidse ASN.1 struktuuriga",
+      "timestamp_non_granted_response": "Ajatempli vastuse staatus ei ole 'granted' ega 'grantedWithMods'. (status: {0} statusString: {1} failInfo: {2})",
+      "timestamping_non_ok_response": "Ajatempli vastus ei tagastanud HTTP 'OK' staatust. Vastus oli: {0}, {1}",
+      "timestamp_provider_connection_failed": "Võrgu viga: ajatempli teenusega ühendumine ebaõnnestus",
+      "timestamp_record_save_failure": "Ajatempli kirje salvestamine andmebaasi ebaõnnestus",
+      "timestamp_request_timed_out": "Ühenduse ooteaeg (time out) lõppes. Kontrolli võrgu ühendust.",
+      "timestamp_response_object_creation_failed": "RFC 3161 ajatempli vastuse objekti loomine ebaõnnestus",
+      "timestamp_response_validation_failed": "Ajatempli vastuse valideerimine ajatempli päringuga ebaõnnestus.",
+      "timestamp_signer_verification_failed": "Ajatempli allkirja info valideerimine ebaõnnestus. Validaatori sõnum: {0}",
+      "timestamp_token_encoding_failed": "Ajatempli 'der' kodeerimine ebaõnnestus",
+      "timestamp_token_signer_info_not_found": "Allkirja info pärimine ajatemplist ebaõnnestus",
+      "tsp_certificate_not_found": "TSP sertifikaati ei leitud",
+      "updating_message_signature_failed": "Sõnumi allkirja omaduste uuendamine andmebaasis ebaõnnestus"
+    },
     "network_error": "Võrguühenduse viga",
     "ocsp_connection_error": "OCSP vastajaga ei õnnestu ühendust luua",
     "ocsp_failed": "OCSP vastajalt ei õnnestu vastust saada",
@@ -514,8 +599,10 @@
     "tr": {
       "op_monitor": {
         "network_error": "Võrguühenduse viga: operatiivandmete jälgimine pole saadaval"
-      }
+      },
+      "op_monitor_trust_failure": "Kontrollige vahekaardil „Operatsioonide monitooringu usaldus“ imporditud operatiivandmete jälgimise CA-d ja seda, et saladuste hoidla (OpenBao) on kättesaadav, ning proovige uuesti."
     },
+    "unknown_host": "Ühenduse viga, tundmatu host",
     "unsupported_openapi_version": "Toetamata OpenAPI versioon. Hetkel toetatakse ainult versioone 3.0.x ja 3.1.0.",
     "url_already_exists": "URL on juba olemas",
     "warnings_detected": "Tuvastati hoiatused",
@@ -778,8 +865,28 @@
     "noClientData": "Kliendi andmed puuduvad",
     "noLocalGroups": "Lokaalsed grupid puuduvad",
     "noServiceClients": "Teenuse kliendid puuduvad",
-    "noTimestampingServices": "Ajatempli teenused puuduvad",
-    "noConfigurableProperties": "Konfigureeritavad omadused puuduvad"
+    "noTimestampingServices": "Ajatempli teenused puuduvad"
+  },
+  "opMonitorTrust": {
+    "externalRpcCa": {
+      "description": "Turvaserveri RPC CA allkirjastab selle turvaserveri RPC-ühenduste sertifikaadid. Laadige see alla ja paigaldage operatiivandmete jälgimise deemoni hostile, et host usaldaks seda turvaserverit.",
+      "download": "Lae alla",
+      "title": "Turvaserveri RPC CA",
+      "unavailable": "Turvaserveri RPC CA ei ole saadaval"
+    },
+    "opMonitorCa": {
+      "delete": "Kustuta",
+      "deleteConfirmText": "Kas kustutada operatsioonide monitooringu CA? Siis usaldab see turvaserver ainult turvaserveri RPC CA-d, nagu sama hosti operatiivandmete jälgimise deemoni puhul.",
+      "deleteConfirmTitle": "Kas kustutada operatsioonide monitooringu CA?",
+      "deleted": "Operatsioonide monitooringu CA on kustutatud",
+      "description": "Teisel hostil töötava operatiivandmete jälgimise deemoni CA. Laadige see üles, et see turvaserver usaldaks seda operatiivandmete jälgimise deemonit. Fail peab sisaldama täpselt ühte PEM- või DER-kodeeringus CA sertifikaati ja mitte ühtegi privaatvõtit.",
+      "empty": "Operatsioonide monitooringu CA-d pole salvestatud",
+      "replace": "Asenda",
+      "restartHint": "Muudatuste rakendamiseks taaskäivitage proxy ja admin-service.",
+      "title": "Operatiivandmete jälgimise CA",
+      "upload": "Lae üles",
+      "uploaded": "Operatsioonide monitooringu CA on salvestatud"
+    }
   },
   "serviceClientType": {
     "globalGroup": "GLOBAALNE RÜHM",
@@ -879,7 +986,8 @@
           "distinguishedName": "Eristusnimi",
           "expires": "Aegub",
           "ocspCostType": "OCSP hinna tüüp",
-          "ocspResponse": "OCSP vastus"
+          "ocspResponse": "OCSP vastus",
+          "ocspUrl": "OCSP URL"
         },
         "notAvailable": "Ei kohaldata",
         "ocspResponse": {
@@ -981,23 +1089,6 @@
     },
     "title": "Süsteemi parameetrid",
     "configurableProperties": {
-      "title": "Konfigureeritavad süsteemi omadused",
-      "search": "Otsi omadusi...",
-      "restartWarning": "Muudatuste jõustumiseks tuleb järgmised teenused taaskäivitada: {scopes}.",
-      "propertyRestartWarning": "Muudatuste jõustumiseks on vajalik taaskäivitamine.",
-      "collapseAll": "Ahenda kõik",
-      "updateSuccess": "Omadus edukalt uuendatud",
-      "editDialog": {
-        "title": "Muuda omaduse väärtust"
-      },
-      "table": {
-        "header": {
-          "propertyName": "Omaduse nimi",
-          "currentValue": "Praegune väärtus",
-          "defaultValue": "Vaikeväärtus",
-          "description": "Kirjeldus"
-        }
-      },
       "descriptions": {
         "xroad": {
           "proxy-ui-api": {
@@ -1120,17 +1211,7 @@
                 "buffer": {
                   "size": "Maksimaalne kirjete arv puhvris enne operatsioonide monitorile saatmist.",
                   "max-records-in-message": "Maksimaalne operatsiooniandmete kirjete arv sõnumis, mille operatsioonide monitooringu puhver saadab operatsioonide monitooringu deemonile.",
-                  "sending-interval-seconds": "Intervall sekundites, millega operatsioonide monitooringu puhver (taas)proovib kirjeid operatsioonide monitooringu deemonile saata. Tavaliselt käivitab puhver saatmismehhanismi kohe, kui saab uue kirje. Suure koormuse või saatmise ebaõnnestumise korral kogunevad kirjed puhvrisse ja vajavad perioodilist tähelepanu.",
-                  "socket-timeout-seconds": "Soketi aegumine (SO_TIMEOUT) operatsioonide monitooringu kirjete saatmisel operatsioonide monitooringu puhvrist operatsioonide monitooringu deemonile sekundites.",
-                  "connection-timeout-seconds": "HTTP kliendi ühenduse aegumine sekundites."
-                },
-                "connection": {
-                  "host": "Hosti aadress, millel operatsioonide monitooringu deemon kuulab.",
-                  "port": "TCP port, millel operatsioonide monitooringu deemon kuulab.",
-                  "scheme": "Operatsioonide monitooringu deemoni URI skeemi nimi. Võimalikud väärtused on http ja https.",
-                  "socket-timeout-seconds": "HTTP kliendi ühenduse aegumine sekundites.",
-                  "connection-timeout-seconds": "Soketi aegumine (SO_TIMEOUT) operatsiooniandmete päringu saatmisel operatsioonide monitooringu deemonile sekundites.",
-                  "xroad-tls-ciphers": "TLS šifrid (komaga eraldatud loend eelistatud järjekorras), mida aktsepteeritakse turvaserverite vahelistel päringustel ning operatsiooni jälgimise deemoni ja kliendi vahel. (alates versioonist 6.20)"
+                  "sending-interval-seconds": "Intervall sekundites, millega operatsioonide monitooringu puhver (taas)proovib kirjeid operatsioonide monitooringu deemonile saata. Tavaliselt käivitab puhver saatmismehhanismi kohe, kui saab uue kirje. Suure koormuse või saatmise ebaõnnestumise korral kogunevad kirjed puhvrisse ja vajavad perioodilist tähelepanu."
                 }
               }
             },
@@ -1251,13 +1332,12 @@
             "enabled": "Lipp AntiDOS süsteemi lubamiseks või keelamiseks."
           },
           "common-rpc": {
-            "use-tls": "Kui lubatud, kasutatakse kõigi turvaserveri siseteenuste vahelises gRPC suhtluses vastastikust TLS-i.",
+            "use-tls": "Ainult testimiseks; ärge lülitage seda tootmises välja. Kui lubatud, kasutatakse kõigi turvaserveri siseteenuste vahelises gRPC suhtluses vastastikust TLS-i. Kui keelatud, on kogu sisemine gRPC suhtlus krüpteerimata, sealhulgas ühendus operatsioonide monitooringu deemoniga, ning imporditud operatsioonide monitooringu CA-d ja lubatud kliendinimesid ei rakendata.",
             "certificate-provisioning": {
               "refresh-interval": "Kui tihti teenused kontrollivad, kas nende gRPC TLS-sertifikaati on vaja uuendada (nt 5H).",
-              "retry-delay": "gRPC TLS-sertifikaadi proviimise taaskatsumise esialgne viivitus (nt 5S).",
-              "retry-exponential-backoff-multiplier": "Iga järgneva sertifikaadi proviimise katse puhul taaskatsumisviivitusele rakendatav kordaja.",
-              "retry-max-attempts": "gRPC TLS-sertifikaadi proviimise maksimaalne katsete arv.",
-              "retry-timeout": "Kogu ajaraam kõigi gRPC TLS-sertifikaadi proviimise katsete jaoks (nt 60S)."
+              "wait-duration": "Viivitus enne esimest taaskatset pärast gRPC TLS-sertifikaadi ebaõnnestunud laadimist saladuste hoidlast (nt 5S).",
+              "exponential-backoff-multiplier": "Taaskatsumisviivitusele rakendatav kordaja pärast iga järjestikust gRPC TLS-sertifikaadi ebaõnnestunud laadimist.",
+              "exponential-max-wait-duration": "Taaskatsumisviivituse ülempiir gRPC TLS-sertifikaadi ebaõnnestunud laadimiste järel (nt 5M)."
             },
             "channel": {
               "proxy": {
@@ -1341,30 +1421,15 @@
             }
           },
           "op-monitor": {
-            "listen-address": "IP-aadress, millel operatsioonide monitooringu deemon kuulab.",
-            "port": "TCP port, millel operatsioonide monitooringu deemon kuulab.",
-            "scheme": "Operatsioonide monitooringu deemoni URI skeem. Võimalikud väärtused on http ja https.",
-            "xroad-tls-ciphers": "TLS šifrid (komaga eraldatud loend eelistatud järjekorras), mida aktsepteeritakse operatsioonide monitooringu deemoniga ühenduste korral.",
             "keep-records-for-days": "Päevade arv, mille jooksul operatsioonide monitooringu kirjeid säilitatakse enne nende kustutamist.",
             "clean-interval": "Cron expression, mis määrab, millal vanad operatsioonide monitooringu kirjed puhastatakse.",
             "max-records-in-payload": "Maksimaalne operatsioonide monitooringu kirjete arv, mis tagastatakse ühe vastuse andmekoormas.",
             "records-available-timestamp-offset-seconds": "Nihe sekundites, mis lahutatakse praegusest ajast saadaolevate kirjete ülempiiri määramisel.",
             "health-statistics-period-seconds": "Periood sekundites, mille jooksul tervisemõõdikuid koondatakse.",
             "rpc": {
-              "enabled": "Luba operatsioonide monitooringu deemoni gRPC server.",
               "listen-address": "IP-aadress, millel operatsioonide monitooringu deemoni gRPC server kuulab.",
-              "port": "Port, millel operatsioonide monitooringu deemoni gRPC server kuulab."
-            },
-            "tls": {
-              "certificate-provisioning": {
-                "issuance-role-name": "Vault PKI rolli nimi, mida kasutatakse operatsioonide monitooringu deemoni TLS sertifikaadi ettevalmistamisel.",
-                "common-name": "Ettevalmistatud operatsioonide monitooringu deemoni TLS sertifikaadile seatud üldnimi.",
-                "alt-names": "DNS-i teema alternatiivsed nimed, mis on lisatud ettevalmistatud operatsioonide monitooringu deemoni TLS sertifikaati.",
-                "ip-subject-alt-names": "IP teema alternatiivsed nimed, mis on lisatud ettevalmistatud operatsioonide monitooringu deemoni TLS sertifikaati.",
-                "ttl": "Ettevalmistatud operatsioonide monitooringu deemoni TLS sertifikaadi eluiga (nt 3650D).",
-                "secret-store-pki-path": "Vault PKI saladuste mootori ühenduspunkt operatsioonide monitooringu deemoni TLS sertifikaadi ettevalmistamiseks."
-              },
-              "client-certificate-refresh-interval": "Intervall, millega operatsioonide monitooringu deemon uuendab oma kliendi TLS sertifikaati (nt 0S keelamiseks)."
+              "port": "Port, millel operatsioonide monitooringu deemoni gRPC server kuulab.",
+              "allowed-client-names": "Komadega eraldatud kliendinimed, mida operatsioonide monitooringu deemoni gRPC server aktsepteerib, kui RPC TLS on sees. Klient aktsepteeritakse, kui tema sertifikaadi CN või DNS SAN võrdub kirjega (tõstutundetu, ilma IP SAN-ita, ilma metamärkideta). Tühi (vaikimisi) aktsepteerib iga klienti, kellel on turvaserveri CA sertifikaat. Metamärk või tühi kirje peatab deemoni käivitumisel. Muudatuse järel taaskäivitage deemon."
             }
           },
           "message-log-archiver": {
@@ -1414,8 +1479,10 @@
     },
     "keys": {
       "apiKey": "API võtmed",
+      "opMonitorTrust": "Operatsioonide monitooringu usaldus",
       "signAndAuthKeys": "SIGN- ja AUTH-võtmed",
-      "ssTlsCertificate": "Turvaserveri TLS-võti"
+      "ssTlsCertificate": "Turvaserveri TLS-võti",
+      "agreementTokenKey": "Kokkuleppe tõendi võti"
     },
     "main": {
       "clients": "Kliendid",

@@ -29,7 +29,9 @@ import * as api from '@/util/api';
 import { defineStore } from 'pinia';
 import {
   CertificateDetails,
-  DistinguishedName,
+  DsTlsCertificateEnrollmentStatus,
+  DsTlsCertificateOrder,
+  DsTlsCertificateSigningRequest,
   DsTlsCertificateStatus,
   buildFileFormData,
   multipartFormDataConfig,
@@ -44,14 +46,17 @@ export const useDsTlsCertificate = defineStore('dsTlsCertificate', {
     getStatus() {
       return api.get<DsTlsCertificateStatus>('/ds-tls-certificate').then((res) => res.data);
     },
+    fetchDsTlsCertificateEnrollmentStatus() {
+      return api.get<DsTlsCertificateEnrollmentStatus>('/ds-tls-certificate/enrollment-status').then((res) => res.data);
+    },
     getCertificate() {
       return this.getStatus().then((status) => status.certificate ?? ({ hash: '' } as CertificateDetails));
     },
     generateKey() {
       return api.post('/ds-tls-certificate/key', undefined);
     },
-    generateCsr(distinguishedName: string) {
-      const body: DistinguishedName = { name: distinguishedName };
+    generateCsr(distinguishedName: string, subjectAltName?: string) {
+      const body: DsTlsCertificateSigningRequest = { name: distinguishedName, subject_alt_name: subjectAltName };
       return api.post('/ds-tls-certificate/csr', body, { responseType: 'blob' }).then((res) => {
         saveResponseAsFile(res, 'ds-tls-cert-request.p10');
       });
@@ -67,6 +72,10 @@ export const useDsTlsCertificate = defineStore('dsTlsCertificate', {
         buildFileFormData('certificate', certificate),
         multipartFormDataConfig(),
       );
+    },
+    orderCertificate(caName: string, distinguishedName: string, subjectAltName: string) {
+      const body: DsTlsCertificateOrder = { ca_name: caName, distinguished_name: distinguishedName, subject_alt_name: subjectAltName };
+      return api.post<CertificateDetails>('/ds-tls-certificate/acme-order', body).then((res) => res.data);
     },
   },
 });

@@ -68,7 +68,7 @@ public class XRoadGlobalGroupMemberConstraintFunction<C extends ParticipantAgent
             return PolicyContextHelper.findMemberIdFromContext(context)
                     .map(memberId -> {
                         var result = switch (operator) {
-                            case EQ, IN -> globalConfProvider.isSubjectInGlobalGroup(memberId, globalGroupId);
+                            case EQ, IS_PART_OF -> globalConfProvider.isMemberInGlobalGroup(memberId, globalGroupId);
                             default -> {
                                 context.reportProblem("Unsupported operator: " + operator);
                                 yield false;
@@ -81,6 +81,10 @@ public class XRoadGlobalGroupMemberConstraintFunction<C extends ParticipantAgent
                         log.debug("evaluate: no memberId in context -> false");
                         return false;
                     });
+        } catch (RuntimeException e) {
+            monitor.warning("XRoadGlobalGroupMemberConstraintFunction failed for value '" + rightValue
+                    + "', treating it as no match", e);
+            return false;
         } finally {
             monitor.debug("XRoadGlobalGroupMemberConstraintFunction took " + stopWatch.getTime(MILLISECONDS) + " ms");
         }

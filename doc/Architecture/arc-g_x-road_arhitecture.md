@@ -2,8 +2,8 @@
 
 **X-Road Architecture**
 
-Version: 1.15  
-11.11.2025
+Version: 1.17  
+22.10.2026
 <!-- 16 pages -->
 Doc. ID: ARC-G
 
@@ -35,6 +35,8 @@ Doc. ID: ARC-G
 | 01.06.2023 | 1.13    | Update references                                                                                             | Petteri Kivimäki   |
 | 17.03.2025 | 1.14    | Syntax and styling                                                                                            | Pauline Dimmek     |
 | 11.11.2025 | 1.15    | Drop JMX interfaces                                                                                           | Justas Samuolis    |
+| 19.10.2026 | 1.16    | Operational monitoring store and query over gRPC                                                              | Eneli Reimets      |
+| 22.10.2026 | 1.17    | Operational monitoring daemon needs no global configuration                                                   | Eneli Reimets      |
 
 ## Table of Contents
 
@@ -267,7 +269,7 @@ The configuration download protocol is a synchronous protocol that is offered by
 
 The protocol is based on HTTP and MIME multipart messaging (see \[[PR-GCONF](#Ref_PR-GCONF)\] for details). The configuration is signed by the central server to protect it against modification. Usually the configuration consists of several parts. The protocol allows configuration clients to check whether the configuration has changed and only download the modified parts.
 
-X-Road security servers (and operational monitoring daemons) maintain a local copy of the global configuration, which they periodically update from their respective configuration source. This cached global configuration has a validity period, which, in general, is longer than the period at which configuration clients are configured to update their local copy. Security servers continue to be fully operational while the cached global configuration remains valid. However, an out-of-date copy of the global configuration severely restricts the management capabilities of security server administrators and forbids security servers from processing incoming requests. As such, a short downtime of the interface is permissible within the limits of the configured configuration validity period.
+X-Road security servers maintain a local copy of the global configuration, which they periodically update from their respective configuration source. This cached global configuration has a validity period, which, in general, is longer than the period at which configuration clients are configured to update their local copy. Security servers continue to be fully operational while the cached global configuration remains valid. However, an out-of-date copy of the global configuration severely restricts the management capabilities of security server administrators and forbids security servers from processing incoming requests. As such, a short downtime of the interface is permissible within the limits of the configured configuration validity period.
 
 
 ### 3.3 Message Transport Protocol
@@ -346,14 +348,14 @@ The central server user interface is used by the central server administrator to
 
 ### 3.11 Store Operational Monitoring Data
 
-This protocol is used by the X-Road security server to store its cached operational monitoring data into the database of the operational monitoring daemon. The protocol is a synchronous RPC-style protocol based on JSON over HTTP(S).
+This protocol is used by the X-Road security server to store its cached operational monitoring data into the database of the operational monitoring daemon. The protocol is a synchronous RPC-style protocol based on gRPC.
 
 The interface is described in more detail in \[[ARC-OPMOND](#Ref_ARC-OPMOND)\].
 
 
 ### 3.12 Operational Monitoring Query
 
-The operational monitoring query interface is used by the X-Road security server to retrieve operational monitoring data from the operational monitoring daemon. The asynchronous RPC-style X-Road operational monitoring protocol \[[PR-OPMON](#Ref_PR-OPMON)\] (based on \[[PR-MESS](#Ref_PR-MESS)\]) is used.
+The operational monitoring query interface is used by the X-Road security server to retrieve operational monitoring data from the operational monitoring daemon. The protocol is a synchronous RPC-style protocol based on gRPC. The security server passes the query message of the X-Road operational monitoring protocol \[[PR-OPMON](#Ref_PR-OPMON)\] (based on \[[PR-MESS](#Ref_PR-MESS)\]) on to the daemon over this interface.
 
 The interface is described in more detail in \[[ARC-OPMOND](#Ref_ARC-OPMOND)\].
 

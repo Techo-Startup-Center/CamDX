@@ -66,6 +66,24 @@ const tabs = [
     },
     permissions: [Permissions.VIEW_DS_TLS_CERT],
   },
+  {
+    key: 'agreement-token-key-tab-button',
+    name: 'tab.keys.agreementTokenKey',
+    icon: 'key_vertical',
+    to: {
+      name: RouteName.AgreementTokenKey,
+    },
+    permissions: [Permissions.VIEW_AGREEMENT_TOKEN_KEY],
+  },
+  {
+    key: 'op-monitor-trust-tab-button',
+    name: 'tab.keys.opMonitorTrust',
+    icon: 'shield_lock',
+    to: {
+      name: RouteName.OpMonitorTrust,
+    },
+    permissions: [Permissions.VIEW_EXTERNAL_RPC_CA],
+  },
 ] as Tab[];
 
 export const useKeysTabs = defineStore('keys-tabs', {

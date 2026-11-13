@@ -33,8 +33,8 @@ import org.niis.xroad.proxy.dataplane.DataPlaneServerProperties;
 class DspCoreConfig {
 
     @ApplicationScoped
-    AssetAccessRpcChannelProperties assetAccessRpcChannelProperties(XRoadConfig xRoadConfig) {
-        return new AssetAccessRpcChannelProperties(xRoadConfig);
+    ControlPlaneRpcChannelProperties controlPlaneRpcChannelProperties(XRoadConfig xRoadConfig) {
+        return new ControlPlaneRpcChannelProperties(xRoadConfig);
     }
 
     @ApplicationScoped

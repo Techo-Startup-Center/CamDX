@@ -13,11 +13,13 @@ dependencies {
   implementation(project(":common:common-jetty"))
   implementation(project(":lib:messagelog-core"))
   implementation(project(":service:op-monitor:op-monitor-api"))
+  implementation(project(":service:op-monitor:op-monitor-client"))
   implementation(project(":service:signer:signer-client"))
   implementation(project(":service:monitor:monitor-rpc-client"))
   implementation(libs.quarkus.scheduler)
 
   implementation(project(":lib:asic-core"))
+  implementation(project(":lib:agreement-token-core"))
   implementation(project(":lib:globalconf-impl"))
   implementation(project(":lib:properties-core"))
   implementation(project(":service:configuration-client:configuration-client-rpc-client"))
@@ -34,6 +36,7 @@ dependencies {
 
   testImplementation(project(":common:common-test"))
 
+  testImplementation(testFixtures(project(":lib:rpc-core")))
   testImplementation(testFixtures(project(":lib:properties-core")))
   testImplementation(testFixtures(project(":lib:globalconf-impl")))
   testImplementation(testFixtures(project(":lib:serverconf-impl")))
@@ -50,10 +53,13 @@ dependencies {
 
   testFixturesImplementation(project(":common:common-test"))
   testFixturesImplementation(project(":common:common-jetty"))
+  testFixturesImplementation(project(":lib:agreement-token-core"))
   testFixturesImplementation(project(":lib:properties-core"))
+  testFixturesImplementation(project(":lib:rpc-core"))
   testFixturesImplementation(project(":lib:messagelog-core"))
   testFixturesImplementation(project(":service:configuration-client:configuration-client-rpc-client"))
   testFixturesImplementation(project(":service:op-monitor:op-monitor-api"))
+  testFixturesImplementation(project(":service:op-monitor:op-monitor-client"))
   testFixturesImplementation(project(":service:monitor:monitor-rpc-client"))
   testFixturesImplementation(testFixtures(project(":lib:properties-core")))
   testFixturesImplementation(testFixtures(project(":lib:keyconf-impl")))

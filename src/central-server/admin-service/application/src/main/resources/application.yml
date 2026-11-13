@@ -107,7 +107,6 @@ file-upload-endpoints:
 
 xroad:
   admin-service:
-    ha-node-name:
     global-conf-generator:
       minimum-global-configuration-version: 2
       internal-directory: internalconf
@@ -117,6 +116,7 @@ xroad:
       auto-approve-owner-change-requests: false
       auto-approve-client-reg-requests: false
       auto-approve-auth-cert-reg-requests: false
+      member-did-reg-max-entries: 100
     trusted-anchors-allowed: true
     authentication-provider: PAM
     global-configuration-generation-rate-in-seconds: 60
@@ -138,13 +138,5 @@ xroad:
     strict-identifier-checks: true
     request-size-limit-regular: 50KB
     request-size-limit-binary-upload: 10MB
-    tls:
-      certificate-provisioning:
-        common-name: ${XROAD_HOST:localhost}
-        ip-subject-alt-names:
-          - 127.0.0.1
     key-management-api-whitelist: 127.0.0.0/8, ::1
     regular-api-whitelist: 0.0.0.0/0, ::/0
-  dataspace:
-    issuer:
-      host: ${XROAD_HOST:localhost}

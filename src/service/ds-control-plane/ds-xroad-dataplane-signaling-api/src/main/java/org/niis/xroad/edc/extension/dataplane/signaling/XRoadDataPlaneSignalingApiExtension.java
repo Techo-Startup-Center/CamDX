@@ -26,8 +26,8 @@
  */
 package org.niis.xroad.edc.extension.dataplane.signaling;
 
+import org.eclipse.edc.connector.controlplane.dataplane.spi.DataPlaneSelectorService;
 import org.eclipse.edc.connector.controlplane.services.spi.transferprocess.TransferProcessService;
-import org.eclipse.edc.connector.dataplane.selector.spi.DataPlaneSelectorService;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Setting;
@@ -54,9 +54,9 @@ import static org.niis.xroad.edc.extension.dataplane.signaling.XRoadDataPlaneSig
 /**
  * Replaces upstream {@code DataPlaneSignalingApiExtension}: keeps the data-plane transfer API (the
  * {@link DataPlaneTransferAuthorizationFilter} and {@link DataPlaneTransferApiController}) mounted on
- * {@link ApiContext#SIGNALING}, but does not mount any data-plane registration REST controller. X-Road seeds
- * its {@code DataPlaneInstanceStore} in-process ({@code XRoadDataPlaneRegistrarExtension}), which is the only
- * writer; registration over REST is EDC operator surface, not part of the DSP protocol this extension serves.
+ * {@link ApiContext#SIGNALING}, but does not mount any data-plane registration REST controller. X-Road computes
+ * its {@code DataPlaneInstanceStore} answers from configuration ({@code XRoadDataPlaneStoreExtension}), which has
+ * no write path; registration over REST is EDC operator surface, not part of the DSP protocol this extension serves.
  *
  * <p>The upstream extension must be excluded from the boot's dependency graph (see
  * {@code xroad.edc.boot.excluded-service-extensions}) so both extensions do not race to bind the same ports.

@@ -116,7 +116,7 @@ Description: X-Road security server with the Faroe Islands' settings
 Package: xroad-opmonitor
 Conflicts: xroad-center
 Architecture: all
-Depends: ${misc:Depends}, xroad-base (=${binary:Version}), xroad-confclient (=${binary:Version})
+Depends: ${misc:Depends}, xroad-base (=${binary:Version}), xroad-secret-store-local (=${binary:Version}) | xroad-secret-store-remote (=${binary:Version})
 Pre-Depends: xroad-database-local (=${binary:Version}) | xroad-database-remote (=${binary:Version})
 Description: X-Road operations monitoring daemon
  X-Road operations monitoring daemon
@@ -124,7 +124,7 @@ Description: X-Road operations monitoring daemon
 Package: xroad-proxy-ui-api
 Architecture: all
 Pre-Depends: xroad-base (=${binary:Version})
-Depends: ${misc:Depends}, xroad-proxy (=${binary:Version})
+Depends: ${misc:Depends}, xroad-proxy (=${binary:Version}), xroad-auxiliary-service (=${binary:Version})
 Replaces: xroad-nginx
 Breaks: xroad-nginx
 Description: X-Road proxy UI REST API
@@ -160,9 +160,9 @@ Package: xroad-secret-store-local
 Architecture: all
 Conflicts: xroad-secret-store-remote
 Pre-Depends: xroad-database-local (=${binary:Version}) | xroad-database-remote (=${binary:Version})
-Depends: jq, gpg, openbao (<< 2.6.0), xroad-base (=${binary:Version})
+Depends: jq, gpg, openbao (>= 2.6.0), xroad-base (=${binary:Version})
 Description: Meta-package for X-Road local secret store dependencies
- 
+
 Package: xroad-secret-store-remote
 Architecture: all
 Conflicts: xroad-secret-store-local
@@ -172,7 +172,7 @@ Package: xroad-auxiliary-service
 Architecture: all
 Replaces: xroad-proxy (<< 7.9.0)
 Breaks: xroad-proxy (<< 7.9.0)
-Depends: ${misc:Depends}, xroad-base (=${binary:Version}), xroad-secret-store-local (=${binary:Version}) | xroad-secret-store-remote (=${binary:Version})
+Depends: ${misc:Depends}, xroad-base (=${binary:Version}), xroad-proxy (=${binary:Version}), xroad-secret-store-local (=${binary:Version}) | xroad-secret-store-remote (=${binary:Version})
 Description: X-Road auxiliary service
  X-Road auxiliary service
 
