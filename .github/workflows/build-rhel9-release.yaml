@@ -11,6 +11,12 @@ on:
         description: RPM release number for the approved source revision
         required: true
         default: "1"
+      validation_only:
+        description: Validate release controls and approved source without rebuilding RPMs
+        required: true
+        type: boolean
+        default: false
+
 permissions:
   contents: read
 
@@ -27,19 +33,41 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      - name: Check out workflow control revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Validate release workflow controls
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workflow=".github/workflows/build-rhel9-release.yaml"
+
+          grep -Fq "workflow_dispatch:" "${workflow}"
+
+          if grep -Eq '^[[:space:]]+push:' "${workflow}"; then
+            echo "Release workflow must remain manual-only." >&2
+            exit 1
+          fi
+
+          if grep -Fq 'rpm -Kv "${package}" || true' "${workflow}"; then
+            echo "Release workflow must not suppress RPM verification failures." >&2
+            exit 1
+          fi
+
+          grep -Fq             'Existing controlled signing host after Package Builder artifact retrieval and independent checksum verification'             "${workflow}"
+
       - name: Select approved source revision
         id: source
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            requested_sha="${{ inputs.source_sha }}"
-            rpm_release="${{ inputs.rpm_release }}"
-          else
-            requested_sha="${APPROVED_SOURCE_SHA}"
-            rpm_release="1"
-          fi
+          requested_sha="${{ inputs.source_sha }}"
+          rpm_release="${{ inputs.rpm_release }}"
 
           if [[ "${requested_sha}" != "${APPROVED_SOURCE_SHA}" ]]; then
             echo "Requested source SHA does not match the approved source revision." >&2
@@ -86,7 +114,16 @@ jobs:
           echo "Approved source SHA: ${actual_sha}"
           echo "Expected RPM NEVR version/release: ${EXPECTED_VERSION}-${{ steps.source.outputs.rpm_release }}.el9"
 
+      - name: Report validation-only success
+        if: ${{ inputs.validation_only }}
+        shell: bash
+        run: |
+          echo "Release workflow controls validated."
+          echo "Approved source revision validated: ${{ steps.source.outputs.source_sha }}"
+          echo "No packages were rebuilt or uploaded."
+
       - name: Ensure release build prerequisites
+        if: ${{ !inputs.validation_only }}
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -94,24 +131,28 @@ jobs:
           sudo apt-get install -y curl software-properties-common build-essential unzip debhelper devscripts rpm
 
       - name: Set up JDK 21
+        if: ${{ !inputs.validation_only }}
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
         with:
           java-version: "21"
           distribution: temurin
 
       - name: Set up Gradle
+        if: ${{ !inputs.validation_only }}
         uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           cache-read-only: true
           gradle-home-cache-cleanup: true
 
       - name: Build release source
+        if: ${{ !inputs.validation_only }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: ./src
         run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PxroadBuildType=RELEASE --max-workers=4 --stacktrace build test intTest jacocoTestReport
 
       - name: Build RHEL 9 release RPMs
+        if: ${{ !inputs.validation_only }}
         env:
           XROAD_RPM_RELEASE: ${{ steps.source.outputs.rpm_release }}
         shell: bash
@@ -123,6 +164,7 @@ jobs:
           docker run --rm             -u "$(id -u "${USER}")":"$(id -g "${USER}")"             -v /etc/passwd:/etc/passwd:ro             -v /etc/group:/etc/group:ro             -v "${GITHUB_WORKSPACE}:/workspace"             -e "XROAD_RPM_RELEASE=${XROAD_RPM_RELEASE}"             camdx-rhel9-release             ./src/packages/build-rpm.sh -release
 
       - name: Verify RPM inventory and NEVR
+        if: ${{ !inputs.validation_only }}
         id: inventory
         shell: bash
         run: |
@@ -173,6 +215,7 @@ jobs:
           echo "noarch=${noarch_count}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare release inventory, checksums and provenance
+        if: ${{ !inputs.validation_only }}
         env:
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           RPM_RELEASE: ${{ steps.source.outputs.rpm_release }}
@@ -208,13 +251,25 @@ jobs:
             find x86_64 noarch -type f -name '*.rpm' -print0               | sort -z               | xargs -0 sha256sum
           ) > release-metadata/SHA256SUMS.txt
 
-          {
-            while IFS= read -r package; do
+          : > release-metadata/PRE-SIGNING-RPM-VERIFY.txt
+          verify_failed=0
+          while IFS= read -r package; do
+            {
               echo "### ${package}"
-              rpm -Kv "${package}" || true
+              if ! rpm -Kv "${package}"; then
+                echo "FAILED: RPM integrity verification failed for ${package}"
+                verify_failed=1
+              fi
               echo
-            done < <(find release-artifacts -type f -name '*.rpm' | sort)
-          } > release-metadata/PRE-SIGNING-RPM-VERIFY.txt
+            } >> release-metadata/PRE-SIGNING-RPM-VERIFY.txt 2>&1
+          done < <(find release-artifacts -type f -name '*.rpm' | sort)
+
+          cat release-metadata/PRE-SIGNING-RPM-VERIFY.txt
+
+          if [[ "${verify_failed}" -ne 0 ]]; then
+            echo "One or more RPM integrity checks failed. Release artifacts will not be uploaded." >&2
+            exit 1
+          fi
 
           python3 - <<'PY'
           import json
@@ -234,6 +289,7 @@ jobs:
               "source_commit_subject": git("show", "-s", "--format=%s", "HEAD"),
               "workflow": os.environ["GITHUB_WORKFLOW"],
               "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "workflow_definition_sha": os.environ["GITHUB_SHA"],
               "workflow_run_id": os.environ["GITHUB_RUN_ID"],
               "workflow_run_number": os.environ["GITHUB_RUN_NUMBER"],
               "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
@@ -253,8 +309,10 @@ jobs:
               "rpm_el9_dockerfile_sha256": subprocess.check_output(
                   ["sha256sum", "src/packages/docker/rpm-el9/Dockerfile"], text=True
               ).split()[0],
-              "signing_stage": "Package Builder VM after artifact retrieval and checksum verification",
+              "package_builder_role": "Artifact retrieval and independent checksum verification only; no signing or rebuild",
+              "signing_stage": "Existing controlled signing host after Package Builder artifact retrieval and independent checksum verification",
               "github_artifacts_are_signed": False,
+              "candidate_artifacts_immutable_after_build": True,
               "generated_at_utc": datetime.now(timezone.utc).isoformat(),
           }
 
@@ -273,6 +331,7 @@ jobs:
           cat release-metadata/BUILD-PROVENANCE.json
 
       - name: Upload x86_64 release RPMs
+        if: ${{ !inputs.validation_only }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: camdx-rhel9-${{ env.EXPECTED_VERSION }}-${{ steps.source.outputs.rpm_release }}-x86_64
@@ -281,6 +340,7 @@ jobs:
           retention-days: 90
 
       - name: Upload noarch release RPMs
+        if: ${{ !inputs.validation_only }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: camdx-rhel9-${{ env.EXPECTED_VERSION }}-${{ steps.source.outputs.rpm_release }}-noarch
@@ -289,6 +349,7 @@ jobs:
           retention-days: 90
 
       - name: Upload release metadata
+        if: ${{ !inputs.validation_only }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: camdx-rhel9-${{ env.EXPECTED_VERSION }}-${{ steps.source.outputs.rpm_release }}-metadata
