@@ -11,12 +11,6 @@ on:
         description: RPM release number for the approved source revision
         required: true
         default: "1"
-  push:
-    branches:
-      - camdx/7.8.3-upgrade
-    paths:
-      - .github/workflows/build-rhel9-release.yaml
-
 permissions:
   contents: read
 
