@@ -1,0 +1,284 @@
+name: Build RHEL 9 release RPMs
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Approved source commit SHA
+        required: true
+        default: 3887c949ec5d02c87fb5351e1c960b61607bbfd6
+      rpm_release:
+        description: RPM release number for the approved source revision
+        required: true
+        default: "1"
+  push:
+    branches:
+      - camdx/7.8.3-upgrade
+    paths:
+      - .github/workflows/build-rhel9-release.yaml
+
+permissions:
+  contents: read
+
+env:
+  APPROVED_SOURCE_SHA: 3887c949ec5d02c87fb5351e1c960b61607bbfd6
+  EXPECTED_VERSION: "7.8.3"
+  EXPECTED_PACKAGE_COUNT: "19"
+  EXPECTED_X86_64_COUNT: "12"
+  EXPECTED_NOARCH_COUNT: "7"
+
+jobs:
+  build-rhel9-release:
+    name: Build verified RHEL 9 release RPMs
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Select approved source revision
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            requested_sha="${{ inputs.source_sha }}"
+            rpm_release="${{ inputs.rpm_release }}"
+          else
+            requested_sha="${APPROVED_SOURCE_SHA}"
+            rpm_release="1"
+          fi
+
+          if [[ "${requested_sha}" != "${APPROVED_SOURCE_SHA}" ]]; then
+            echo "Requested source SHA does not match the approved source revision." >&2
+            exit 1
+          fi
+
+          if [[ ! "${rpm_release}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "RPM release must be a positive integer." >&2
+            exit 1
+          fi
+
+          echo "source_sha=${requested_sha}" >> "${GITHUB_OUTPUT}"
+          echo "rpm_release=${rpm_release}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out approved source revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Verify source revision and release version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "${actual_sha}" != "${{ steps.source.outputs.source_sha }}" ]]; then
+            echo "Checked-out SHA ${actual_sha} does not match the approved source SHA." >&2
+            exit 1
+          fi
+
+          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "Tracked source tree is not clean before packaging." >&2
+            git status --short
+            exit 1
+          fi
+
+          version="$(awk -F= '/^VERSION=/{print $2}' src/packages/build-rpm.sh | tr -d '[:space:]')"
+          if [[ "${version}" != "${EXPECTED_VERSION}" ]]; then
+            echo "build-rpm.sh VERSION=${version}; expected ${EXPECTED_VERSION}." >&2
+            exit 1
+          fi
+
+          echo "Approved source SHA: ${actual_sha}"
+          echo "Expected RPM NEVR version/release: ${EXPECTED_VERSION}-${{ steps.source.outputs.rpm_release }}.el9"
+
+      - name: Install RPM inspection tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Build RHEL 9 release RPMs
+        env:
+          XROAD_RPM_RELEASE: ${{ steps.source.outputs.rpm_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker build             -t camdx-rhel9-release             "${GITHUB_WORKSPACE}/src/packages/docker/rpm-el9/"
+
+          docker run --rm             -u "$(id -u "${USER}")":"$(id -g "${USER}")"             -v /etc/passwd:/etc/passwd:ro             -v /etc/group:/etc/group:ro             -v "${GITHUB_WORKSPACE}:/workspace"             -e "XROAD_RPM_RELEASE=${XROAD_RPM_RELEASE}"             camdx-rhel9-release             ./src/packages/build-rpm.sh -release
+
+      - name: Verify RPM inventory and NEVR
+        id: inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rpm_root="src/packages/build/rhel/9"
+          mapfile -t rpms < <(find "${rpm_root}" -type f -name '*.rpm' | sort)
+
+          total="${#rpms[@]}"
+          x86_count="$(find "${rpm_root}/x86_64" -maxdepth 1 -type f -name '*.rpm' 2>/dev/null | wc -l)"
+          noarch_count="$(find "${rpm_root}/noarch" -maxdepth 1 -type f -name '*.rpm' 2>/dev/null | wc -l)"
+
+          if [[ "${total}" -ne "${EXPECTED_PACKAGE_COUNT}" ]]; then
+            echo "Unexpected RPM count: ${total}; expected ${EXPECTED_PACKAGE_COUNT}." >&2
+            exit 1
+          fi
+          if [[ "${x86_count}" -ne "${EXPECTED_X86_64_COUNT}" ]]; then
+            echo "Unexpected x86_64 RPM count: ${x86_count}; expected ${EXPECTED_X86_64_COUNT}." >&2
+            exit 1
+          fi
+          if [[ "${noarch_count}" -ne "${EXPECTED_NOARCH_COUNT}" ]]; then
+            echo "Unexpected noarch RPM count: ${noarch_count}; expected ${EXPECTED_NOARCH_COUNT}." >&2
+            exit 1
+          fi
+
+          expected_release="${{ steps.source.outputs.rpm_release }}.el9"
+          for package in "${rpms[@]}"; do
+            version="$(rpm -qp --qf '%{VERSION}' "${package}")"
+            release="$(rpm -qp --qf '%{RELEASE}' "${package}")"
+            arch="$(rpm -qp --qf '%{ARCH}' "${package}")"
+
+            if [[ "${version}" != "${EXPECTED_VERSION}" ]]; then
+              echo "Unexpected version in ${package}: ${version}" >&2
+              exit 1
+            fi
+            if [[ "${release}" != "${expected_release}" ]]; then
+              echo "Unexpected release in ${package}: ${release}; expected ${expected_release}" >&2
+              exit 1
+            fi
+            if [[ "${arch}" != "x86_64" && "${arch}" != "noarch" ]]; then
+              echo "Unexpected architecture in ${package}: ${arch}" >&2
+              exit 1
+            fi
+          done
+
+          echo "total=${total}" >> "${GITHUB_OUTPUT}"
+          echo "x86_64=${x86_count}" >> "${GITHUB_OUTPUT}"
+          echo "noarch=${noarch_count}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare release inventory, checksums and provenance
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          RPM_RELEASE: ${{ steps.source.outputs.rpm_release }}
+          RPM_TOTAL: ${{ steps.inventory.outputs.total }}
+          RPM_X86_64: ${{ steps.inventory.outputs.x86_64 }}
+          RPM_NOARCH: ${{ steps.inventory.outputs.noarch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf release-artifacts release-metadata
+          mkdir -p release-artifacts/x86_64 release-artifacts/noarch release-metadata
+
+          cp src/packages/build/rhel/9/x86_64/*.rpm release-artifacts/x86_64/
+          cp src/packages/build/rhel/9/noarch/*.rpm release-artifacts/noarch/
+
+          {
+            printf 'filename\tname\tversion\trelease\tarch\tsize_bytes\tsha256\n'
+            while IFS= read -r package; do
+              filename="$(basename "${package}")"
+              name="$(rpm -qp --qf '%{NAME}' "${package}")"
+              version="$(rpm -qp --qf '%{VERSION}' "${package}")"
+              release="$(rpm -qp --qf '%{RELEASE}' "${package}")"
+              arch="$(rpm -qp --qf '%{ARCH}' "${package}")"
+              size="$(stat -c '%s' "${package}")"
+              sha="$(sha256sum "${package}" | awk '{print $1}')"
+              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n'                 "${filename}" "${name}" "${version}" "${release}" "${arch}" "${size}" "${sha}"
+            done < <(find release-artifacts -type f -name '*.rpm' | sort)
+          } > release-metadata/RPM-INVENTORY.tsv
+
+          (
+            cd release-artifacts
+            find x86_64 noarch -type f -name '*.rpm' -print0               | sort -z               | xargs -0 sha256sum
+          ) > release-metadata/SHA256SUMS.txt
+
+          {
+            while IFS= read -r package; do
+              echo "### ${package}"
+              rpm -Kv "${package}" || true
+              echo
+            done < <(find release-artifacts -type f -name '*.rpm' | sort)
+          } > release-metadata/PRE-SIGNING-RPM-VERIFY.txt
+
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          from datetime import datetime, timezone
+
+          def git(*args):
+              return subprocess.check_output(["git", *args], text=True).strip()
+
+          provenance = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "approved_source_sha": os.environ["SOURCE_SHA"],
+              "built_source_sha": git("rev-parse", "HEAD"),
+              "source_commit_timestamp": git("show", "-s", "--format=%cI", "HEAD"),
+              "source_commit_subject": git("show", "-s", "--format=%s", "HEAD"),
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_number": os.environ["GITHUB_RUN_NUMBER"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.environ["RUNNER_ARCH"],
+              "package_target": "rhel9",
+              "build_command": "./src/packages/build-rpm.sh -release",
+              "xroad_rpm_release": os.environ["RPM_RELEASE"],
+              "expected_version": os.environ["EXPECTED_VERSION"],
+              "expected_nevr_release": f'{os.environ["RPM_RELEASE"]}.el9',
+              "rpm_count": int(os.environ["RPM_TOTAL"]),
+              "x86_64_count": int(os.environ["RPM_X86_64"]),
+              "noarch_count": int(os.environ["RPM_NOARCH"]),
+              "build_rpm_sha256": subprocess.check_output(
+                  ["sha256sum", "src/packages/build-rpm.sh"], text=True
+              ).split()[0],
+              "rpm_el9_dockerfile_sha256": subprocess.check_output(
+                  ["sha256sum", "src/packages/docker/rpm-el9/Dockerfile"], text=True
+              ).split()[0],
+              "signing_stage": "Package Builder VM after artifact retrieval and checksum verification",
+              "github_artifacts_are_signed": False,
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+          }
+
+          pathlib.Path("release-metadata/BUILD-PROVENANCE.json").write_text(
+              json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          (
+            cd release-metadata
+            sha256sum RPM-INVENTORY.tsv SHA256SUMS.txt PRE-SIGNING-RPM-VERIFY.txt BUILD-PROVENANCE.json
+          ) > release-metadata/METADATA-SHA256SUMS.txt
+
+          cat release-metadata/RPM-INVENTORY.tsv
+          cat release-metadata/BUILD-PROVENANCE.json
+
+      - name: Upload x86_64 release RPMs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: camdx-rhel9-${{ env.EXPECTED_VERSION }}-${{ steps.source.outputs.rpm_release }}-x86_64
+          path: release-artifacts/x86_64/*.rpm
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload noarch release RPMs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: camdx-rhel9-${{ env.EXPECTED_VERSION }}-${{ steps.source.outputs.rpm_release }}-noarch
+          path: release-artifacts/noarch/*.rpm
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: camdx-rhel9-${{ env.EXPECTED_VERSION }}-${{ steps.source.outputs.rpm_release }}-metadata
+          path: release-metadata/*
+          retention-days: 90
