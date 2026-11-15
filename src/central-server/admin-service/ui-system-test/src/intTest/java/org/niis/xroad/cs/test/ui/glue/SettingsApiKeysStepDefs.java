@@ -92,6 +92,7 @@ public class SettingsApiKeysStepDefs extends BaseUiStepDefs {
     @Step("Create API key wizard Finish button is clicked")
     public void clickWizardFinish() {
         apiKeysPage.wizard.btnFinish().click();
+        apiKeysPage.apiKeysView().shouldBe(Condition.visible);
     }
 
     @Step("API key is created and visible")
