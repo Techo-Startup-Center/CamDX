@@ -1,0 +1,369 @@
+name: Build Ubuntu release DEBs
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Approved source commit SHA
+        required: true
+        default: 3887c949ec5d02c87fb5351e1c960b61607bbfd6
+      validation_only:
+        description: Validate release controls and approved source without rebuilding DEBs
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  APPROVED_SOURCE_SHA: 3887c949ec5d02c87fb5351e1c960b61607bbfd6
+  EXPECTED_BASE_VERSION: "7.8.3-1"
+  EXPECTED_JAMMY_VERSION: "7.8.3-1.ubuntu22.04"
+  EXPECTED_NOBLE_VERSION: "7.8.3-1.ubuntu24.04"
+  EXPECTED_PACKAGE_COUNT: "28"
+  EXPECTED_AMD64_COUNT: "5"
+  EXPECTED_ALL_COUNT: "23"
+
+jobs:
+  build-ubuntu-release:
+    name: Build verified Ubuntu 22.04 and 24.04 release DEBs
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out workflow control revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Validate release workflow controls
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workflow=".github/workflows/build-ubuntu-release.yaml"
+
+          grep -Fq "workflow_dispatch:" "${workflow}"
+
+          if grep -Eq '^[[:space:]]+push:' "${workflow}"; then
+            echo "Release workflow must remain manual-only." >&2
+            exit 1
+          fi
+
+          grep -Fq 'Artifact retrieval and independent checksum verification only; no rebuild' "${workflow}"
+
+      - name: Select approved source revision
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          requested_sha="${{ inputs.source_sha }}"
+
+          if [[ "${requested_sha}" != "${APPROVED_SOURCE_SHA}" ]]; then
+            echo "Requested source SHA does not match the approved source revision." >&2
+            exit 1
+          fi
+
+          echo "source_sha=${requested_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out approved source revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Verify source revision and Debian release version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "${actual_sha}" != "${{ steps.source.outputs.source_sha }}" ]]; then
+            echo "Checked-out SHA ${actual_sha} does not match the approved source SHA." >&2
+            exit 1
+          fi
+
+          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "Tracked source tree is not clean before packaging." >&2
+            git status --short
+            exit 1
+          fi
+
+          base_version="$(
+            sed -n '1s/^xroad (\([^)]*\)).*/\1/p'               src/packages/src/xroad/ubuntu/generic/changelog
+          )"
+
+          if [[ "${base_version}" != "${EXPECTED_BASE_VERSION}" ]]; then
+            echo "Debian changelog version ${base_version}; expected ${EXPECTED_BASE_VERSION}." >&2
+            exit 1
+          fi
+
+          package_count="$(grep -c '^Package: ' src/packages/src/xroad/ubuntu/generic/control)"
+          if [[ "${package_count}" -ne "${EXPECTED_PACKAGE_COUNT}" ]]; then
+            echo "Debian control package count ${package_count}; expected ${EXPECTED_PACKAGE_COUNT}." >&2
+            exit 1
+          fi
+
+          echo "Approved source SHA: ${actual_sha}"
+          echo "Jammy expected version: ${EXPECTED_JAMMY_VERSION}"
+          echo "Noble expected version: ${EXPECTED_NOBLE_VERSION}"
+
+      - name: Report validation-only success
+        if: ${{ inputs.validation_only }}
+        shell: bash
+        run: |
+          echo "Release workflow controls validated."
+          echo "Approved source revision validated: ${{ steps.source.outputs.source_sha }}"
+          echo "No packages were rebuilt or uploaded."
+
+      - name: Ensure release build prerequisites
+        if: ${{ !inputs.validation_only }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl software-properties-common build-essential unzip debhelper devscripts
+
+      - name: Set up JDK 21
+        if: ${{ !inputs.validation_only }}
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Set up Gradle
+        if: ${{ !inputs.validation_only }}
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          cache-read-only: true
+          gradle-home-cache-cleanup: true
+
+      - name: Build release source
+        if: ${{ !inputs.validation_only }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ./src
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx6g -PxroadBuildType=RELEASE --max-workers=4 --stacktrace build test intTest jacocoTestReport
+
+      - name: Build Ubuntu 22.04 Jammy release DEBs
+        if: ${{ !inputs.validation_only }}
+        env:
+          DEBEMAIL: info@niis.org
+          DEBFULLNAME: NIIS
+        run: ./src/packages/build-deb.sh jammy -release
+
+      - name: Build Ubuntu 24.04 Noble release DEBs
+        if: ${{ !inputs.validation_only }}
+        env:
+          DEBEMAIL: info@niis.org
+          DEBFULLNAME: NIIS
+        run: ./src/packages/build-deb.sh noble -release
+
+      - name: Verify Jammy and Noble DEB inventories
+        if: ${{ !inputs.validation_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          verify_track() {
+            local root="$1"
+            local expected_version="$2"
+            local label="$3"
+
+            mapfile -t packages < <(find "${root}" -maxdepth 1 -type f -name '*.deb' | sort)
+
+            local total="${#packages[@]}"
+            local amd64_count=0
+            local all_count=0
+
+            if [[ "${total}" -ne "${EXPECTED_PACKAGE_COUNT}" ]]; then
+              echo "${label}: unexpected DEB count ${total}; expected ${EXPECTED_PACKAGE_COUNT}." >&2
+              exit 1
+            fi
+
+            for package in "${packages[@]}"; do
+              version="$(dpkg-deb -f "${package}" Version)"
+              arch="$(dpkg-deb -f "${package}" Architecture)"
+
+              if [[ "${version}" != "${expected_version}" ]]; then
+                echo "${label}: unexpected version in ${package}: ${version}; expected ${expected_version}." >&2
+                exit 1
+              fi
+
+              case "${arch}" in
+                amd64) amd64_count=$((amd64_count + 1)) ;;
+                all) all_count=$((all_count + 1)) ;;
+                *)
+                  echo "${label}: unexpected architecture in ${package}: ${arch}" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            if [[ "${amd64_count}" -ne "${EXPECTED_AMD64_COUNT}" ]]; then
+              echo "${label}: amd64 count ${amd64_count}; expected ${EXPECTED_AMD64_COUNT}." >&2
+              exit 1
+            fi
+            if [[ "${all_count}" -ne "${EXPECTED_ALL_COUNT}" ]]; then
+              echo "${label}: all count ${all_count}; expected ${EXPECTED_ALL_COUNT}." >&2
+              exit 1
+            fi
+
+            echo "${label}: ${total} packages, ${amd64_count} amd64, ${all_count} all"
+          }
+
+          verify_track             src/packages/build/ubuntu22.04             "${EXPECTED_JAMMY_VERSION}"             Jammy
+
+          verify_track             src/packages/build/ubuntu24.04             "${EXPECTED_NOBLE_VERSION}"             Noble
+
+      - name: Prepare release inventories, checksums and provenance
+        if: ${{ !inputs.validation_only }}
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf release-artifacts release-metadata
+          mkdir -p release-artifacts/jammy release-artifacts/noble release-metadata
+
+          cp src/packages/build/ubuntu22.04/*.deb release-artifacts/jammy/
+          cp src/packages/build/ubuntu24.04/*.deb release-artifacts/noble/
+
+          make_inventory() {
+            local root="$1"
+            local output="$2"
+
+            {
+              printf 'filename\tpackage\tversion\tarchitecture\tsize_bytes\tsha256\n'
+              while IFS= read -r package; do
+                filename="$(basename "${package}")"
+                name="$(dpkg-deb -f "${package}" Package)"
+                version="$(dpkg-deb -f "${package}" Version)"
+                arch="$(dpkg-deb -f "${package}" Architecture)"
+                size="$(stat -c '%s' "${package}")"
+                sha="$(sha256sum "${package}" | awk '{print $1}')"
+                printf '%s\t%s\t%s\t%s\t%s\t%s\n'                   "${filename}" "${name}" "${version}" "${arch}" "${size}" "${sha}"
+              done < <(find "${root}" -maxdepth 1 -type f -name '*.deb' | sort)
+            } > "${output}"
+          }
+
+          make_inventory release-artifacts/jammy release-metadata/DEB-INVENTORY-JAMMY.tsv
+          make_inventory release-artifacts/noble release-metadata/DEB-INVENTORY-NOBLE.tsv
+
+          (
+            cd release-artifacts/jammy
+            find . -maxdepth 1 -type f -name '*.deb' -printf '%f\0'               | sort -z               | xargs -0 sha256sum
+          ) > release-metadata/SHA256SUMS-JAMMY.txt
+
+          (
+            cd release-artifacts/noble
+            find . -maxdepth 1 -type f -name '*.deb' -printf '%f\0'               | sort -z               | xargs -0 sha256sum
+          ) > release-metadata/SHA256SUMS-NOBLE.txt
+
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          from datetime import datetime, timezone
+
+          def git(*args):
+              return subprocess.check_output(["git", *args], text=True).strip()
+
+          provenance = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "approved_source_sha": os.environ["SOURCE_SHA"],
+              "built_source_sha": git("rev-parse", "HEAD"),
+              "source_commit_timestamp": git("show", "-s", "--format=%cI", "HEAD"),
+              "source_commit_subject": git("show", "-s", "--format=%s", "HEAD"),
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "workflow_definition_sha": os.environ["GITHUB_SHA"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_number": os.environ["GITHUB_RUN_NUMBER"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.environ["RUNNER_ARCH"],
+              "package_targets": ["ubuntu22.04-jammy", "ubuntu24.04-noble"],
+              "build_commands": [
+                  "./src/packages/build-deb.sh jammy -release",
+                  "./src/packages/build-deb.sh noble -release",
+              ],
+              "expected_versions": {
+                  "jammy": os.environ["EXPECTED_JAMMY_VERSION"],
+                  "noble": os.environ["EXPECTED_NOBLE_VERSION"],
+              },
+              "package_count_per_track": int(os.environ["EXPECTED_PACKAGE_COUNT"]),
+              "amd64_count_per_track": int(os.environ["EXPECTED_AMD64_COUNT"]),
+              "all_count_per_track": int(os.environ["EXPECTED_ALL_COUNT"]),
+              "build_deb_sha256": subprocess.check_output(
+                  ["sha256sum", "src/packages/build-deb.sh"], text=True
+              ).split()[0],
+              "debian_control_sha256": subprocess.check_output(
+                  ["sha256sum", "src/packages/src/xroad/ubuntu/generic/control"], text=True
+              ).split()[0],
+              "debian_changelog_sha256": subprocess.check_output(
+                  ["sha256sum", "src/packages/src/xroad/ubuntu/generic/changelog"], text=True
+              ).split()[0],
+              "package_builder_role": "Artifact retrieval and independent checksum verification only; no rebuild",
+              "github_artifacts_are_repository_signed": False,
+              "repository_signing_stage": "Controlled Nexus APT repository publication after Package Builder artifact retrieval and independent checksum verification",
+              "candidate_artifacts_immutable_after_build": True,
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+          }
+
+          pathlib.Path("release-metadata/BUILD-PROVENANCE.json").write_text(
+              json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          (
+            cd release-metadata
+            sha256sum               DEB-INVENTORY-JAMMY.tsv               DEB-INVENTORY-NOBLE.tsv               SHA256SUMS-JAMMY.txt               SHA256SUMS-NOBLE.txt               BUILD-PROVENANCE.json
+          ) > release-metadata/METADATA-SHA256SUMS.txt
+
+          cat release-metadata/DEB-INVENTORY-JAMMY.tsv
+          cat release-metadata/DEB-INVENTORY-NOBLE.tsv
+          cat release-metadata/BUILD-PROVENANCE.json
+
+      - name: Verify tracked source remains unchanged
+        if: ${{ !inputs.validation_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "Tracked source tree changed during Ubuntu release packaging." >&2
+            git status --short
+            exit 1
+          fi
+
+      - name: Upload Jammy release DEBs
+        if: ${{ !inputs.validation_only }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: camdx-jammy-${{ env.EXPECTED_JAMMY_VERSION }}-debs
+          path: release-artifacts/jammy/*.deb
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload Noble release DEBs
+        if: ${{ !inputs.validation_only }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: camdx-noble-${{ env.EXPECTED_NOBLE_VERSION }}-debs
+          path: release-artifacts/noble/*.deb
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload Ubuntu release metadata
+        if: ${{ !inputs.validation_only }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: camdx-ubuntu-7.8.3-1-metadata
+          path: release-metadata/*
+          retention-days: 90
