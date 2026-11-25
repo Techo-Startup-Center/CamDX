@@ -284,17 +284,15 @@ jobs:
           label: 'Set up Central Server tests'
       - name: Check Chromium version
         run: chromium --version || chromium-browser --version || google-chrome --version
-      # Pinned to Chrome/CDP major 147: the resolved intTestRuntimeClasspath for
-      # :central-server:admin-service:ui-system-test (Selenium 4.43.0 via Selenide 7.16.1)
-      # provides org.seleniumhq.selenium:selenium-devtools-v145/v146/v147 only, so the runner's
-      # own (frequently auto-updated) system Chrome can drift ahead of what this Selenium build's
-      # DevTools/CDP implementation actually supports. This step installs a known-compatible Chrome
-      # instead of relying on PATH.
+      # Pin Chrome to a CDP major supported by the 7.8.3 UI test stack
+      # (Selenide 7.18.1 / Selenium 4.48.0 provides CDP 150/151/152).
+      # The runner's system Chromium can move ahead independently, so use a known-compatible
+      # browser/driver pair for the DevTools-dependent system tests.
       - name: Set up compatible Chrome for CS UI tests
         id: setup-chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0 (v2)
         with:
-          chrome-version: '147'
+          chrome-version: '152'
           install-chromedriver: true
       - name: Check pinned Chrome/ChromeDriver versions
         run: |
@@ -408,9 +406,21 @@ jobs:
         with:
           task: get-measurement
           label: 'Set up Security Server tests'
+      - name: Set up compatible Chrome for SS UI tests
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0 (v2)
+        with:
+          chrome-version: '152'
+          install-chromedriver: true
+      - name: Check pinned Chrome/ChromeDriver versions
+        run: |
+          echo "Pinned Chrome version: ${{ steps.setup-chrome.outputs.chrome-version }}"
+          echo "Pinned Chrome path: ${{ steps.setup-chrome.outputs.chrome-path }}"
+          echo "Pinned ChromeDriver version: ${{ steps.setup-chrome.outputs.chromedriver-version }}"
+          echo "Pinned ChromeDriver path: ${{ steps.setup-chrome.outputs.chromedriver-path }}"
       - name: Run Security Server system tests
         working-directory: ./src
-        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g :security-server:system-test:systemTest -PsystemTestSsImageName=localhost:5000/xrd-securityserver:${{ github.sha }}
+        run: ./gradlew -Dorg.gradle.jvmargs=-Xmx1g :security-server:system-test:systemTest -PsystemTestSsImageName=localhost:5000/xrd-securityserver:${{ github.sha }} -PsystemTestBrowserBinary=${{ steps.setup-chrome.outputs.chrome-path }} -PsystemTestChromeDriver=${{ steps.setup-chrome.outputs.chromedriver-path }}
       - name: Test Security Server measurement
         uses: green-coding-solutions/eco-ci-energy-estimation@9fcdc7c7225cc2cbeead14d114a61a461bd37e66 # v5.2
         with:

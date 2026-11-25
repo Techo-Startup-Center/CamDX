@@ -664,7 +664,7 @@ X-XSRF-TOKEN: {{ss1_xsrf_token}}
 HTTP 200
 
 [Captures]
-ss1_token_id: jsonpath "$[?(@.type == 'HARDWARE')].id" nth 0
+ss1_token_id: jsonpath "$[?(@.type == 'HARDWARE')].id"
 
 # Add sign key to the Security Server token
 POST https://{{ss1_host}}:4000/api/v1/tokens/{{ss1_token_id}}/keys-with-csrs
